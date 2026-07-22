@@ -33,3 +33,7 @@ ui/dist/
 # Editors
 .idea/
 .vscode/
+
+# Tracer-bullet experiments: un-scrubbed captures + scratch data dir never commit
+fixtures/raw/
+experiments/tracer-bullet/.capture-scratch/

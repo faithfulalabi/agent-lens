@@ -1,0 +1,31 @@
+EXPERIMENT: Q1 (sub-agent Pre/PostToolUse firing + agent_id) and Q2 (sub-agent
+transcript separation via agent_transcript_path).
+
+Run this prompt inside the scratch-project Claude Code session (hooks registered
+via scratch-project/.claude/settings.json). Prefer `claude -p` if sub-agent
+spawning is reliable non-interactively; otherwise run interactively.
+
+PROMPT TO CLAUDE CODE:
+---
+Use the Task tool to spawn a sub-agent. Instruct the sub-agent to run exactly
+two shell commands using the Bash tool:
+  1. echo "subagent-marker-one"
+  2. node experiments/tracer-bullet/emit.mjs 1KB
+Then have the sub-agent report the total byte count it saw. Do not do this work
+yourself in the parent context — it MUST run inside the spawned sub-agent so we
+can observe whether PreToolUse/PostToolUse fire inside the sub-agent context and
+whether they carry an agent_id.
+---
+
+WHAT TO OBSERVE / CAPTURE AFTER THE RUN:
+- Whether PreToolUse/PostToolUse envelopes were captured for the sub-agent's two
+  Bash calls (Q1). Look for an `agent_id` field on those hook payloads.
+- The SubagentStart/SubagentStop payloads: confirm `agent_id`, `tool_use_id`,
+  and `agent_transcript_path` (Q1 correlation + Q2 separate file).
+- Confirm the `agent_transcript_path` file actually EXISTS on disk and is
+  distinct from the parent session transcript (Q2).
+
+CAPTURE:
+  node experiments/tracer-bullet/capture.mjs --exp subagent \
+    --data-dir "$AGENT_LENS_DIR" \
+    --transcripts "<parent_transcript_path>,<agent_transcript_path>"
