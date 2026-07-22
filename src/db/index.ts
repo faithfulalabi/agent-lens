@@ -33,10 +33,14 @@ export function openDb(dataDir: string): DatabaseSync {
  * `INSERT ... ON CONFLICT(id) DO NOTHING`. Returns `true` only when a genuinely
  * new row was written (via `changes`), so the server broadcasts once per event.
  */
-export function insertRawEvent(db: DatabaseSync, envelope: Envelope): boolean {
+export function insertRawEvent(
+  db: DatabaseSync,
+  envelope: Envelope,
+  status: 'processed' | 'dead_letter' = 'processed',
+): boolean {
   const stmt = db.prepare(
     `INSERT INTO raw_events (id, session_id, source, hook_name, received_at, status, raw)
-     VALUES (?, ?, ?, ?, ?, 'processed', ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
   );
   const result = stmt.run(
@@ -45,6 +49,7 @@ export function insertRawEvent(db: DatabaseSync, envelope: Envelope): boolean {
     envelope.source,
     envelope.hook_name ?? null,
     new Date().toISOString(),
+    status,
     JSON.stringify(envelope.raw_payload),
   );
   return result.changes === 1;

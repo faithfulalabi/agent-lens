@@ -12,6 +12,7 @@ import { openDb } from '../db/index.js';
 import { buildApp } from './app.js';
 import { Broadcaster } from './sse.js';
 import { clearConfig, writeConfig } from './config.js';
+import { replaySpool } from '../capture/replay.js';
 
 /** Options for `startServer`. */
 export interface StartOptions {
@@ -63,6 +64,12 @@ export async function startServer(
   const token = readOrCreateToken(dataDir);
   const db = openDb(dataDir);
   const broadcaster = new Broadcaster();
+
+  // Recover anything the adapter spooled while the collector was down, before
+  // we accept new connections. Idempotent (upsert-by-event_id), so a replay
+  // that overlaps a prior run costs nothing.
+  replaySpool(db, broadcaster, dataDir);
+
   const app = buildApp({ db, token, broadcaster });
   const fetch = app.fetch;
 
