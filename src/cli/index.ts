@@ -10,7 +10,7 @@ import { argv, exit } from 'node:process';
 interface Command {
   name: string;
   summary: string;
-  run: () => void;
+  run: (args: string[]) => void | Promise<void>;
 }
 
 export const COMMANDS: Command[] = [
@@ -32,8 +32,8 @@ export function printHelp(): void {
   }
 }
 
-export function main(argv: string[]): number {
-  const [command] = argv;
+export async function main(argv: string[]): Promise<number> {
+  const [command, ...rest] = argv;
 
   if (!command || command === '--help' || command === '-h' || command === 'help') {
     printHelp();
@@ -47,11 +47,11 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  match.run();
+  await match.run(rest);
   return 0;
 }
 
 // Auto-run only when executed as the CLI entry (not when imported by tests).
 if (import.meta.url === `file://${argv[1]}`) {
-  exit(main(argv.slice(2)));
+  main(argv.slice(2)).then(exit);
 }
