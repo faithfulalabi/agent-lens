@@ -23,9 +23,12 @@ build/
 
 # Node
 node_modules/
-.next/
-out/
 *.tsbuildinfo
+
+# Build / coverage
+coverage/
+ui/dist/
+*.local
 
 # Editors
 .idea/
