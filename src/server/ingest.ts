@@ -39,14 +39,17 @@ export function isValidEnvelopeShape(value: unknown): value is Envelope {
 /**
  * Admit an envelope: archive it (upsert-by-event_id), and only on a genuinely
  * new row derive a span-lite row, assign a seq, and broadcast. Duplicate
- * `event_id` → no new row, no broadcast → `{ inserted: false }`.
+ * `event_id` → no new row, no broadcast → `{ inserted: false }`. A
+ * `dead_letter` status archives the raw row for later triage but is otherwise
+ * treated identically (still materialized so the event is visible).
  */
 export function ingestEnvelope(
   db: DatabaseSync,
   broadcaster: Broadcaster,
   envelope: Envelope,
+  status: 'processed' | 'dead_letter' = 'processed',
 ): IngestResult {
-  const inserted = insertRawEvent(db, envelope);
+  const inserted = insertRawEvent(db, envelope, status);
   if (!inserted) {
     return { inserted: false, seq: -1 };
   }

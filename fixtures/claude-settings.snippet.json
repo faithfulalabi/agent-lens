@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "agent-lens hook", "async": true }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "agent-lens hook", "async": true }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "agent-lens hook", "async": true }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "agent-lens hook", "async": true }]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "agent-lens hook", "async": true }]
+      }
+    ]
+  }
+}
