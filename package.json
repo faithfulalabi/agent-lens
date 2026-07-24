@@ -25,6 +25,7 @@
     "postinstall": "npm --prefix ui install"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.11",
     "hono": "^4.6.0"
   },
   "devDependencies": {

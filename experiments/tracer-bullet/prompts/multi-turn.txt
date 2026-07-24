@@ -1,0 +1,26 @@
+EXPERIMENT: Q5 (transcript field reality) + baseline multi-turn fixture.
+
+Run inside the scratch-project Claude Code session. A plain multi-turn session
+produces a transcript JSONL we inspect for the inferred (undocumented) fields
+the Phase-2 normalizer will depend on. Also yields the "multi-turn" golden
+fixture set.
+
+PROMPT TO CLAUDE CODE (three separate user turns):
+---
+Turn 1: "What is 2 + 2? Answer in one word."
+Turn 2: "Now multiply that result by 10. One number only."
+Turn 3: "Run `node experiments/tracer-bullet/emit.mjs 1KB` and tell me the byte
+         count." (uses the Bash tool so we get a PreToolUse/PostToolUse pair too)
+---
+
+WHAT TO OBSERVE / CAPTURE AFTER THE RUN (inspect the parent transcript JSONL):
+- Presence + shape of: `uuid`, `parentUuid`, `isSidechain`, `message.model`,
+  and `message.usage.*` (input/output token counts). Excerpt each into the
+  findings doc (Q5). Missing/renamed fields => Phase-2 normalizer must parse
+  defensively and dead-letter on surprise.
+- The turn structure: how UserPromptSubmit / assistant / tool lines interleave,
+  and whether `prompt_id` is stable within a turn (RFC trace-key decision).
+
+CAPTURE:
+  node experiments/tracer-bullet/capture.mjs --exp multi-turn \
+    --data-dir "$AGENT_LENS_DIR" --transcripts "<parent_transcript_path>"

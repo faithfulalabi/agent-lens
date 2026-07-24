@@ -1,0 +1,28 @@
+EXPERIMENT: Q4 (transcript append-only through /compact).
+
+`/compact` is an INTERACTIVE slash command — this experiment requires a live
+Claude Code session (not `claude -p`). The question: does compaction REWRITE the
+transcript (breaking the tailer's append-only assumption) or append a compaction
+boundary and continue? If it rewrites, the Phase-3 tailer needs a re-read /
+truncation-detection path.
+
+METHOD (fingerprint before and after):
+1. Start an interactive session in scratch-project and run enough turns to build
+   context (reuse multi-turn.txt turns, or a few large-output runs).
+2. BEFORE /compact, fingerprint the parent transcript:
+     node -e 'const fs=require("fs");const c=require("crypto");const p=process.argv[1];const b=fs.readFileSync(p);console.log(JSON.stringify({size:b.length,head256:c.createHash("sha256").update(b.subarray(0,256)).digest("hex").slice(0,16),full:c.createHash("sha256").update(b).digest("hex").slice(0,16)}))' "<parent_transcript_path>"
+3. Run `/compact` in the session. Let it finish.
+4. AFTER /compact, fingerprint again with the SAME command.
+
+WHAT TO OBSERVE / CAPTURE:
+- HEAD hash: unchanged head => the file was appended to (append-only holds).
+  Changed head => the file was rewritten (append-only BROKEN — Phase-3 impact).
+- SIZE: should only grow if append-only.
+- The PreCompact / PostCompact hook envelopes captured by agent-lens — confirm
+  they fire and note any payload correlators (e.g. transcript_path).
+
+CAPTURE:
+  node experiments/tracer-bullet/capture.mjs --exp compaction \
+    --data-dir "$AGENT_LENS_DIR" --transcripts "<parent_transcript_path>"
+
+Record both fingerprints (before/after) verbatim in the findings doc Q4 block.
