@@ -1,0 +1,7 @@
+{
+  "session_id": "sess-fixture",
+  "hook_event_name": "PostToolUse",
+  "tool_use_id": "tool-abc",
+  "tool_name": "Bash",
+  "tool_response": { "stdout": "file.txt", "exit_code": 0 }
+}

@@ -23,10 +23,17 @@ build/
 
 # Node
 node_modules/
-.next/
-out/
 *.tsbuildinfo
+
+# Build / coverage
+coverage/
+ui/dist/
+*.local
 
 # Editors
 .idea/
 .vscode/
+
+# Tracer-bullet experiments: un-scrubbed captures + scratch data dir never commit
+fixtures/raw/
+experiments/tracer-bullet/.capture-scratch/

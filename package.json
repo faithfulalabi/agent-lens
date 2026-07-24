@@ -1,0 +1,44 @@
+{
+  "name": "agent-lens",
+  "version": "0.0.0",
+  "description": "Local-first agentic tracing platform: inspect everything your agent did in a session.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "agent-lens": "bin/agent-lens.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "ui/dist"
+  ],
+  "scripts": {
+    "dev": "npm --prefix ui run dev",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",
+    "build": "tsc -p tsconfig.node.json && npm --prefix ui run build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "postinstall": "npm --prefix ui install"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.11",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "fast-check": "^3.23.2",
+    "globals": "^15.15.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.0"
+  }
+}
