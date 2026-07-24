@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { MODULE as shared } from './shared/index.js';
+import { deriveEventId } from './shared/index.js';
 import { COMMANDS, printHelp } from './cli/index.js';
 
 describe('scaffold smoke', () => {
-  it('imports a shared placeholder export (ESM works in tests)', () => {
-    expect(shared).toBe('shared');
+  it('imports a shared export (ESM works in tests)', () => {
+    expect(typeof deriveEventId).toBe('function');
   });
 
   it('registers the six CLI commands', () => {
