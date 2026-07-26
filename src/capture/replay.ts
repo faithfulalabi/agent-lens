@@ -9,7 +9,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Broadcaster } from '../server/sse.js';
-import { ingestEnvelope, isValidEnvelopeShape } from '../server/ingest.js';
+import {
+  BATCH_SIZE,
+  ingestBatch,
+  isValidEnvelopeShape,
+  type IngestBatchItem,
+} from '../server/ingest.js';
 import type { Envelope } from '../shared/index.js';
 import { makeEnvelope } from '../shared/index.js';
 import { spoolDir } from './spool.js';
@@ -54,13 +59,43 @@ export function replaySpool(
   return result;
 }
 
-/** Replay every line of one spool file's contents into the ingest pipeline. */
+/**
+ * Replay every line of one spool file's contents into the ingest pipeline,
+ * `BATCH_SIZE` lines per transaction. Batching is where replay actually pays: a
+ * 10k-line spool costs ~150 commits instead of 10k, and one rollup flush per
+ * chunk instead of one per line.
+ *
+ * **Malformed lines join the same buffer** rather than ingesting out of band.
+ * Ingesting them immediately would hand a torn line a LOWER seq than the good
+ * lines already buffered ahead of it, silently reordering the live list.
+ *
+ * The trailing `flush()` is load-bearing: `replaySpool` deletes the file the
+ * moment this returns, so a partial final chunk left in the buffer would be
+ * data loss, not just a late write.
+ */
 function replayFile(
   db: DatabaseSync,
   broadcaster: Broadcaster,
   contents: string,
   result: ReplayResult,
 ): void {
+  let batch: IngestBatchItem[] = [];
+
+  const flush = (): void => {
+    if (batch.length === 0) return;
+    const outcomes = ingestBatch(db, broadcaster, batch);
+    outcomes.forEach((outcome, i) => {
+      // A line can parse cleanly and still fail projection — count what ingest
+      // actually did, not what the spool sidecar predicted, or the counters lie.
+      if (batch[i]!.status === 'dead_letter' || outcome.deadLettered) {
+        result.deadLettered += 1;
+      } else {
+        result.replayed += 1;
+      }
+    });
+    batch = [];
+  };
+
   for (const line of contents.split('\n')) {
     if (line.trim() === '') continue;
 
@@ -68,7 +103,8 @@ function replayFile(
     try {
       parsed = JSON.parse(line) as Record<string, unknown>;
     } catch {
-      deadLetterLine(db, broadcaster, line, result);
+      batch.push(deadLetterItem(line));
+      if (batch.length >= BATCH_SIZE) flush();
       continue;
     }
 
@@ -77,32 +113,28 @@ function replayFile(
     delete parsed.status;
 
     if (!isValidEnvelopeShape(parsed)) {
-      deadLetterLine(db, broadcaster, line, result);
+      batch.push(deadLetterItem(line));
+      if (batch.length >= BATCH_SIZE) flush();
       continue;
     }
 
     const restamped: Envelope = { ...(parsed as Envelope), source: 'spool_replay' };
-    const outcome = ingestEnvelope(db, broadcaster, restamped, status);
-    // A line can parse cleanly and still fail projection — count what ingest
-    // actually did, not what the spool sidecar predicted, or the counters lie.
-    if (status === 'dead_letter' || outcome.deadLettered) result.deadLettered += 1;
-    else result.replayed += 1;
+    batch.push({ envelope: restamped, status });
+    if (batch.length >= BATCH_SIZE) flush();
   }
+
+  flush();
 }
 
-/** Wrap an unparseable spool line in a dead-letter envelope and archive it. */
-function deadLetterLine(
-  db: DatabaseSync,
-  broadcaster: Broadcaster,
-  line: string,
-  result: ReplayResult,
-): void {
-  const envelope = makeEnvelope({
-    source: 'spool_replay',
-    session_id: 'unknown',
-    raw_payload: line,
-    ts: new Date().toISOString(),
-  });
-  ingestEnvelope(db, broadcaster, envelope, 'dead_letter');
-  result.deadLettered += 1;
+/** Wrap an unparseable spool line in a dead-letter envelope for the batch. */
+function deadLetterItem(line: string): IngestBatchItem {
+  return {
+    envelope: makeEnvelope({
+      source: 'spool_replay',
+      session_id: 'unknown',
+      raw_payload: line,
+      ts: new Date().toISOString(),
+    }),
+    status: 'dead_letter',
+  };
 }

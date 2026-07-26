@@ -40,12 +40,18 @@ function tableNames(db: DatabaseSync): string[] {
   ).map((r) => r.name);
 }
 
+function columnNames(db: DatabaseSync, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (r) => r.name,
+  );
+}
+
 describe('runMigrations — AC1: fresh start, re-start no-op, version recorded', () => {
   it('creates the full schema on a fresh DB and records the version', () => {
     const db = new DatabaseSync(':memory:');
     runMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(1);
+    expect(getSchemaVersion(db)).toBe(2);
 
     const tables = tableNames(db);
     for (const t of EXPECTED_TABLES) {
@@ -58,7 +64,7 @@ describe('runMigrations — AC1: fresh start, re-start no-op, version recorded',
     const db = new DatabaseSync(':memory:');
     runMigrations(db);
     expect(() => runMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(1);
+    expect(getSchemaVersion(db)).toBe(2);
   });
 
   it('stamps app_version diagnostically', () => {
@@ -72,11 +78,47 @@ describe('runMigrations — AC1: fresh start, re-start no-op, version recorded',
 });
 
 describe('runMigrations — AC2: ordered application + downgrade guard', () => {
-  it('applies migration 001 in order from an unversioned DB', () => {
+  it('applies migrations 001 then 002 in order from an unversioned DB', () => {
     const db = new DatabaseSync(':memory:');
     expect(getSchemaVersion(db)).toBe(0);
     runMigrations(db);
-    expect(getSchemaVersion(db)).toBe(1);
+    expect(getSchemaVersion(db)).toBe(2);
+  });
+
+  it('adds the six rollup columns (migration 002) with a NOT NULL 0 default', () => {
+    const db = new DatabaseSync(':memory:');
+    runMigrations(db);
+
+    const traceCols = columnNames(db, 'traces');
+    for (const col of [
+      'tokens_in',
+      'tokens_out',
+      'tokens_cache_read',
+      'tokens_cache_write',
+    ]) {
+      expect(traceCols).toContain(col);
+    }
+    const sessionCols = columnNames(db, 'sessions');
+    expect(sessionCols).toContain('tokens_cache_read');
+    expect(sessionCols).toContain('tokens_cache_write');
+
+    // A row inserted without them defaults to 0, never NULL — the rollup SQL
+    // relies on that (see src/db/rollups.ts).
+    db.exec(`INSERT INTO sessions (id, harness, project_path, started_at, status, capture_mode)
+             VALUES ('s', 'claude-code', '/p', '2026-07-26T00:00:00.000Z', 'live', 'full')`);
+    db.exec(`INSERT INTO traces (id, session_id, turn_seq, trigger, prompt_preview, started_at, status)
+             VALUES ('s:1', 's', 1, 'user_prompt', '', '2026-07-26T00:00:00.000Z', 'live')`);
+    const trace = db.prepare(`SELECT * FROM traces WHERE id = 's:1'`).get() as Record<
+      string,
+      unknown
+    >;
+    expect(trace.tokens_in).toBe(0);
+    expect(trace.tokens_cache_write).toBe(0);
+    const session = db.prepare(`SELECT * FROM sessions WHERE id = 's'`).get() as Record<
+      string,
+      unknown
+    >;
+    expect(session.tokens_cache_read).toBe(0);
   });
 
   it('throws SchemaTooNewError on a newer-versioned DB and leaves it untouched', () => {
@@ -102,7 +144,7 @@ describe('runMigrations — AC2: ordered application + downgrade guard', () => {
 
     runMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(1);
+    expect(getSchemaVersion(db)).toBe(2);
     const tables = tableNames(db);
     for (const t of EXPECTED_TABLES) {
       expect(tables).toContain(t);

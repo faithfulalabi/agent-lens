@@ -3,8 +3,8 @@
 
 export { startServer } from './start.js';
 export type { StartOptions, ServerHandle } from './start.js';
-export { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
-export type { IngestResult } from './ingest.js';
+export { ingestEnvelope, ingestBatch, isValidEnvelopeShape, BATCH_SIZE } from './ingest.js';
+export type { IngestResult, IngestBatchItem } from './ingest.js';
 export { Broadcaster } from './sse.js';
 export type { Subscriber } from './sse.js';
 export { buildApp } from './app.js';

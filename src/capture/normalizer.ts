@@ -43,10 +43,22 @@ type HookPayload = Record<string, unknown>;
 export interface NormalizeResult {
   degraded: boolean;
   reason?: string;
+  /**
+   * Traces this envelope touched, so Task 2.4's caller can recompute exactly
+   * those rollups before committing. Plural because `SessionEnd` finalizes every
+   * still-live turn at once. Absent/empty when no trace changed (`SessionStart`).
+   */
+  traceIds?: string[];
 }
 
 /** Shared no-drift verdict; frozen because every clean branch returns this instance. */
 const OK: NormalizeResult = Object.freeze({ degraded: false });
+
+/** Clean verdict naming the traces that changed; `OK` when none did. */
+function touched(traceIds: readonly (string | undefined)[]): NormalizeResult {
+  const ids = traceIds.filter((id): id is string => id !== undefined);
+  return ids.length === 0 ? OK : { degraded: false, traceIds: ids };
+}
 
 /** Length cap for the human-readable trace prompt preview. */
 const PROMPT_PREVIEW_MAX = 200;
@@ -109,37 +121,31 @@ export function normalize(db: DatabaseSync, envelope: Envelope): NormalizeResult
       openSession(db, envelope, payload);
       return OK;
     case 'SessionEnd':
-      closeSession(db, envelope, 'complete');
-      return OK;
+      return touched(closeSession(db, envelope, 'complete'));
     case 'UserPromptSubmit':
-      openTrace(db, envelope, payload, 'user_prompt');
-      return OK;
+      return touched([openTrace(db, envelope, payload, 'user_prompt')]);
     case 'PreToolUse':
-      openToolSpan(db, envelope, payload);
-      return OK;
+      return touched([openToolSpan(db, envelope, payload)]);
     case 'PostToolUse':
-      closeToolSpan(db, envelope, payload, mapToolStatus(payload));
-      return OK;
+      return touched([closeToolSpan(db, envelope, payload, mapToolStatus(payload))]);
     case 'PostToolUseFailure':
-      closeToolSpan(db, envelope, payload, 'error');
-      return OK;
+      return touched([closeToolSpan(db, envelope, payload, 'error')]);
     case 'SubagentStart':
-      openSubagentSpan(db, envelope, payload);
-      return OK;
+      return touched([openSubagentSpan(db, envelope, payload)]);
     case 'SubagentStop':
-      closeSubagentSpan(db, envelope, payload);
-      return OK;
+      return touched([closeSubagentSpan(db, envelope, payload)]);
     case 'Stop':
-      closeActiveTrace(db, envelope);
-      return OK;
+      return touched([closeActiveTrace(db, envelope)]);
     case 'PreCompact':
     case 'PostCompact':
-      compactSpan(db, envelope, payload, hook);
-      return OK;
+      return touched([compactSpan(db, envelope, payload, hook)]);
     default:
       // Unknown hook: record a generic span on the active turn, never throw.
-      genericSpan(db, envelope, hook || 'unknown', payload);
-      return { degraded: true, reason: `unknown hook ${hook || '(none)'}` };
+      return {
+        degraded: true,
+        reason: `unknown hook ${hook || '(none)'}`,
+        traceIds: [genericSpan(db, envelope, hook || 'unknown', payload)],
+      };
   }
 }
 
@@ -149,14 +155,16 @@ function openSession(db: DatabaseSync, env: Envelope, p: HookPayload): void {
   ensureSession(db, env, p);
 }
 
+/** Closes the session; returns every trace it finalized (their rollups moved). */
 function closeSession(
   db: DatabaseSync,
   env: Envelope,
   status: 'complete' | 'interrupted',
-): void {
+): string[] {
   // Session over: anything still running never reported a close, so finalize it
   // honestly as `unknown` rather than leaving a span running forever.
-  for (const traceId of liveTracesForSession(db, env.session_id)) {
+  const finalized = liveTracesForSession(db, env.session_id);
+  for (const traceId of finalized) {
     closeRunningSpans(db, traceId, env.ts);
   }
   // Upsert-by-id: if SessionEnd arrives before SessionStart (out-of-order,
@@ -170,6 +178,7 @@ function closeSession(
     capture_mode: 'full',
     ended_at: env.ts,
   });
+  return finalized;
 }
 
 function openTrace(
@@ -206,7 +215,7 @@ function openTrace(
   return traceId;
 }
 
-function openToolSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void {
+function openToolSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.tool_use_id) ?? env.event_id;
   const inputId = p.tool_input !== undefined
@@ -224,6 +233,7 @@ function openToolSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void {
     source: 'hook',
     attrs: overflowAttrs(p, 'PreToolUse'),
   });
+  return traceId;
 }
 
 function closeToolSpan(
@@ -231,7 +241,7 @@ function closeToolSpan(
   env: Envelope,
   p: HookPayload,
   status: SpanStatus,
-): void {
+): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.tool_use_id) ?? env.event_id;
   // Task 1.6: the PostToolUse output field is `tool_response` (OBJECT), NOT
@@ -258,9 +268,10 @@ function closeToolSpan(
     tags: synthetic ? ['synthetic_open'] : [],
     attrs: overflowAttrs(p, env.hook_name ?? 'PostToolUse'),
   });
+  return traceId;
 }
 
-function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void {
+function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.agent_id) ?? env.event_id;
   upsertSpan(db, {
@@ -273,9 +284,10 @@ function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void
     source: 'hook',
     attrs: overflowAttrs(p, 'SubagentStart'),
   });
+  return traceId;
 }
 
-function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void {
+function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.agent_id) ?? env.event_id;
   upsertSpan(db, {
@@ -289,6 +301,7 @@ function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): voi
     source: 'hook',
     attrs: overflowAttrs(p, 'SubagentStop'),
   });
+  return traceId;
 }
 
 /**
@@ -298,9 +311,9 @@ function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): voi
  * clause advances just `status`/`ended_at`, so a synthesized `system_resume` or
  * `compaction` trace keeps its real trigger.
  */
-function closeActiveTrace(db: DatabaseSync, env: Envelope): void {
+function closeActiveTrace(db: DatabaseSync, env: Envelope): string | undefined {
   const traceId = latestOpenTraceId(db, env.session_id);
-  if (!traceId) return;
+  if (!traceId) return undefined;
   // Turn over: any span still running never reported a close.
   closeRunningSpans(db, traceId, env.ts);
   const turnSeq = Number(traceId.slice(traceId.lastIndexOf(':') + 1));
@@ -314,6 +327,7 @@ function closeActiveTrace(db: DatabaseSync, env: Envelope): void {
     ended_at: env.ts,
     status: 'complete',
   });
+  return traceId;
 }
 
 function compactSpan(
@@ -321,7 +335,7 @@ function compactSpan(
   env: Envelope,
   p: HookPayload,
   hook: string,
-): void {
+): string {
   const traceId = resolveTrace(db, env, p);
   upsertSpan(db, {
     id: env.event_id,
@@ -334,6 +348,7 @@ function compactSpan(
     source: 'hook',
     attrs: overflowAttrs(p, hook),
   });
+  return traceId;
 }
 
 /**
@@ -348,7 +363,7 @@ function genericSpan(
   env: Envelope,
   name: string,
   p: HookPayload,
-): void {
+): string {
   const traceId = resolveTrace(db, env, p);
   upsertSpan(db, {
     id: env.event_id,
@@ -362,6 +377,7 @@ function genericSpan(
     tags: ['degraded'],
     attrs: overflowAttrs(p, name),
   });
+  return traceId;
 }
 
 // --- Status mapping --------------------------------------------------------
