@@ -2,11 +2,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { Envelope } from '../shared/index.js';
+import { makeEnvelope } from '../shared/index.js';
 import type {
   Session,
   Trace,
   Span,
   Message,
+  RawEventStatus,
 } from '../shared/index.js';
 import { runMigrations } from './migrate.js';
 
@@ -57,15 +59,21 @@ export function ensurePromptTraceMap(db: DatabaseSync): void {
  * Archive an envelope verbatim. Upsert-by-`event_id`:
  * `INSERT ... ON CONFLICT(id) DO NOTHING`. Returns `true` only when a genuinely
  * new row was written (via `changes`), so the server broadcasts once per event.
+ *
+ * `raw` holds the WHOLE envelope, not just `raw_payload` (`data-model.md`:
+ * "every envelope that ever arrived, verbatim"). That makes the archive lossless
+ * enough for dead-letter reprocess to rebuild the envelope, and lets payload
+ * lookbacks (`lastSessionStartSource`) read it without a second store.
  */
 export function insertRawEvent(
   db: DatabaseSync,
   envelope: Envelope,
-  status: 'processed' | 'dead_letter' = 'processed',
+  status: RawEventStatus = 'processed',
+  error?: string,
 ): boolean {
   const stmt = db.prepare(
-    `INSERT INTO raw_events (id, session_id, source, hook_name, received_at, status, raw)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO raw_events (id, session_id, source, hook_name, received_at, status, error, raw)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
   );
   const result = stmt.run(
@@ -75,7 +83,8 @@ export function insertRawEvent(
     envelope.hook_name ?? null,
     new Date().toISOString(),
     status,
-    JSON.stringify(envelope.raw_payload),
+    error ?? null,
+    JSON.stringify(envelope),
   );
   return result.changes === 1;
 }
@@ -136,7 +145,7 @@ export type TraceUpsert = Pick<Trace, 'id' | 'session_id' | 'turn_seq' | 'trigge
 
 /** Fields the normalizer supplies when opening/updating a span. */
 export type SpanUpsert = Pick<Span, 'id' | 'trace_id' | 'span_type' | 'name' | 'status' | 'started_at' | 'source'> &
-  Partial<Pick<Span, 'parent_span_id' | 'ended_at' | 'input_payload_id' | 'output_payload_id' | 'model'>>;
+  Partial<Pick<Span, 'parent_span_id' | 'ended_at' | 'input_payload_id' | 'output_payload_id' | 'model' | 'tags' | 'attrs'>>;
 
 /**
  * Content-address a payload blob. `id = sha256(content)` (full hex — distinct
@@ -205,20 +214,36 @@ export function upsertTrace(db: DatabaseSync, t: TraceUpsert): void {
  * span (status running, input payload); PostToolUse updates the SAME id
  * (ended_at, output payload, terminal status). `COALESCE` guards the opening
  * fields so a closing update never nulls out what open established.
+ *
+ * Three conflict rules do the resilience work (Task 2.3):
+ * - **Terminal-status guard.** A late-arriving open (`running`) never reverts a
+ *   span that already reached a terminal status, so Pre/Post replay in any order
+ *   converges on the same row.
+ * - **`attrs` merge** via `json_patch` (RFC 7386): drift keys accumulate and
+ *   Task 2.4's `pricing_version` stamp survives later upserts. NOTE: an explicit
+ *   `null` value DELETES that key — callers must omit nulls, not pass them.
+ * - **`tags` union** via `json_each` + `json_group_array`: markers like
+ *   `synthetic_open`/`degraded` accumulate and dedupe. The union does NOT
+ *   preserve insertion order, so read tags as a set.
  */
 export function upsertSpan(db: DatabaseSync, s: SpanUpsert): void {
   db.prepare(
     `INSERT INTO spans (id, trace_id, parent_span_id, span_type, name, status,
                         started_at, ended_at, input_payload_id, output_payload_id,
-                        model, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        model, source, tags, attrs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
-       status            = excluded.status,
+       status            = CASE WHEN excluded.status = 'running' AND spans.status <> 'running'
+                                THEN spans.status ELSE excluded.status END,
        ended_at          = COALESCE(excluded.ended_at, spans.ended_at),
        output_payload_id = COALESCE(excluded.output_payload_id, spans.output_payload_id),
        input_payload_id  = COALESCE(excluded.input_payload_id, spans.input_payload_id),
        model             = COALESCE(excluded.model, spans.model),
-       parent_span_id    = COALESCE(excluded.parent_span_id, spans.parent_span_id)`,
+       parent_span_id    = COALESCE(excluded.parent_span_id, spans.parent_span_id),
+       attrs             = json_patch(spans.attrs, excluded.attrs),
+       tags              = (SELECT json_group_array(v) FROM (
+                              SELECT value AS v FROM json_each(spans.tags)
+                              UNION SELECT value FROM json_each(excluded.tags)))`,
   ).run(
     s.id,
     s.trace_id,
@@ -232,6 +257,8 @@ export function upsertSpan(db: DatabaseSync, s: SpanUpsert): void {
     s.output_payload_id ?? null,
     s.model ?? null,
     s.source,
+    JSON.stringify(s.tags ?? []),
+    JSON.stringify(s.attrs ?? {}),
   );
 }
 
@@ -276,25 +303,260 @@ export function mapPromptToTrace(
   ).run(sessionId, promptId, traceId);
 }
 
-/** The most-recently-opened trace in a session — the attach target for orphan spans. */
-export function latestTraceId(
-  db: DatabaseSync,
-  sessionId: string,
-): string | undefined {
-  const row = db
-    .prepare(
-      `SELECT id FROM traces WHERE session_id = ? ORDER BY turn_seq DESC LIMIT 1`,
-    )
-    .get(sessionId) as { id: string } | undefined;
-  return row?.id;
-}
-
 /** Highest turn_seq used in a session so far (0 if none) — for the next turn. */
 export function maxTurnSeq(db: DatabaseSync, sessionId: string): number {
   const row = db
     .prepare(`SELECT MAX(turn_seq) AS max FROM traces WHERE session_id = ?`)
     .get(sessionId) as { max: number | null };
   return row.max ?? 0;
+}
+
+// --- Resilience helpers (Task 2.3) ----------------------------------------
+// Degrade / dead-letter / synthesize / finalize support. Kept in one trailing
+// block so the parallel Task 2.4 edits to this file rebase cleanly. Every helper
+// is a plain statement over existing columns — no new tables, no migration.
+
+/** An archived envelope as reprocess needs it: identity columns + the raw JSON. */
+export interface DeadLetterRow {
+  id: string;
+  session_id: string;
+  source: string;
+  hook_name: string | null;
+  received_at: string;
+  raw: string;
+}
+
+/** Per-status archive counts, surfaced by `GET /api/health`. */
+export interface IngestHealth {
+  processed: number;
+  degraded: number;
+  dead_letter: number;
+}
+
+/** Retag an already-archived envelope (degraded on drift, healed on reprocess). */
+export function setRawEventStatus(
+  db: DatabaseSync,
+  eventId: string,
+  status: RawEventStatus,
+  error?: string,
+): void {
+  db.prepare(`UPDATE raw_events SET status = ?, error = ? WHERE id = ?`).run(
+    status,
+    error ?? null,
+    eventId,
+  );
+}
+
+/**
+ * Archive garbage that never became an envelope (an unparseable HTTP body or one
+ * failing the shape guard) as a dead letter, keeping the original bytes. The
+ * `event_id` is content-derived the same way spool replay derives one for a torn
+ * line (`replay.ts`), so re-POSTing identical garbage dedupes instead of piling
+ * up rows. `source` is recorded as `hook` — the HTTP boundary — because a body
+ * that failed the shape guard has no trustworthy source of its own; whatever it
+ * claimed is still readable in `raw`.
+ */
+export function deadLetterRaw(
+  db: DatabaseSync,
+  input: {
+    rawText: string;
+    error: string;
+    sessionId?: string;
+    hookName?: string;
+  },
+): void {
+  const envelope = makeEnvelope({
+    source: 'hook',
+    session_id: input.sessionId ?? 'unknown',
+    hook_name: input.hookName ?? 'unknown',
+    raw_payload: input.rawText,
+    ts: new Date().toISOString(),
+  });
+  db.prepare(
+    `INSERT INTO raw_events (id, session_id, source, hook_name, received_at, status, error, raw)
+     VALUES (?, ?, ?, ?, ?, 'dead_letter', ?, ?)
+     ON CONFLICT(id) DO UPDATE SET error = excluded.error`,
+  ).run(
+    envelope.event_id,
+    envelope.session_id,
+    envelope.source,
+    envelope.hook_name ?? null,
+    envelope.ts,
+    input.error,
+    input.rawText,
+  );
+}
+
+/**
+ * Every dead letter in arrival order. The ordering is deliberate: replaying a
+ * `PostToolUse` before its `PreToolUse` must still converge, and while the
+ * terminal-status guard in `upsertSpan` makes that true, arrival order keeps the
+ * reconstructed timeline honest.
+ */
+export function listDeadLetters(db: DatabaseSync): DeadLetterRow[] {
+  return db
+    .prepare(
+      `SELECT id, session_id, source, hook_name, received_at, raw
+       FROM raw_events WHERE status = 'dead_letter'
+       ORDER BY received_at, rowid`,
+    )
+    .all() as unknown as DeadLetterRow[];
+}
+
+/** True if a span row already exists — how a close detects a missing open. */
+export function spanExists(db: DatabaseSync, spanId: string): boolean {
+  return (
+    db.prepare(`SELECT 1 AS hit FROM spans WHERE id = ?`).get(spanId) !== undefined
+  );
+}
+
+/**
+ * The most recent still-`live` trace in a session — the attach target for orphan
+ * spans. It refuses to hand back a closed turn, so post-`Stop` activity
+ * synthesizes a new trace instead of retroactively polluting the completed one
+ * (RFC 001), which a plain latest-trace lookup would do.
+ */
+export function latestOpenTraceId(
+  db: DatabaseSync,
+  sessionId: string,
+): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT id FROM traces WHERE session_id = ? AND status = 'live'
+       ORDER BY turn_seq DESC LIMIT 1`,
+    )
+    .get(sessionId) as { id: string } | undefined;
+  return row?.id;
+}
+
+/**
+ * The `source` field of the session's most recent archived `SessionStart` — the
+ * resume signal (`'resume'`), read straight off the raw archive so no side table
+ * is needed. `$.raw_payload.source` is the HARNESS source; `$.source` is the
+ * transport source (`hook`/`spool_replay`/…) and only the fallback for rows
+ * written before the archive held the full envelope. `json_valid` skips
+ * dead-lettered garbage, which is not JSON at all.
+ */
+export function lastSessionStartSource(
+  db: DatabaseSync,
+  sessionId: string,
+): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(json_extract(raw, '$.raw_payload.source'),
+                       json_extract(raw, '$.source')) AS src
+       FROM raw_events
+       WHERE session_id = ? AND hook_name = 'SessionStart' AND json_valid(raw)
+       ORDER BY received_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(sessionId) as { src: string | null } | undefined;
+  return row?.src ?? undefined;
+}
+
+/** Ids of every still-`live` trace in a session — the finalization work list. */
+export function liveTracesForSession(
+  db: DatabaseSync,
+  sessionId: string,
+): string[] {
+  const rows = db
+    .prepare(
+      `SELECT id FROM traces WHERE session_id = ? AND status = 'live' ORDER BY turn_seq`,
+    )
+    .all(sessionId) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Finalize every still-running span on a trace as `unknown` — an honest "we never
+ * saw it close" rather than a fabricated success. Returns the number closed.
+ */
+export function closeRunningSpans(
+  db: DatabaseSync,
+  traceId: string,
+  endedAt: string,
+): number {
+  const result = db
+    .prepare(
+      `UPDATE spans SET status = 'unknown', ended_at = COALESCE(ended_at, ?)
+       WHERE trace_id = ? AND status = 'running'`,
+    )
+    .run(endedAt, traceId);
+  return Number(result.changes);
+}
+
+/** Flip a live trace to `interrupted` (inactivity timeout). Returns true if it did. */
+export function markTraceInterrupted(
+  db: DatabaseSync,
+  traceId: string,
+  endedAt: string,
+): boolean {
+  const result = db
+    .prepare(
+      `UPDATE traces SET status = 'interrupted', ended_at = COALESCE(ended_at, ?)
+       WHERE id = ? AND status = 'live'`,
+    )
+    .run(endedAt, traceId);
+  return Number(result.changes) > 0;
+}
+
+/** Flip a live session to `interrupted` (inactivity timeout). */
+export function markSessionInterrupted(db: DatabaseSync, sessionId: string): void {
+  db.prepare(
+    `UPDATE sessions SET status = 'interrupted' WHERE id = ? AND status = 'live'`,
+  ).run(sessionId);
+}
+
+/**
+ * Undo an inactivity timeout when the session speaks again: `interrupted` → `live`
+ * for the session and its most recent interrupted trace. Never touches `complete`
+ * rows, and deliberately leaves spans the sweep closed `unknown` alone — a real
+ * close event upserts them to their true status anyway.
+ */
+export function reviveSession(db: DatabaseSync, sessionId: string): void {
+  db.prepare(
+    `UPDATE sessions SET status = 'live' WHERE id = ? AND status = 'interrupted'`,
+  ).run(sessionId);
+  db.prepare(
+    `UPDATE traces SET status = 'live', ended_at = NULL
+     WHERE id = (SELECT id FROM traces WHERE session_id = ? AND status = 'interrupted'
+                 ORDER BY turn_seq DESC LIMIT 1)`,
+  ).run(sessionId);
+}
+
+/**
+ * Wall-clock last-arrival per still-open session — the inactivity sweep's input.
+ * Staleness keys on `raw_events.received_at` (when WE saw it), never the harness
+ * `ts`, so a clock-skewed or backfilled event cannot fake liveness. Falls back to
+ * `started_at` for a session with no archived events (direct-normalize tests).
+ */
+export function lastActivityBySession(
+  db: DatabaseSync,
+): { session_id: string; last_activity: string }[] {
+  return db
+    .prepare(
+      `SELECT s.id AS session_id,
+              COALESCE((SELECT MAX(r.received_at) FROM raw_events r
+                        WHERE r.session_id = s.id), s.started_at) AS last_activity
+       FROM sessions s
+       WHERE s.status = 'live'
+          OR EXISTS (SELECT 1 FROM traces t
+                     WHERE t.session_id = s.id AND t.status = 'live')`,
+    )
+    .all() as unknown as { session_id: string; last_activity: string }[];
+}
+
+/** Archive counts by status — the drift/dead-letter counter the UI banner reads. */
+export function ingestHealth(db: DatabaseSync): IngestHealth {
+  const rows = db
+    .prepare(`SELECT status, COUNT(*) AS count FROM raw_events GROUP BY status`)
+    .all() as unknown as { status: string; count: number }[];
+  const health: IngestHealth = { processed: 0, degraded: 0, dead_letter: 0 };
+  for (const row of rows) {
+    if (row.status in health) {
+      health[row.status as keyof IngestHealth] = Number(row.count);
+    }
+  }
+  return health;
 }
 
 /**

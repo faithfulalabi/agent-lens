@@ -102,6 +102,23 @@ describe('replaySpool — collector down -> spool -> replay -> idempotent', () =
     db.close();
   });
 
+  it('counts a line that parses but fails projection as dead-lettered', async () => {
+    await runHook({ stdin: fixtureStream('pre-tool-use.json'), dataDir, port: 1 });
+    const db = openDb(dataDir);
+    // A genuine, dependency-free projection failure: the line is perfectly valid
+    // JSON, so only ingest's own verdict can reveal that it did not replay.
+    db.exec('DROP TABLE spans');
+
+    const result = replaySpool(db, new Broadcaster(), dataDir);
+
+    expect(result).toEqual({ files: 1, replayed: 0, deadLettered: 1 });
+    const row = db
+      .prepare("SELECT status FROM raw_events WHERE status = 'dead_letter'")
+      .get() as { status: string } | undefined;
+    expect(row?.status).toBe('dead_letter');
+    db.close();
+  });
+
   it('returns empty result when there is no spool dir', () => {
     const db = openDb(dataDir);
     const result = replaySpool(db, new Broadcaster(), dataDir);

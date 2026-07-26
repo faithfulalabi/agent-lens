@@ -82,8 +82,10 @@ function replayFile(
     }
 
     const restamped: Envelope = { ...(parsed as Envelope), source: 'spool_replay' };
-    ingestEnvelope(db, broadcaster, restamped, status);
-    if (status === 'dead_letter') result.deadLettered += 1;
+    const outcome = ingestEnvelope(db, broadcaster, restamped, status);
+    // A line can parse cleanly and still fail projection — count what ingest
+    // actually did, not what the spool sidecar predicted, or the counters lie.
+    if (status === 'dead_letter' || outcome.deadLettered) result.deadLettered += 1;
     else result.replayed += 1;
   }
 }

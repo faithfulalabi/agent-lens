@@ -3,9 +3,20 @@ import {
   bootTestServer,
   cleanupDir,
   makeTestEnvelope,
+  openTestDb,
   TOKEN_HEADER,
   type TestServer,
 } from './helpers.js';
+
+/** Every archived raw event, read through a second connection to the server's DB. */
+function rawEventRows(dataDir: string): Record<string, unknown>[] {
+  const db = openTestDb(dataDir);
+  try {
+    return db.prepare('SELECT * FROM raw_events').all() as Record<string, unknown>[];
+  } finally {
+    db.close();
+  }
+}
 
 let server: TestServer;
 
@@ -105,5 +116,67 @@ describe('POST /api/ingest -> row -> SSE', () => {
       await fetch(server.url('/api/events'), { headers: { [TOKEN_HEADER]: server.token } })
     ).json();
     expect(events).toHaveLength(0);
+
+    // Task 2.3: rejected at the boundary but still archived for triage — no
+    // spans_lite row (hence /api/events stays empty) and no broadcast.
+    const rows = rawEventRows(server.dataDir);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe('dead_letter');
+    expect(String(rows[0]!.error)).toMatch(/invalid envelope shape/);
+    expect(rows[0]!.session_id).toBe('sess-1');
+  });
+
+  it('archives an unparseable body as a dead letter and keeps serving', async () => {
+    server = await bootTestServer();
+    const mangled = '{"event_id": ';
+
+    const res = await fetch(server.url('/api/ingest'), {
+      method: 'POST',
+      headers: { [TOKEN_HEADER]: server.token, 'content-type': 'application/json' },
+      body: mangled,
+    });
+    expect(res.status).toBe(400);
+
+    const rows = rawEventRows(server.dataDir);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe('dead_letter');
+    // The original bytes survive verbatim, and the error says why.
+    expect(String(rows[0]!.raw)).toBe(mangled);
+    expect(String(rows[0]!.error)).toMatch(/invalid json/);
+
+    const events = await (
+      await fetch(server.url('/api/events'), { headers: { [TOKEN_HEADER]: server.token } })
+    ).json();
+    expect(events).toHaveLength(0);
+
+    // A good POST right after still works — garbage never wedges the funnel.
+    const good = await fetch(server.url('/api/ingest'), {
+      method: 'POST',
+      headers: { [TOKEN_HEADER]: server.token, 'content-type': 'application/json' },
+      body: JSON.stringify(makeTestEnvelope()),
+    });
+    expect(good.status).toBe(200);
+    expect(await good.json()).toEqual({ inserted: true, seq: 1 });
+  });
+
+  it('GET /api/health reports the archive counts by status', async () => {
+    server = await bootTestServer();
+    const post = (body: string) =>
+      fetch(server.url('/api/ingest'), {
+        method: 'POST',
+        headers: { [TOKEN_HEADER]: server.token, 'content-type': 'application/json' },
+        body,
+      });
+
+    await post(JSON.stringify(makeTestEnvelope()));
+    await post(
+      JSON.stringify(makeTestEnvelope({ hook_name: 'SomeFutureHook_v3', event_id: 'e2' })),
+    );
+    await post('not json at all');
+
+    const health = await (
+      await fetch(server.url('/api/health'), { headers: { [TOKEN_HEADER]: server.token } })
+    ).json();
+    expect(health).toEqual({ processed: 1, degraded: 1, dead_letter: 1 });
   });
 });

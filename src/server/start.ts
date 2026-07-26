@@ -13,6 +13,11 @@ import { buildApp } from './app.js';
 import { Broadcaster } from './sse.js';
 import { clearConfig, writeConfig } from './config.js';
 import { replaySpool } from '../capture/replay.js';
+import {
+  sweepInactive,
+  DEFAULT_SWEEP_INTERVAL_MS,
+  type SweepResult,
+} from '../capture/inactivity.js';
 
 /** Options for `startServer`. */
 export interface StartOptions {
@@ -22,6 +27,10 @@ export interface StartOptions {
   dataDir?: string;
   /** Bind host; defaults to loopback. A non-loopback value exposes the server. */
   host?: string;
+  /** Inactivity-sweep period in ms; `0` disables the sweep entirely. */
+  sweepIntervalMs?: number;
+  /** Called with each sweep's result — observability hook (and test seam). */
+  onSweep?: (result: SweepResult) => void;
 }
 
 /** A running server handle. */
@@ -135,6 +144,22 @@ export async function startServer(
     }
   }
 
+  // Start the inactivity sweep only once the socket is bound: every failure path
+  // above closes the DB, and a surviving timer that fires against a closed handle
+  // throws inside a timer callback where nothing can catch it.
+  const sweepIntervalMs = options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
+  const sweepTimer =
+    sweepIntervalMs > 0
+      ? setInterval(() => {
+          try {
+            options.onSweep?.(sweepInactive(db));
+          } catch (err) {
+            // A sweep is housekeeping; never let it take the collector down.
+            console.warn('agent-lens: inactivity sweep failed:', err);
+          }
+        }, sweepIntervalMs)
+      : undefined;
+
   writeConfig(dataDir, {
     port: boundPort,
     pid: process.pid,
@@ -155,6 +180,9 @@ export async function startServer(
     port: boundPort,
     close: () =>
       new Promise<void>((resolve) => {
+        // Clear the sweep FIRST: `server.close` is async, and a timer that fires
+        // after `db.close()` throws where no caller can catch it.
+        if (sweepTimer !== undefined) clearInterval(sweepTimer);
         server.close(() => {
           db.close();
           clearConfig(dataDir);
