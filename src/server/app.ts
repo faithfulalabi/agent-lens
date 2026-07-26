@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { DatabaseSync } from 'node:sqlite';
 import { getAllEventsOrdered } from '../db/index.js';
-import { hostGuard } from './middleware/host-guard.js';
+import { hostGuard, resolveBindHosts } from './middleware/host-guard.js';
 import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
 import { Broadcaster } from './sse.js';
@@ -17,17 +17,20 @@ export interface AppDeps {
   db: DatabaseSync;
   token: string;
   broadcaster: Broadcaster;
+  /** Configured bind host; a non-loopback value widens the Host allowlist. */
+  host?: string;
 }
 
 const HEARTBEAT_MS = 15_000;
 
 /** Assemble the Hono app with all Phase-1 routes. */
 export function buildApp(deps: AppDeps): Hono {
-  const { db, token, broadcaster } = deps;
+  const { db, token, broadcaster, host } = deps;
   const app = new Hono();
 
-  // App-wide host allowlist, before anything else.
-  app.use('*', hostGuard());
+  // App-wide host allowlist, before anything else. A non-loopback bind widens
+  // it to the machine's resolved interface addresses (token stays mandatory).
+  app.use('*', hostGuard(host === undefined ? [] : resolveBindHosts(host)));
 
   // Static page: same-origin token bootstrap, no token header required.
   app.get('/', (c) => c.html(renderPage(token)));

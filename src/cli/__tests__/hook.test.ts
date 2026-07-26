@@ -148,6 +148,56 @@ describe('runHook — exits 0 on every failure', () => {
   });
 });
 
+describe('runHook — adapter authenticates (AC3)', () => {
+  it('sends the token header when the token file exists', async () => {
+    const token = readOrCreateToken(dataDir);
+    let seenToken: string | undefined;
+    const sink: Server = createServer((req, res) => {
+      seenToken = req.headers['x-agentlens-token'] as string | undefined;
+      req.resume();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"stored":true,"duplicate":false}');
+    });
+    await new Promise<void>((resolve) => sink.listen(0, '127.0.0.1', resolve));
+    const port = (sink.address() as { port: number }).port;
+    try {
+      const result = await runHook({
+        stdin: fixtureStream('pre-tool-use.json'),
+        dataDir,
+        port,
+      });
+      expect(result.outcome).toBe('posted');
+      expect(seenToken).toBe(token);
+    } finally {
+      await new Promise<void>((resolve) => sink.close(() => resolve()));
+    }
+  });
+
+  it('spools (does not lose data) when the collector 401s an absent token', async () => {
+    // Server has its own token dir; the adapter points at a DIFFERENT dir with no
+    // token file, so it posts unauthenticated, the collector 401s, and the
+    // never-lose-data contract funnels the envelope to the spool.
+    server = await bootTestServer();
+    const hookDir = mkdtempSync(join(tmpdir(), 'agent-lens-hook-noauth-'));
+    process.exitCode = undefined;
+    try {
+      const result = await runHook({
+        stdin: fixtureStream('pre-tool-use.json'),
+        dataDir: hookDir,
+        port: server.handle.port,
+      });
+      expect(result.outcome).toBe('spooled');
+      expect(process.exitCode).toBe(0);
+      const lines = readFileSync(spoolFile('sess-fixture', hookDir), 'utf8')
+        .split('\n')
+        .filter((l) => l.trim() !== '');
+      expect(lines).toHaveLength(1);
+    } finally {
+      cleanupDir(hookDir);
+    }
+  });
+});
+
 describe('runHook — port discovery via config.json', () => {
   it('reaches the collector on the port written to config.json (no explicit port)', async () => {
     // Boot the server (writes config.json with the bound port), then invoke the

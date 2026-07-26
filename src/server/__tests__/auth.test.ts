@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'node:http';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readToken } from '../../shared/index.js';
+import { startServer, type ServerHandle } from '../start.js';
+import { resolveBindHosts } from '../middleware/host-guard.js';
 import {
   bootTestServer,
   cleanupDir,
@@ -33,12 +39,13 @@ function rawRequest(
   });
 }
 
-let server: TestServer;
+let server: TestServer | undefined;
 
 afterEach(async () => {
   if (server) {
     await server.close();
     cleanupDir(server.dataDir);
+    server = undefined;
   }
 });
 
@@ -74,6 +81,29 @@ describe('token auth on /api/*', () => {
   it('rejects a stream without a token (401)', async () => {
     server = await bootTestServer();
     const res = await fetch(server.url('/api/stream'));
+    expect(res.status).toBe(401);
+    await res.body?.cancel();
+  });
+
+  it('rejects /api/events without a token (401)', async () => {
+    server = await bootTestServer();
+    const res = await fetch(server.url('/api/events'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects /api/events with a wrong token (401)', async () => {
+    server = await bootTestServer();
+    const res = await fetch(server.url('/api/events'), {
+      headers: { [TOKEN_HEADER]: 'nope' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a stream with a wrong token (401)', async () => {
+    server = await bootTestServer();
+    const res = await fetch(server.url('/api/stream'), {
+      headers: { [TOKEN_HEADER]: 'nope' },
+    });
     expect(res.status).toBe(401);
     await res.body?.cancel();
   });
@@ -118,4 +148,90 @@ describe('host-header guard', () => {
       expect(res.status).toBe(200);
     },
   );
+
+  it.each(['/', '/api/events', '/api/stream'])(
+    'rejects a spoofed Host on %s (403)',
+    async (path) => {
+      server = await bootTestServer();
+      const res = await rawRequest(server.handle.port, path, {
+        [TOKEN_HEADER]: server.token,
+        host: 'evil.com',
+      });
+      expect(res.status).toBe(403);
+    },
+  );
+
+  it('serves the static page under a loopback Host (200)', async () => {
+    server = await bootTestServer();
+    const res = await rawRequest(server.handle.port, '/', {
+      host: `localhost:${server.handle.port}`,
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+// AC4: a non-loopback `--host` bind warns loudly, keeps token auth mandatory,
+// admits the resolved interface host/IP so the exposed server is reachable, and
+// still rejects a spoofed Host (rebinding defense intact). `0.0.0.0` binds all
+// interfaces, so the raw client can reach it via 127.0.0.1 while setting Host.
+describe('--host (non-loopback bind)', () => {
+  let handle: ServerHandle | undefined;
+  let dir: string | undefined;
+
+  afterEach(async () => {
+    if (handle) {
+      await handle.close();
+      handle = undefined;
+    }
+    if (dir) {
+      cleanupDir(dir);
+      dir = undefined;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('warns, enforces token, admits the resolved interface Host, and rejects spoofs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    dir = mkdtempSync(join(tmpdir(), 'agent-lens-host-'));
+    handle = await startServer({ port: 0, dataDir: dir, host: '0.0.0.0' });
+    const token = readToken(dir)!;
+
+    // Loud network-exposure warning was emitted.
+    expect(warn).toHaveBeenCalled();
+    const warned = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(warned).toMatch(/warning/i);
+    expect(warned).toMatch(/network/i);
+    // The literal bind address is never in the admitted host set.
+    expect(resolveBindHosts('0.0.0.0')).not.toContain('0.0.0.0');
+
+    const interfaceHost = resolveBindHosts('0.0.0.0').find((h) => !h.startsWith('['));
+    expect(interfaceHost).toBeDefined();
+
+    // Auth intact: resolved interface Host + missing token -> 401.
+    const noToken = await rawRequest(handle.port, '/api/events', {
+      host: `${interfaceHost}:${handle.port}`,
+    });
+    expect(noToken.status).toBe(401);
+
+    // Rebinding defense intact: spoofed Host -> 403 even with a valid token.
+    const spoofed = await rawRequest(handle.port, '/api/events', {
+      [TOKEN_HEADER]: token,
+      host: 'evil.com',
+    });
+    expect(spoofed.status).toBe(403);
+
+    // Exposed server actually reachable: resolved interface Host + valid token -> 200.
+    const ok = await rawRequest(handle.port, '/api/events', {
+      [TOKEN_HEADER]: token,
+      host: `${interfaceHost}:${handle.port}`,
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it('does not warn on a default loopback bind', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    dir = mkdtempSync(join(tmpdir(), 'agent-lens-host-'));
+    handle = await startServer({ port: 0, dataDir: dir });
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
