@@ -34,6 +34,10 @@ ui/dist/
 .idea/
 .vscode/
 
-# Tracer-bullet experiments: un-scrubbed captures + scratch data dir never commit
-fixtures/raw/
-experiments/tracer-bullet/.capture-scratch/
+# Tracer-bullet experiments: un-scrubbed captures + scratch data dir never commit.
+# The leading `**/` is load-bearing: a pattern with an interior slash is
+# ROOT-anchored, so the old `fixtures/raw/` did NOT ignore
+# experiments/tracer-bullet/fixtures/raw/ — which is exactly where capture.mjs
+# wrote during Task 1.5's live run. Asserted by experiments/.../gitignore.test.mjs.
+**/fixtures/raw/
+**/.capture-scratch/

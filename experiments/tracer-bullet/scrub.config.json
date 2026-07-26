@@ -62,6 +62,87 @@
       "replacement": "172.16.0.0"
     }
   ],
+  "detectRules": [
+    {
+      "$comment": "VERIFICATION-ONLY rules, used by verify.mjs — never by scrub.mjs. They exist to be an INDEPENDENT cross-check on the redactor, so they are deliberately LOOSER (lower quantifiers) than `rules` above: if someone ever tightens a scrub quantifier past a real secret, the detector still catches the residue and the gate fails. They are NOT a hand-copy of `rules` (that drift is exactly the bug SCRUBBING.md:59-65 shipped), and they are NOT a projection of them (that would be a tautology that tests nothing). Two hard constraints: (a) zero hits on this repo's own vocabulary — `task-break`, `task-review`, `task-shipper`, `disk-usage`, `ask-me`, `risk-score`; (b) zero hits on the placeholders `rules` emits, so scrubbed output verifies clean. Every quantifier below is above 7, the longest `sk-`-lookalike tail in (a) (`sk-shipper`).",
+      "name": "detect-anthropic-key",
+      "pattern": "sk-ant-[A-Za-z0-9_-]{6,}"
+    },
+    {
+      "name": "detect-openai-key",
+      "pattern": "sk-(?!ant-)[A-Za-z0-9]{12,}"
+    },
+    {
+      "$comment": "OpenAI's project/service/admin keys (the default format since mid-2024) are `sk-proj-` + a ~150-char base64url payload. The hyphens and underscores in that payload break `detect-openai-key`'s `[A-Za-z0-9]` run after only 4 chars (`proj`), so neither that rule nor `rules`' `openai-api-key` sees them. This rule needs its own literal prefix rather than widening the class: `[A-Za-z0-9_-]` after a bare `sk-` would match `sk-usage-monitoring-daemon` inside `disk-usage-monitoring-daemon` — reintroducing the exact false positive this task exists to remove. NOTE: `rules` has no counterpart, so a hit here is a gate failure the operator must resolve by adding a scrub rule; see the task's follow-up list.",
+      "name": "detect-openai-project-key",
+      "pattern": "sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{16,}"
+    },
+    {
+      "name": "detect-aws-access-key-id",
+      "pattern": "AKIA[0-9A-Z]{12,}"
+    },
+    {
+      "name": "detect-github-token",
+      "pattern": "gh[pousr]_[A-Za-z0-9]{12,}"
+    },
+    {
+      "$comment": "GitHub fine-grained PATs use the `github_pat_` prefix, whose third character (`i`) is outside `gh[pousr]_` — so `detect-github-token` and `rules`' `github-token` both miss them entirely. Same note as above: no `rules` counterpart yet.",
+      "name": "detect-github-fine-grained-pat",
+      "pattern": "github_pat_[A-Za-z0-9_]{20,}"
+    },
+    {
+      "$comment": "Segments are UPPER-bounded (a real JWT header segment is tens of chars). Unbounded, `eyJ<run>` restarts a full-length scan at every `eyJ` occurrence, which is quadratic on a base64-dense 10MB tool-results file.",
+      "name": "detect-jwt",
+      "pattern": "eyJ[A-Za-z0-9_-]{6,512}\\.[A-Za-z0-9_-]{6,512}"
+    },
+    {
+      "name": "detect-bearer-header",
+      "pattern": "(?i)authorization\"?\\s*[:=]\\s*\"?bearer\\s+(?!REDACTED\\b)[A-Za-z0-9._-]{4,}"
+    },
+    {
+      "name": "detect-agentlens-token-header",
+      "pattern": "(?i)x-agentlens-token\"?\\s*[:=]\\s*\"?(?!REDACTED\\b)[A-Za-z0-9._-]{4,}"
+    },
+    {
+      "$comment": "`(?![A-Za-z0-9])` after the keyword excludes plurals, so transcript token accounting (`input_tokens`, `cache_read_input_tokens`, `apiKeySource`) does not trip the standing gate. Numeric-only values are excluded for the same reason. The name prefix is BOUNDED and preceded by a non-name character: an unbounded leading `[A-Za-z0-9_.-]*` is quadratic, and this gate scans tool-results/*.txt files up to 10MB of arbitrary command output.",
+      "name": "detect-keyish-assignment",
+      "pattern": "(?i)(?:^|[^A-Za-z0-9_.-])[A-Za-z0-9_.-]{0,64}(?:key|token|secret|password)(?![A-Za-z0-9])\"?\\s*[:=]\\s*\"?(?!REDACTED\\b)(?![0-9]+[\"\\s,}]|[0-9]+$)[^\"\\s,}]{6,}"
+    },
+    {
+      "$comment": "`example.com` is the placeholder domain the email rule emits; excluding it keeps the detector idempotent over scrubbed output. Anchored after `@` so it cannot be evaded by starting the match one character in. Local part bounded for the same anti-quadratic reason as the rule above (RFC 5321 caps it at 64 anyway).",
+      "name": "detect-email",
+      "pattern": "[A-Za-z0-9._%+-]{1,64}@(?!example\\.com\\b)[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}"
+    },
+    {
+      "$comment": "Each RFC-1918 detector excludes the exact range-base address the matching scrub rule collapses to.",
+      "name": "detect-private-ip-10",
+      "pattern": "\\b10\\.(?!0\\.0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b"
+    },
+    {
+      "name": "detect-private-ip-192-168",
+      "pattern": "\\b192\\.168\\.(?!0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\b"
+    },
+    {
+      "name": "detect-private-ip-172",
+      "pattern": "\\b172\\.(?!16\\.0\\.0\\b)(?:1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}\\b"
+    },
+    {
+      "$comment": "Residual real home paths. `/home/USER` is the placeholder and is excluded; `/home/USERNAME` is not (no word boundary after USER), so a near-miss still fails the gate.",
+      "name": "detect-home-path",
+      "pattern": "/(?:Users|home)/(?!USER\\b)[A-Za-z0-9._-]+"
+    }
+  ],
+  "strip": {
+    "$comment": "JSONL-aware structural stripping, applied by scrubJsonl BEFORE the regex pass. Claude Code transcripts carry `type:\"attachment\"` lines whose body is the operator's installed skill/agent/MCP inventory — 63-66% of transcript bytes and a pure environment-config leak with no fixture value. The line is kept (count, ordering, and the uuid/parentUuid chain must survive so Phase-3's tailer still has something to walk); only the `attachment` body is replaced by `{type:<kind>,stripped:true}`. `attachmentTypes` is the observed-kinds inventory and is what gets stripped when `stripAllAttachments` is false; with it true, every attachment kind is stripped (fail-closed against kinds a future Claude Code release adds).",
+    "attachmentTypes": [
+      "skill_listing",
+      "agent_listing_delta",
+      "deferred_tools_delta",
+      "mcp_instructions_delta",
+      "task_reminder"
+    ],
+    "stripAllAttachments": true
+  },
   "anonymize": {
     "$comment": "Path/identity anonymization applied AFTER regex redaction. Set homeDir/username at runtime via --home and --user flags; these placeholders document intent.",
     "homePlaceholder": "/home/USER",

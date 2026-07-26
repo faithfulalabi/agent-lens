@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileRules, scrubText } from './scrub.mjs';
+import { compileRules, scrubText, scrubJsonl, stripAttachmentLine } from './scrub.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(readFileSync(join(here, 'scrub.config.json'), 'utf8'));
@@ -81,5 +81,211 @@ describe('scrubText redacts known secret shapes to zero hits', () => {
   it('preserves Q3 size markers (non-secret content survives)', () => {
     const input = 'prefix <<@000000512>> suffix';
     expect(scrubText(input, rules, anon)).toContain('<<@000000512>>');
+  });
+});
+
+/**
+ * The named Task 1.7 bug, from the redactor's side: this repo's own vocabulary
+ * embeds the literal `sk-` ("ta-sk-break", "di-sk-usage"). scrub.config.json's
+ * quantifiers were always correct here — it was SCRUBBING.md:62's hand-copied,
+ * quantifier-less grep that false-positived. This corpus pins the correct
+ * behavior so a future "tighten the regex" edit cannot regress it silently.
+ * The detector half of the same corpus lives in verify.test.mjs.
+ */
+const FALSE_POSITIVE_CORPUS = [
+  'task-break',
+  'task-review',
+  'task-shipper',
+  'disk-usage',
+  'ask-me',
+  'risk-score',
+  'internal_docs/agent-lens/tasks/task-1.7-fixture-finalization.md',
+  'run task-break then task-review then task-shipper; check disk-usage',
+];
+
+describe('scrubText does not false-positive on this repo (AC1)', () => {
+  it.each(FALSE_POSITIVE_CORPUS)('leaves %s byte-identical', (line) => {
+    expect(scrubText(line, rules, anon)).toBe(line);
+  });
+
+  it('still redacts a short anthropic key (the {20,} regression guard)', () => {
+    // scrub.test.mjs's original assertion, restated as an explicit AC: raising
+    // the sk-ant- quantifier to {20,} would un-redact this, and rule 2's
+    // (?!ant-) lookahead means no other rule would catch it.
+    expect(scrubText('sk-ant-abcdefgh1234', rules, anon)).toBe('[REDACTED-ANTHROPIC-KEY]');
+  });
+});
+
+/** A transcript line whose `attachment` body is the operator's private inventory. */
+function attachmentLine(uuid, kind, names) {
+  return JSON.stringify({
+    parentUuid: 'u0',
+    isSidechain: false,
+    attachment: { type: kind, addedNames: names, addedLines: names.length, content: names.join() },
+    type: 'attachment',
+    uuid,
+    timestamp: '2026-07-25T18:22:03.914Z',
+    userType: 'external',
+    cwd: '/work/scratch-project',
+    sessionId: '46f49151-6f7a-4b1e-9b6f-1b2c3d4e5f60',
+    version: '2.1.197',
+    gitBranch: 'main',
+  });
+}
+
+const PRIVATE_INVENTORY = ['acme-client-deploy', 'internal-revenue-audit', 'founder-inbox-triage'];
+
+describe('scrubJsonl strips attachment bodies (AC2)', () => {
+  const attachA = attachmentLine('u1', 'skill_listing', PRIVATE_INVENTORY);
+  const attachB = attachmentLine('u3', 'agent_listing_delta', PRIVATE_INVENTORY);
+  const plain = [
+    '{"type":"user","uuid":"u0","message":{"role":"user","content":"hi"}}',
+    '{"type":"assistant","uuid":"u2","message":{"role":"assistant","content":"ok"}}',
+    '{"type":"system","uuid":"u4","subtype":"turn_end"}',
+  ];
+  const input = `${[plain[0], attachA, plain[1], attachB, plain[2]].join('\n')}\n`;
+  const out = scrubJsonl(input, rules, anon, config);
+  const outLines = out.split('\n').slice(0, -1);
+
+  it('preserves line count', () => {
+    expect(outLines).toHaveLength(5);
+  });
+
+  it('leaves every line valid JSON', () => {
+    for (const line of outLines) expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  it('leaves non-attachment lines byte-identical', () => {
+    expect(outLines[0]).toBe(plain[0]);
+    expect(outLines[2]).toBe(plain[1]);
+    expect(outLines[4]).toBe(plain[2]);
+  });
+
+  it('replaces the attachment body with {type, stripped}', () => {
+    for (const [index, kind] of [
+      [1, 'skill_listing'],
+      [3, 'agent_listing_delta'],
+    ]) {
+      expect(JSON.parse(outLines[index]).attachment).toEqual({ type: kind, stripped: true });
+    }
+  });
+
+  it('preserves the envelope keys the tailer walks', () => {
+    const parsed = JSON.parse(outLines[1]);
+    expect(parsed.uuid).toBe('u1');
+    expect(parsed.parentUuid).toBe('u0');
+    expect(parsed.timestamp).toBe('2026-07-25T18:22:03.914Z');
+    expect(parsed.sessionId).toBe('46f49151-6f7a-4b1e-9b6f-1b2c3d4e5f60');
+    expect(parsed.type).toBe('attachment');
+  });
+
+  it('leaves no operator inventory name anywhere in the output', () => {
+    for (const name of PRIVATE_INVENTORY) expect(out).not.toContain(name);
+  });
+
+  it('strips every attachment kind, including unknown ones (fail-closed)', () => {
+    const unknown = attachmentLine('u9', 'future_listing_v2', PRIVATE_INVENTORY);
+    const stripped = JSON.parse(stripAttachmentLine(unknown, config));
+    expect(stripped.attachment).toEqual({ type: 'future_listing_v2', stripped: true });
+  });
+
+  it('honors stripAllAttachments:false by restricting to attachmentTypes', () => {
+    const narrow = { strip: { attachmentTypes: ['skill_listing'], stripAllAttachments: false } };
+    const known = attachmentLine('u9', 'skill_listing', PRIVATE_INVENTORY);
+    const other = attachmentLine('u9', 'agent_listing_delta', PRIVATE_INVENTORY);
+    expect(JSON.parse(stripAttachmentLine(known, narrow)).attachment.stripped).toBe(true);
+    expect(stripAttachmentLine(other, narrow)).toBe(other);
+  });
+
+  it('passes through non-JSON and non-attachment lines untouched', () => {
+    expect(stripAttachmentLine('not json at all', config)).toBe('not json at all');
+    expect(stripAttachmentLine('', config)).toBe('');
+    expect(stripAttachmentLine('{"type":"user"}', config)).toBe('{"type":"user"}');
+  });
+
+  it('REFUSES a torn line rather than letting the inventory through', () => {
+    // A transcript copied mid-write leaves a truncated last line. Passing it to
+    // the text-only path would carry the attachment body into the fixture, and
+    // no scrub or detect rule can recognize a skill/agent/MCP name — so it
+    // would clear every automated gate. Fail closed.
+    const torn = attachA.slice(0, 120);
+    expect(torn).toContain(PRIVATE_INVENTORY[0]); // the leak this refusal prevents
+    const input = `${plain[0]}\n${torn}`;
+    expect(() => scrubJsonl(input, rules, anon, config)).toThrow(/line 2 is not valid JSON/);
+    expect(() => scrubJsonl(input, rules, anon, config)).toThrow(/Re-capture/);
+    // ...and the text pass alone would not have caught it.
+    expect(scrubText(torn, rules, anon)).toContain(PRIVATE_INVENTORY[0]);
+  });
+
+  it('tolerates a trailing blank line (not a torn line)', () => {
+    expect(() => scrubJsonl(`${plain[0]}\n`, rules, anon, config)).not.toThrow();
+  });
+});
+
+describe('scrubJsonl is deterministic, idempotent, and shape-preserving (AC1/AC4)', () => {
+  const corpus = Array.from({ length: 100 }, (_, i) =>
+    i % 3 === 0
+      ? attachmentLine(`u${i}`, 'skill_listing', PRIVATE_INVENTORY)
+      : JSON.stringify({ type: 'user', uuid: `u${i}`, text: `sk-ant-abcd1234EFGH5678ijkl ${i}` }),
+  ).join('\n');
+
+  it('preserves line count on a 100-line input', () => {
+    expect(scrubJsonl(`${corpus}\n`, rules, anon, config).split('\n').slice(0, -1)).toHaveLength(
+      100,
+    );
+  });
+
+  it('is idempotent', () => {
+    const once = scrubJsonl(`${corpus}\n`, rules, anon, config);
+    expect(scrubJsonl(once, rules, anon, config)).toBe(once);
+  });
+
+  it('is deterministic', () => {
+    expect(scrubJsonl(`${corpus}\n`, rules, anon, config)).toBe(
+      scrubJsonl(`${corpus}\n`, rules, anon, config),
+    );
+  });
+
+  it('preserves the presence or absence of a trailing newline', () => {
+    const line = '{"type":"user","uuid":"u0"}';
+    expect(scrubJsonl(`${line}\n`, rules, anon, config)).toBe(`${line}\n`);
+    expect(scrubJsonl(line, rules, anon, config)).toBe(line);
+  });
+
+  it('still redacts secrets inside a stripped transcript', () => {
+    const withSecret = `{"type":"user","text":"key is sk-ant-abcd1234EFGH5678ijkl"}\n`;
+    expect(scrubJsonl(withSecret, rules, anon, config)).toContain('[REDACTED-ANTHROPIC-KEY]');
+  });
+});
+
+describe('join keys survive scrubbing (AC4)', () => {
+  // Rewriting any of these breaks the envelopes <-> parent transcript <->
+  // subagents/*.meta.json correlation that Tasks 2.6 and 4.3 depend on.
+  const JOIN_KEYS = [
+    '2026-07-25T18:22:03.914Z',
+    '46f49151-6f7a-4b1e-9b6f-1b2c3d4e5f60',
+    'toolu_011yHPRrpTe1ESJTtV7wAaiK',
+    'agent-a45c7513-6f7a-4b1e-9b6f-1b2c3d4e5f60',
+    'prompt_01HZX9',
+  ];
+
+  it.each(JOIN_KEYS)('passes %s through verbatim', (key) => {
+    const line = `{"k":"${key}"}`;
+    expect(scrubText(line, rules, anon)).toBe(line);
+    expect(scrubJsonl(`${line}\n`, rules, anon, config)).toBe(`${line}\n`);
+  });
+
+  it('keeps join keys on a realistic envelope line', () => {
+    const envelope = JSON.stringify({
+      event_id: '46f49151:hook:PostToolUse:toolu_011yHPRrpTe1ESJTtV7wAaiK',
+      session_id: '46f49151-6f7a-4b1e-9b6f-1b2c3d4e5f60',
+      harness: 'claude-code',
+      source: 'hook',
+      hook_name: 'PostToolUse',
+      tool_use_id: 'toolu_011yHPRrpTe1ESJTtV7wAaiK',
+      ts: '2026-07-25T18:22:03.914Z',
+      raw_payload: { agent_id: 'agent-a45c7513', tool_response: { stdout: '<<@000000512>>' } },
+    });
+    expect(scrubJsonl(`${envelope}\n`, rules, anon, config)).toBe(`${envelope}\n`);
   });
 });

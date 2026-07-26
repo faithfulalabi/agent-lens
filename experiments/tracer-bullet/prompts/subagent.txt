@@ -25,7 +25,7 @@ WHAT TO OBSERVE / CAPTURE AFTER THE RUN:
 - Confirm the `agent_transcript_path` file actually EXISTS on disk and is
   distinct from the parent session transcript (Q2).
 
-CAPTURE:
-  node experiments/tracer-bullet/capture.mjs --exp subagent \
-    --data-dir "$AGENT_LENS_DIR" \
-    --transcripts "<parent_transcript_path>,<agent_transcript_path>"
+CAPTURE: handled for you.
+  `source experiments/tracer-bullet/run-experiment.sh subagent` printed this prompt;
+  return to that terminal and type `done` when the session is finished. It
+  discovers the transcript, captures, scrubs, and runs verify.mjs.
