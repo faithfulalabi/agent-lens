@@ -1,11 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import type { Envelope } from '../shared/index.js';
-import { applySchema } from './schema.js';
+import { runMigrations } from './migrate.js';
 
 // SQLite layer: schema application + queries. The ONLY module that touches SQL.
-// Phase-1 tracer bullet subset (Task 1.3); Task 2.1 supersedes with the real
-// migration runner.
+// Schema now comes from the migration runner (Task 2.1); Phase-1 ingest still
+// uses the `spans_lite` compat table until Task 2.2 cuts over.
 export const MODULE = 'db';
 
 /** The on-disk DB filename inside the data dir. */
@@ -21,10 +21,10 @@ export interface SpanLite {
   ts: string;
 }
 
-/** Open (or create) the data-dir DB, apply the minimal schema, return the handle. */
+/** Open (or create) the data-dir DB, run migrations + pragmas, return the handle. */
 export function openDb(dataDir: string): DatabaseSync {
   const db = new DatabaseSync(join(dataDir, DB_FILE));
-  applySchema(db);
+  runMigrations(db);
   return db;
 }
 
