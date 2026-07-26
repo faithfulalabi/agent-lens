@@ -1,68 +1,20 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
-import { runMigrations } from '../../db/migrate.js';
-import { ensurePromptTraceMap } from '../../db/index.js';
-import { makeEnvelope } from '../../shared/index.js';
-import type { Envelope } from '../../shared/index.js';
+import type { DatabaseSync } from 'node:sqlite';
 import { normalize, mapToolStatus } from '../normalizer.js';
 import { ingestEnvelope } from '../../server/ingest.js';
 import { Broadcaster } from '../../server/sse.js';
-
-// In-memory migrated DB per test (migrate.test conventions) + the prompt→trace
-// side-table `openDb` would create. The normalizer assumes it runs inside a
-// transaction; these tests call it directly (single implicit txn is fine).
-
-function freshDb(): DatabaseSync {
-  const db = new DatabaseSync(':memory:');
-  runMigrations(db);
-  ensurePromptTraceMap(db);
-  return db;
-}
-
-const SESSION = 'sess-1';
-const TS = '2026-07-26T00:00:00.000Z';
-
-/**
- * Build a hook envelope with a deterministic id from its correlators. Real
- * hook payloads carry `tool_use_id`/`prompt_id` as payload fields (tracer
- * findings Q5), so mirror them into `raw_payload` — that's what the normalizer
- * reads for span/trace identity.
- */
-function hookEnvelope(
-  hook_name: string,
-  raw_payload: Record<string, unknown>,
-  overrides: Partial<{ tool_use_id: string; prompt_id: string; ts: string }> = {},
-): Envelope {
-  const payload: Record<string, unknown> = { ...raw_payload };
-  if (overrides.tool_use_id !== undefined) payload.tool_use_id = overrides.tool_use_id;
-  if (overrides.prompt_id !== undefined) payload.prompt_id = overrides.prompt_id;
-  return makeEnvelope({
-    source: 'hook',
-    session_id: SESSION,
-    hook_name,
-    raw_payload: payload,
-    ts: overrides.ts ?? TS,
-    tool_use_id: overrides.tool_use_id,
-    prompt_id: overrides.prompt_id,
-  });
-}
-
-type Row = Record<string, unknown>;
-
-const sessions = (db: DatabaseSync): Row[] =>
-  db.prepare('SELECT * FROM sessions').all() as Row[];
-const traces = (db: DatabaseSync): Row[] =>
-  db.prepare('SELECT * FROM traces').all() as Row[];
-const spans = (db: DatabaseSync): Row[] =>
-  db.prepare('SELECT * FROM spans').all() as Row[];
-const payloads = (db: DatabaseSync): Row[] =>
-  db.prepare('SELECT * FROM payloads').all() as Row[];
-
-/** First row, asserted present — keeps strict-null tests terse. */
-function first(rows: Row[]): Row {
-  expect(rows.length).toBeGreaterThan(0);
-  return rows[0]!;
-}
+import {
+  freshDb,
+  hookEnvelope,
+  first,
+  sessions,
+  traces,
+  spans,
+  payloads,
+  rawEvents,
+  SESSION,
+  TS,
+} from './fixtures.js';
 
 describe('normalizer — AC1: each hook type projects the expected rows', () => {
   let db: DatabaseSync;
@@ -323,9 +275,6 @@ describe('normalizer — AC3: identical payload content dedups to one row', () =
 });
 
 describe('normalizer — AC4: every processed envelope archives + is idempotent', () => {
-  const rawEvents = (db: DatabaseSync): Row[] =>
-    db.prepare('SELECT * FROM raw_events').all() as Row[];
-
   it('records a raw_event status=processed and re-ingest adds no rows', () => {
     const db = freshDb();
     const bc = new Broadcaster();
@@ -353,13 +302,48 @@ describe('normalizer — AC4: every processed envelope archives + is idempotent'
     expect(spans(db)).toHaveLength(spansAfterFirst);
   });
 
-  it('archives even an unknown hook without throwing', () => {
+  it('archives even an unknown hook without throwing, flagged degraded', () => {
     const db = freshDb();
     const bc = new Broadcaster();
     const env = hookEnvelope('WeirdHook', { anything: true });
     expect(() => ingestEnvelope(db, bc, env)).not.toThrow();
     const rawRows = rawEvents(db);
     expect(rawRows).toHaveLength(1);
-    expect(first(rawRows).status).toBe('processed');
+    // Task 2.3: an unrecognized hook is a visible degradation, not a clean pass.
+    expect(first(rawRows).status).toBe('degraded');
+  });
+});
+
+describe('normalizer — post-Stop attachment (Task 2.3 regression)', () => {
+  let db: DatabaseSync;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('promptless activity after Stop never lands on the completed trace', () => {
+    normalize(db, hookEnvelope('UserPromptSubmit', { prompt: 'x' }, { prompt_id: 'p1' }));
+    normalize(db, hookEnvelope('Stop', {}, { ts: '2026-07-26T02:00:00.000Z' }));
+    normalize(
+      db,
+      hookEnvelope('PreToolUse', { tool_name: 'Bash' }, { tool_use_id: 'toolu_late' }),
+    );
+
+    const rows = traces(db);
+    expect(rows).toHaveLength(2);
+    expect(first(rows).status).toBe('complete');
+    expect(rows[1]!.id).toBe(`${SESSION}:2`);
+    expect(rows[1]!.status).toBe('live');
+    const span = first(spans(db));
+    expect(span.trace_id).toBe(`${SESSION}:2`);
+  });
+
+  it('a Stop with no live trace is a no-op, not a second close', () => {
+    normalize(db, hookEnvelope('UserPromptSubmit', { prompt: 'x' }, { prompt_id: 'p1' }));
+    normalize(db, hookEnvelope('Stop', {}, { ts: '2026-07-26T02:00:00.000Z' }));
+    normalize(db, hookEnvelope('Stop', {}, { ts: '2026-07-26T03:00:00.000Z' }));
+
+    const rows = traces(db);
+    expect(rows).toHaveLength(1);
+    expect(first(rows).ended_at).toBe('2026-07-26T02:00:00.000Z');
   });
 });

@@ -21,61 +21,125 @@ import {
   insertPayload,
   getTraceIdByPromptId,
   mapPromptToTrace,
-  latestTraceId,
+  latestOpenTraceId,
+  lastSessionStartSource,
+  liveTracesForSession,
+  closeRunningSpans,
+  reviveSession,
+  spanExists,
   maxTurnSeq,
 } from '../db/index.js';
 
 /** Loose view of a hook payload: an object of harness-supplied fields. */
 type HookPayload = Record<string, unknown>;
 
+/**
+ * The normalizer's verdict on one envelope. `degraded` means the projection
+ * survived but lost fidelity (an unrecognized hook), which the caller records on
+ * the archive row so the drift counter surfaces it. Extra *fields* on a KNOWN
+ * hook are not degradation — they are stashed in `spans.attrs` and stay
+ * `processed` ("keep known fields, stash the rest").
+ */
+export interface NormalizeResult {
+  degraded: boolean;
+  reason?: string;
+}
+
+/** Shared no-drift verdict; frozen because every clean branch returns this instance. */
+const OK: NormalizeResult = Object.freeze({ degraded: false });
+
 /** Length cap for the human-readable trace prompt preview. */
 const PROMPT_PREVIEW_MAX = 200;
+
+/** Envelope-level fields every hook carries; never drift, never stashed. */
+const COMMON_KEYS = [
+  'session_id',
+  'hook_event_name',
+  'transcript_path',
+  'cwd',
+  'prompt_id',
+] as const;
+
+/**
+ * Payload keys each known hook is understood to carry. Anything outside this set
+ * is harness drift: preserved verbatim in `spans.attrs` rather than dropped, so a
+ * Claude Code release that adds a field loses nothing.
+ */
+const KNOWN_KEYS: Record<string, readonly string[]> = {
+  PreToolUse: ['tool_name', 'tool_input', 'tool_use_id'],
+  PostToolUse: [
+    'tool_name',
+    'tool_input',
+    'tool_response',
+    'tool_use_id',
+    'error',
+    'permissionDecision',
+    'permission_denied',
+  ],
+  PostToolUseFailure: [
+    'tool_name',
+    'tool_input',
+    'tool_response',
+    'tool_use_id',
+    'error',
+    'permissionDecision',
+    'permission_denied',
+  ],
+  SubagentStart: ['agent_id', 'agent_type', 'agent_transcript_path'],
+  SubagentStop: ['agent_id', 'agent_type', 'agent_transcript_path'],
+  PreCompact: ['trigger', 'custom_instructions'],
+  PostCompact: ['trigger', 'custom_instructions', 'compact_summary'],
+};
 
 /**
  * Project one envelope onto the session/trace/span model. Assumes it runs inside
  * a transaction (opened by the caller). Unknown/malformed hooks fall through to a
- * generic span and never throw.
+ * generic span and never throw; the returned verdict tells the caller whether the
+ * archive row should be flagged `degraded`.
  */
-export function normalize(db: DatabaseSync, envelope: Envelope): void {
+export function normalize(db: DatabaseSync, envelope: Envelope): NormalizeResult {
   const payload = asPayload(envelope.raw_payload);
   const hook = envelope.hook_name ?? '';
+
+  // Any event at all proves the session is alive again after an inactivity sweep.
+  reviveSession(db, envelope.session_id);
 
   switch (hook) {
     case 'SessionStart':
       openSession(db, envelope, payload);
-      return;
+      return OK;
     case 'SessionEnd':
       closeSession(db, envelope, 'complete');
-      return;
+      return OK;
     case 'UserPromptSubmit':
       openTrace(db, envelope, payload, 'user_prompt');
-      return;
+      return OK;
     case 'PreToolUse':
       openToolSpan(db, envelope, payload);
-      return;
+      return OK;
     case 'PostToolUse':
       closeToolSpan(db, envelope, payload, mapToolStatus(payload));
-      return;
+      return OK;
     case 'PostToolUseFailure':
       closeToolSpan(db, envelope, payload, 'error');
-      return;
+      return OK;
     case 'SubagentStart':
       openSubagentSpan(db, envelope, payload);
-      return;
+      return OK;
     case 'SubagentStop':
       closeSubagentSpan(db, envelope, payload);
-      return;
+      return OK;
     case 'Stop':
       closeActiveTrace(db, envelope);
-      return;
+      return OK;
     case 'PreCompact':
     case 'PostCompact':
       compactSpan(db, envelope, payload, hook);
-      return;
+      return OK;
     default:
       // Unknown hook: record a generic span on the active turn, never throw.
-      genericSpan(db, envelope, hook || 'unknown');
-      return;
+      genericSpan(db, envelope, hook || 'unknown', payload);
+      return { degraded: true, reason: `unknown hook ${hook || '(none)'}` };
   }
 }
 
@@ -90,6 +154,11 @@ function closeSession(
   env: Envelope,
   status: 'complete' | 'interrupted',
 ): void {
+  // Session over: anything still running never reported a close, so finalize it
+  // honestly as `unknown` rather than leaving a span running forever.
+  for (const traceId of liveTracesForSession(db, env.session_id)) {
+    closeRunningSpans(db, traceId, env.ts);
+  }
   // Upsert-by-id: if SessionEnd arrives before SessionStart (out-of-order,
   // Q6), still materialize the row so nothing is lost.
   upsertSession(db, {
@@ -153,6 +222,7 @@ function openToolSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void {
     started_at: env.ts,
     input_payload_id: inputId,
     source: 'hook',
+    attrs: overflowAttrs(p, 'PreToolUse'),
   });
 }
 
@@ -169,6 +239,9 @@ function closeToolSpan(
   const outputId = p.tool_response !== undefined
     ? insertPayload(db, canonicalJson(p.tool_response))
     : undefined;
+  // A close with no matching open means the Pre was lost (or never fired). Record
+  // the span anyway and mark it, so `started_at` is visibly a guess, not data.
+  const synthetic = !spanExists(db, spanId);
 
   upsertSpan(db, {
     id: spanId,
@@ -182,6 +255,8 @@ function closeToolSpan(
     ended_at: env.ts,
     output_payload_id: outputId,
     source: 'hook',
+    tags: synthetic ? ['synthetic_open'] : [],
+    attrs: overflowAttrs(p, env.hook_name ?? 'PostToolUse'),
   });
 }
 
@@ -196,6 +271,7 @@ function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): void
     status: 'running',
     started_at: env.ts,
     source: 'hook',
+    attrs: overflowAttrs(p, 'SubagentStart'),
   });
 }
 
@@ -211,12 +287,22 @@ function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): voi
     started_at: env.ts,
     ended_at: env.ts,
     source: 'hook',
+    attrs: overflowAttrs(p, 'SubagentStop'),
   });
 }
 
+/**
+ * Stop finalizes the open turn. Only a `live` trace is closed — a Stop with no
+ * open turn is a no-op rather than a retroactive edit of an already-complete one.
+ * `trigger`/`prompt_preview` here are insert-only filler: the upsert's conflict
+ * clause advances just `status`/`ended_at`, so a synthesized `system_resume` or
+ * `compaction` trace keeps its real trigger.
+ */
 function closeActiveTrace(db: DatabaseSync, env: Envelope): void {
-  const traceId = latestTraceId(db, env.session_id);
+  const traceId = latestOpenTraceId(db, env.session_id);
   if (!traceId) return;
+  // Turn over: any span still running never reported a close.
+  closeRunningSpans(db, traceId, env.ts);
   const turnSeq = Number(traceId.slice(traceId.lastIndexOf(':') + 1));
   upsertTrace(db, {
     id: traceId,
@@ -246,11 +332,24 @@ function compactSpan(
     started_at: env.ts,
     ended_at: env.ts,
     source: 'hook',
+    attrs: overflowAttrs(p, hook),
   });
 }
 
-function genericSpan(db: DatabaseSync, env: Envelope, name: string): void {
-  const traceId = resolveTrace(db, env, {});
+/**
+ * Fallback for a hook this build does not know. The span is tagged `degraded` and
+ * the entire payload is stashed in `attrs`, so a future Claude Code release is
+ * visible-but-lossless rather than silently dropped. The real payload is handed
+ * to `resolveTrace` (it may carry `prompt_id` or a resume `source`) — passing an
+ * empty object here would blind every downstream heuristic.
+ */
+function genericSpan(
+  db: DatabaseSync,
+  env: Envelope,
+  name: string,
+  p: HookPayload,
+): void {
+  const traceId = resolveTrace(db, env, p);
   upsertSpan(db, {
     id: env.event_id,
     trace_id: traceId,
@@ -260,6 +359,8 @@ function genericSpan(db: DatabaseSync, env: Envelope, name: string): void {
     started_at: env.ts,
     ended_at: env.ts,
     source: 'hook',
+    tags: ['degraded'],
+    attrs: overflowAttrs(p, name),
   });
 }
 
@@ -295,9 +396,20 @@ function isDenied(p: HookPayload): boolean {
 // --- Helpers ---------------------------------------------------------------
 
 /**
- * Find the trace a tool/subagent/compact span belongs to: prefer the
- * `prompt_id`→trace bridge, then the latest open trace, else synthesize an
- * orphan trace so the span always has a parent (activity before any prompt).
+ * Find the trace a tool/subagent/compact span belongs to.
+ *
+ * **Precedence is `prompt_id`-wins, deliberately (Task 2.3 ruling).** When the
+ * harness gives us a `prompt_id` that maps to a turn, that turn owns the span
+ * *regardless of its status* — the correlator is authoritative, so a late
+ * `PostToolUse` for turn 1 genuinely belongs to turn 1 even though `Stop` already
+ * completed it. A status filter here would only split a Pre/Post pair across two
+ * traces, since `upsertSpan` never rewrites `trace_id`. Consequence for rollup
+ * consumers: **a `complete` trace can still gain a span after close**, so rollups
+ * must not be treated as computed-once-at-`Stop`.
+ *
+ * Without a `prompt_id` the fallback is the latest *open* trace — never a closed
+ * one — so promptless post-`Stop` activity synthesizes a fresh trace instead of
+ * gluing onto the finished turn (RFC 001).
  */
 function resolveTrace(db: DatabaseSync, env: Envelope, p: HookPayload): string {
   const promptId = str(p.prompt_id);
@@ -305,10 +417,61 @@ function resolveTrace(db: DatabaseSync, env: Envelope, p: HookPayload): string {
     const mapped = getTraceIdByPromptId(db, env.session_id, promptId);
     if (mapped) return mapped;
   }
-  const latest = latestTraceId(db, env.session_id);
-  if (latest) return latest;
-  // No trace yet — synthesize one so orphan activity is still attributable.
-  return openTrace(db, env, p, 'unknown');
+  const open = latestOpenTraceId(db, env.session_id);
+  if (open) return open;
+  // No open turn — synthesize one so orphan activity is still attributable, and
+  // label WHY it appeared so the UI can say "resumed" rather than "unknown".
+  return openTrace(db, env, p, triggerFor(db, env, env.hook_name ?? '', p));
+}
+
+/**
+ * Why did orphan activity appear with no open turn? Resolved in order:
+ * compaction hooks, an explicit resume `source` on this payload, a `Notification`
+ * hook, then the session's most recent `SessionStart` having been a resume.
+ *
+ * That last clause is the one that makes `SessionStart`-driven resume work at
+ * all: `SessionStart` opens no trace (it must not burn a `turn_seq`), so the
+ * signal has to be recovered from the raw archive when the first real activity
+ * lands. It is a stateless lookback — no side table, replay-safe, and visible
+ * in-transaction because the archive write precedes the projection.
+ *
+ * TODO(task-1.7): `Notification` → `system_resume` and `source === 'resume'` are
+ * best guesses; no captured resume fixture exists yet. Task 1.7's golden fixtures
+ * confirm or correct them (same containment Task 2.2 used for `denied`).
+ */
+function triggerFor(
+  db: DatabaseSync,
+  env: Envelope,
+  hook: string,
+  p: HookPayload,
+): TraceTrigger {
+  if (hook === 'PreCompact' || hook === 'PostCompact') return 'compaction';
+  if (str(p.source) === 'resume') return 'system_resume';
+  if (hook === 'Notification') return 'system_resume';
+  if (lastSessionStartSource(db, env.session_id) === 'resume') {
+    return 'system_resume';
+  }
+  return 'unknown';
+}
+
+/**
+ * Harness drift, preserved: every payload key this build does not recognize,
+ * verbatim, for `spans.attrs`. Keeping known fields and stashing the rest is what
+ * lets a Claude Code release add fields without losing them.
+ *
+ * `null`-valued keys are omitted on purpose: `attrs` merges with `json_patch`
+ * (RFC 7386), where an explicit `null` DELETES the key — so passing one through
+ * could erase a value stashed by an earlier event. The verbatim `raw_events.raw`
+ * archive remains the record of record for them.
+ */
+function overflowAttrs(p: HookPayload, hook: string): Record<string, unknown> {
+  const known = new Set<string>([...COMMON_KEYS, ...(KNOWN_KEYS[hook] ?? [])]);
+  const attrs: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(p)) {
+    if (known.has(key) || value === null) continue;
+    attrs[key] = value;
+  }
+  return attrs;
 }
 
 /**

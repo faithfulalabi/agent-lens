@@ -5,7 +5,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { DatabaseSync } from 'node:sqlite';
-import { getAllEventsOrdered } from '../db/index.js';
+import { deadLetterRaw, getAllEventsOrdered, ingestHealth } from '../db/index.js';
 import { hostGuard, resolveBindHosts } from './middleware/host-guard.js';
 import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
@@ -23,6 +23,13 @@ export interface AppDeps {
 
 const HEARTBEAT_MS = 15_000;
 
+/** Best-effort string field off a shape-rejected body, for dead-letter triage. */
+function readString(body: unknown, key: string): string | undefined {
+  if (body === null || typeof body !== 'object') return undefined;
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
 /** Assemble the Hono app with all Phase-1 routes. */
 export function buildApp(deps: AppDeps): Hono {
   const { db, token, broadcaster, host } = deps;
@@ -38,14 +45,28 @@ export function buildApp(deps: AppDeps): Hono {
   // Everything under /api/* is token-guarded.
   app.use('/api/*', tokenAuth(token));
 
+  // Garbage at the boundary is archived, not discarded: a mangled body is still
+  // evidence that something tried to report activity, and after a parser fix
+  // `reprocessDeadLetters` can replay it. Status stays 400 (the adapter treats
+  // non-2xx as "spool it", so the event also survives on the client side).
+  // Deliberately no spans_lite row and no broadcast — there is no trustworthy
+  // event_id, and polluting the live list with garbage helps nobody.
   app.post('/api/ingest', async (c) => {
+    const text = await c.req.text();
     let body: unknown;
     try {
-      body = await c.req.json();
-    } catch {
+      body = JSON.parse(text);
+    } catch (err) {
+      deadLetterRaw(db, { rawText: text, error: `invalid json: ${String(err)}` });
       return c.json({ error: 'invalid json' }, 400);
     }
     if (!isValidEnvelopeShape(body)) {
+      deadLetterRaw(db, {
+        rawText: text,
+        error: 'invalid envelope shape',
+        sessionId: readString(body, 'session_id'),
+        hookName: readString(body, 'hook_name'),
+      });
       return c.json({ error: 'invalid envelope' }, 400);
     }
     const result = ingestEnvelope(db, broadcaster, body);
@@ -53,6 +74,9 @@ export function buildApp(deps: AppDeps): Hono {
   });
 
   app.get('/api/events', (c) => c.json(getAllEventsOrdered(db)));
+
+  // Drift/dead-letter counters. Phase 5 renders the degradation banner from this.
+  app.get('/api/health', (c) => c.json(ingestHealth(db)));
 
   app.get('/api/stream', (c) =>
     streamSSE(c, async (stream) => {
