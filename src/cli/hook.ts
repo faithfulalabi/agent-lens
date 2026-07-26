@@ -204,7 +204,15 @@ async function tryPost(
     const port = resolvePort(dataDir, explicitPort);
     const token = readToken(dataDir);
     const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (token !== null) headers[TOKEN_HEADER] = token;
+    if (token !== null) {
+      // Authenticate the adapter against the collector's token file.
+      headers[TOKEN_HEADER] = token;
+    } else {
+      // Token file missing (collector never booted / wrong dir): post anyway so
+      // the never-lose-data contract holds. The collector 401s an unauthenticated
+      // POST, `res.ok` is false, and the envelope funnels to the spool for replay.
+      logError(dataDir, 'token file missing; posting unauthenticated (will spool on 401)');
+    }
 
     const res = await fetch(`http://127.0.0.1:${port}/api/ingest`, {
       method: 'POST',
