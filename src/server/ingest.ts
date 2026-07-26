@@ -11,6 +11,7 @@ import {
   nextSeq,
   type SpanLite,
 } from '../db/index.js';
+import { normalize } from '../capture/normalizer.js';
 import type { Broadcaster } from './sse.js';
 
 /** Outcome of an ingest: whether a new row was written and its assigned seq. */
@@ -37,11 +38,18 @@ export function isValidEnvelopeShape(value: unknown): value is Envelope {
 }
 
 /**
- * Admit an envelope: archive it (upsert-by-event_id), and only on a genuinely
- * new row derive a span-lite row, assign a seq, and broadcast. Duplicate
- * `event_id` → no new row, no broadcast → `{ inserted: false }`. A
- * `dead_letter` status archives the raw row for later triage but is otherwise
+ * Admit an envelope in a single per-envelope transaction: archive it
+ * (upsert-by-event_id), and only on a genuinely new row derive a span-lite row,
+ * assign a seq, and run the normalizer projection (Task 2.2). Duplicate
+ * `event_id` → no new row, no projection, no broadcast → `{ inserted: false }`.
+ * A `dead_letter` status archives the raw row for later triage but is otherwise
  * treated identically (still materialized so the event is visible).
+ *
+ * The whole body runs inside `BEGIN/COMMIT/ROLLBACK` so a projection failure
+ * never leaves a half-written trace. Broadcast is I/O and happens AFTER commit,
+ * so subscribers only ever see durably-persisted events. The Phase-1 `nextSeq` +
+ * `insertSpanLite` compat writes are retained alongside `normalize` until the
+ * `/api/events` read-path cuts over (Task 2.5-adjacent follow-up).
  */
 export function ingestEnvelope(
   db: DatabaseSync,
@@ -49,21 +57,35 @@ export function ingestEnvelope(
   envelope: Envelope,
   status: 'processed' | 'dead_letter' = 'processed',
 ): IngestResult {
-  const inserted = insertRawEvent(db, envelope, status);
-  if (!inserted) {
-    return { inserted: false, seq: -1 };
+  db.exec('BEGIN');
+  let span: SpanLite | undefined;
+  try {
+    const inserted = insertRawEvent(db, envelope, status);
+    if (!inserted) {
+      db.exec('COMMIT');
+      return { inserted: false, seq: -1 };
+    }
+
+    const seq = nextSeq(db);
+    insertSpanLite(db, seq, envelope);
+    if (status === 'processed') {
+      normalize(db, envelope);
+    }
+    span = {
+      seq,
+      event_id: envelope.event_id,
+      session_id: envelope.session_id,
+      source: envelope.source,
+      hook_name: envelope.hook_name ?? null,
+      ts: envelope.ts,
+    };
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 
-  const seq = nextSeq(db);
-  insertSpanLite(db, seq, envelope);
-  const span: SpanLite = {
-    seq,
-    event_id: envelope.event_id,
-    session_id: envelope.session_id,
-    source: envelope.source,
-    hook_name: envelope.hook_name ?? null,
-    ts: envelope.ts,
-  };
+  // Broadcast only after the transaction is durable (I/O outside the txn).
   broadcaster.publish(span);
-  return { inserted: true, seq };
+  return { inserted: true, seq: span.seq };
 }
