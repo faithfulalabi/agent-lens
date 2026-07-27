@@ -23,6 +23,8 @@ export interface Session {
   total_tokens: number;
   tokens_in: number;
   tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
   est_cost: number;
   tool_call_count: number;
   error_count: number;
@@ -51,6 +53,10 @@ export interface Trace {
   ended_at?: string;
   status: TraceStatus;
   total_tokens: number;
+  tokens_in: number;
+  tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
   est_cost: number;
   duration_ms: number;
   tool_call_count: number;

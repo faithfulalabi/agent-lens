@@ -4,6 +4,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { migration001 } from './001-initial-schema.js';
+import { migration002 } from './002-rollup-columns.js';
 
 /** One numbered migration. `up` runs inside the runner's transaction. */
 export interface Migration {
@@ -16,4 +17,4 @@ export interface Migration {
 }
 
 /** All migrations in ascending `version` order. */
-export const MIGRATIONS: readonly Migration[] = [migration001];
+export const MIGRATIONS: readonly Migration[] = [migration001, migration002];

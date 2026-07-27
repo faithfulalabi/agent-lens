@@ -559,6 +559,18 @@ export function ingestHealth(db: DatabaseSync): IngestHealth {
   return health;
 }
 
+// --- Rollups (Task 2.4) ----------------------------------------------------
+// Write-time aggregates over spans/traces/sessions. Re-exported here so
+// `src/db` stays the single SQL door; the SQL itself lives in `./rollups.js`.
+
+export type { SpanUsage } from './rollups.js';
+export {
+  recordSpanUsage,
+  recomputeTraceRollup,
+  recomputeSessionRollup,
+  recomputeRollups,
+} from './rollups.js';
+
 /**
  * Open an in-memory database, exercise a table + FTS5 virtual table, and close.
  * Returns true if the round-trip succeeds. Used by the scaffold smoke test to

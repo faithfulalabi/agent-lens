@@ -38,4 +38,13 @@ export type {
   TailerOffset,
 } from './entities.js';
 
+export type { ModelPrice, TokenUsage } from './pricing.js';
+export {
+  PRICING_TABLE,
+  PRICING_TABLE_DATE,
+  PRICING_VERSION,
+  estimateCost,
+  normalizeModelKey,
+} from './pricing.js';
+
 export { readOrCreateToken, readToken, TOKEN_HEADER } from './token.js';

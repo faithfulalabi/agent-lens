@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { openDb, getAllEventsOrdered } from '../../db/index.js';
+import { makeEnvelope } from '../../shared/index.js';
 import { Broadcaster } from '../../server/sse.js';
 import { runHook } from '../../cli/hook.js';
 import { replaySpool } from '../replay.js';
@@ -124,6 +132,88 @@ describe('replaySpool — collector down -> spool -> replay -> idempotent', () =
     const result = replaySpool(db, new Broadcaster(), dataDir);
     db.close();
     expect(result).toEqual({ files: 0, replayed: 0, deadLettered: 0 });
+  });
+});
+
+describe('replaySpool — Task 2.4 chunked batching', () => {
+  /** Write a spool file verbatim, bypassing the adapter, and return its path. */
+  function writeSpool(sessionId: string, lines: string[]): string {
+    const path = spoolFile(sessionId, dataDir);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${lines.join('\n')}\n`);
+    return path;
+  }
+
+  /** A well-formed spool line for a PreToolUse with a unique correlator. */
+  function goodLine(i: number): string {
+    return JSON.stringify(
+      makeEnvelope({
+        source: 'hook',
+        session_id: 'sess-chunk',
+        hook_name: 'PreToolUse',
+        raw_payload: { tool_name: 'Bash', tool_input: { i }, tool_use_id: `t-${i}` },
+        ts: '2026-07-26T00:00:00.000Z',
+        tool_use_id: `t-${i}`,
+      }),
+    );
+  }
+
+  it('flushes the final partial chunk before the file is deleted', () => {
+    // 70 lines = one full 64-item batch plus a 6-line tail. Without the explicit
+    // tail flush in `replayFile`, `replaySpool` would rmSync the file with those
+    // last 6 still sitting in the buffer — silent data loss, not a late write.
+    const total = 70;
+    const path = writeSpool(
+      'sess-chunk',
+      Array.from({ length: total }, (_, i) => goodLine(i)),
+    );
+
+    const db = openDb(dataDir);
+    const result = replaySpool(db, new Broadcaster(), dataDir);
+
+    expect(result).toEqual({ files: 1, replayed: total, deadLettered: 0 });
+    const rows = getAllEventsOrdered(db);
+    expect(rows).toHaveLength(total);
+    // Gapless 1..70 across the chunk boundary.
+    expect(rows.map((r) => r.seq)).toEqual(
+      Array.from({ length: total }, (_, i) => i + 1),
+    );
+    db.close();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('keeps seq monotonic when a malformed line is interleaved mid-file', () => {
+    // The bug this guards: dead letters used to ingest IMMEDIATELY while good
+    // lines waited in the buffer, so a torn line got a LOWER seq than the lines
+    // that preceded it in the file. Routing it through the same buffer keeps
+    // file order == seq order. A single-line dead-letter file cannot catch this.
+    const lines = [goodLine(0), goodLine(1), 'this is not json at all', goodLine(2)];
+    writeSpool('sess-chunk', lines);
+
+    const db = openDb(dataDir);
+    const result = replaySpool(db, new Broadcaster(), dataDir);
+
+    expect(result).toEqual({ files: 1, replayed: 3, deadLettered: 1 });
+
+    const rows = getAllEventsOrdered(db);
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3, 4]);
+
+    // The dead letter sits at position 3 — exactly where it was in the file.
+    const statuses = db
+      .prepare(
+        `SELECT r.status FROM raw_events r
+         JOIN spans_lite s ON s.event_id = r.id
+         ORDER BY s.seq`,
+      )
+      .all() as { status: string }[];
+    expect(statuses.map((s) => s.status)).toEqual([
+      'processed',
+      'processed',
+      'dead_letter',
+      'processed',
+    ]);
+    db.close();
   });
 });
 
