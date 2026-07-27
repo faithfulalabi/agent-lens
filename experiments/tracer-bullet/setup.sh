@@ -35,14 +35,24 @@ echo "collector pid=$AGENT_LENS_SERVER_PID (kill it to tear down)"
 # 4. Remind the operator how to point Claude Code at the scratch hooks.
 cat <<EOF
 
-Scratch project ready. To run experiments:
+Scratch project ready.
+
+For GOLDEN-FIXTURE capture use run-experiment.sh instead of these steps — it
+does the pre-flight, capture, scrub and verify for you (and this collector is
+already running, so kill \$AGENT_LENS_SERVER_PID first):
+  source $HERE/run-experiment.sh <multi-turn|large-output|subagent|compaction>
+
+Manual path (ad-hoc probing):
   1. cd $HERE/scratch-project        # project-scoped .claude/settings.json
   2. Ensure 'agent-lens' resolves on PATH (npm link, or use an absolute command).
   3. Run the scripted prompts in ../prompts/ inside a Claude Code session here.
-  4. Capture:  node $HERE/capture.mjs --exp <name> --data-dir "\$AGENT_LENS_DIR" ...
+  4. Capture:  node $HERE/capture.mjs --exp <name> --session <session-id> \\
+                 --data-dir "\$AGENT_LENS_DIR" --transcript <parent.jsonl>
   5. Scrub:    node $HERE/scrub.mjs --in fixtures/raw/<name> --out fixtures/scrubbed/<name> \\
                  --config $HERE/scrub.config.json --home "\$HOME" --user "\$USER"
-  6. EYEBALL the scrubbed output (SCRUBBING.md) before committing.
+  6. Verify:   node $HERE/verify.mjs --dir fixtures/scrubbed/<name> \\
+                 --config $HERE/scrub.config.json --home "\$HOME" --user "\$USER"
+  7. EYEBALL the scrubbed output (SCRUBBING.md) before committing.
 
 Pure-code probes need no session:
   node $HERE/fts5-probe.mjs        # Q7

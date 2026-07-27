@@ -21,8 +21,12 @@ WHAT TO OBSERVE / CAPTURE:
 - The PreCompact / PostCompact hook envelopes captured by agent-lens — confirm
   they fire and note any payload correlators (e.g. transcript_path).
 
-CAPTURE:
-  node experiments/tracer-bullet/capture.mjs --exp compaction \
-    --data-dir "$AGENT_LENS_DIR" --transcripts "<parent_transcript_path>"
+CAPTURE: handled for you.
+  `source experiments/tracer-bullet/run-experiment.sh compaction` printed this
+  prompt and takes BOTH fingerprints itself — type `fingerprint` in that
+  terminal once the context-building turns are done (step 1) and BEFORE you run
+  /compact, then run ONE MORE TURN after compaction and type `done`. The script
+  discovers the transcript, captures, scrubs, runs verify.mjs, and prints both
+  fingerprints side by side.
 
 Record both fingerprints (before/after) verbatim in the findings doc Q4 block.

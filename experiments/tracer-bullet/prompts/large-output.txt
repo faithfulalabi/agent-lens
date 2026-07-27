@@ -24,6 +24,7 @@ WHAT TO OBSERVE / CAPTURE AFTER THE RUN:
   they coincide here — note it for the finer Phase-3 sweep if needed).
 - Whether the hook payload carries any explicit truncation flag/field.
 
-CAPTURE:
-  node experiments/tracer-bullet/capture.mjs --exp large-output \
-    --data-dir "$AGENT_LENS_DIR" --transcripts "<parent_transcript_path>"
+CAPTURE: handled for you.
+  `source experiments/tracer-bullet/run-experiment.sh large-output` printed this prompt;
+  return to that terminal and type `done` when the session is finished. It
+  discovers the transcript, captures, scrubs, and runs verify.mjs.
