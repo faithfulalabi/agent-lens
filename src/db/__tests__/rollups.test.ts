@@ -9,12 +9,12 @@ import {
 import { normalize } from '../../capture/normalizer.js';
 import { PRICING_TABLE, PRICING_VERSION } from '../../shared/index.js';
 import {
+  at,
   freshDb,
   hookEnvelope,
   only,
   attrsOf,
   SESSION,
-  TS,
   type Row,
 } from '../../capture/__tests__/fixtures.js';
 
@@ -37,11 +37,6 @@ function session(id = SESSION): Row {
 
 function span(id: string): Row {
   return db.prepare('SELECT * FROM spans WHERE id = ?').get(id) as Row;
-}
-
-/** ISO timestamp `seconds` after the fixture epoch. */
-function at(seconds: number): string {
-  return new Date(Date.parse(TS) + seconds * 1000).toISOString();
 }
 
 /** A Pre/Post tool pair on prompt `p1`, closing with the given status payload. */

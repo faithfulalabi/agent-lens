@@ -29,6 +29,18 @@ export interface RunHookOptions {
   port?: number;
   /** POST + stdin deadline in ms. */
   timeoutMs?: number;
+  /**
+   * Frozen envelope timestamp — a TEST SEAM, never set in production.
+   *
+   * The adapter stamps `new Date().toISOString()` on every envelope it builds,
+   * and the normalizer threads `envelope.ts` verbatim into
+   * `sessions`/`traces`/`spans` timestamps. So two runs of the same hook script
+   * (Task 2.6's kill-collector control vs. killed run) produce projections that
+   * differ on every timestamp column, and a snapshot-equality assertion could
+   * never pass. Freezing the input keeps the snapshot honest instead of teaching
+   * it to ignore a real difference.
+   */
+  ts?: string;
 }
 
 /** What the adapter did — surfaced for tests; the CLI ignores it. */
@@ -125,6 +137,8 @@ export async function runHook(options: RunHookOptions): Promise<RunHookResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let outcome: RunHookResult['outcome'] = 'spooled';
   let deadLetter = false;
+  /** Envelope timestamp: the injected one when a test froze it, else wall clock. */
+  const stamp = (): string => options.ts ?? new Date().toISOString();
 
   try {
     const controller = new AbortController();
@@ -145,7 +159,7 @@ export async function runHook(options: RunHookOptions): Promise<RunHookResult> {
         session_id: sessionId,
         hook_name: 'unknown',
         raw_payload: raw,
-        ts: new Date().toISOString(),
+        ts: stamp(),
       });
       trySpool(dataDir, sessionId, { envelope, status: 'dead_letter' });
       recordTiming(dataDir, startedAt, 'dead_letter');
@@ -171,7 +185,7 @@ export async function runHook(options: RunHookOptions): Promise<RunHookResult> {
       tool_use_id: toolUseId,
       prompt_id: promptId,
       raw_payload: payload,
-      ts: new Date().toISOString(),
+      ts: stamp(),
     });
 
     const posted = await tryPost(dataDir, envelope, options.port, controller);
