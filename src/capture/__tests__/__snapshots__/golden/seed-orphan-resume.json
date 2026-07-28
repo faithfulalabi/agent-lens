@@ -1,0 +1,226 @@
+{
+  "fixture": "seed/orphan-resume",
+  "envelope_count": 8,
+  "health": {
+    "processed": 8,
+    "degraded": 0,
+    "dead_letter": 0
+  },
+  "sessions": [
+    {
+      "id": "sess-orphan-resume",
+      "harness": "claude-code",
+      "project_path": "/tmp/project",
+      "git_branch": null,
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-26T00:00:00.000Z",
+      "ended_at": null,
+      "status": "live",
+      "capture_mode": "full",
+      "transcript_path": "/tmp/project/.claude/transcript.jsonl",
+      "total_tokens": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "est_cost": 0,
+      "tool_call_count": 3,
+      "error_count": 0,
+      "trace_count": 2,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    }
+  ],
+  "traces": [
+    {
+      "id": "sess-orphan-resume:1",
+      "session_id": "sess-orphan-resume",
+      "turn_seq": 1,
+      "trigger": "user_prompt",
+      "prompt_preview": "continue where we left off",
+      "started_at": "2026-07-26T00:00:01.000Z",
+      "ended_at": "2026-07-26T00:00:04.000Z",
+      "status": "complete",
+      "total_tokens": 0,
+      "est_cost": 0,
+      "duration_ms": 3000,
+      "tool_call_count": 1,
+      "error_count": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    },
+    {
+      "id": "sess-orphan-resume:2",
+      "session_id": "sess-orphan-resume",
+      "turn_seq": 2,
+      "trigger": "system_resume",
+      "prompt_preview": "",
+      "started_at": "2026-07-26T00:00:30.000Z",
+      "ended_at": null,
+      "status": "live",
+      "total_tokens": 0,
+      "est_cost": 0,
+      "duration_ms": 1000,
+      "tool_call_count": 2,
+      "error_count": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    }
+  ],
+  "spans": [
+    {
+      "id": "t1",
+      "trace_id": "sess-orphan-resume:1",
+      "parent_span_id": null,
+      "span_type": "tool_call",
+      "name": "Read",
+      "status": "ok",
+      "started_at": "2026-07-26T00:00:02.000Z",
+      "ended_at": "2026-07-26T00:00:03.000Z",
+      "input_payload_id": "6d13c468401ebc2ea559834cba945b711c9991509922a611746beeff7f003d7b",
+      "output_payload_id": "e6fa11f7af3c1bffee204692ce26e270df551891575c5f53439d684c7590cd7e",
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [],
+      "attrs": {}
+    },
+    {
+      "id": "t2",
+      "trace_id": "sess-orphan-resume:2",
+      "parent_span_id": null,
+      "span_type": "tool_call",
+      "name": "Bash",
+      "status": "ok",
+      "started_at": "2026-07-26T00:00:30.000Z",
+      "ended_at": "2026-07-26T00:00:31.000Z",
+      "input_payload_id": "e0d3e391760d0a9b6c24bf66cecfc5a66557784782cbc704052385bf6e9bb287",
+      "output_payload_id": "45f0694e47b651d53064faed807b1c2b70ae79a313f2cec9a4a20626f1c889cb",
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [],
+      "attrs": {}
+    },
+    {
+      "id": "t3",
+      "trace_id": "sess-orphan-resume:2",
+      "parent_span_id": null,
+      "span_type": "tool_call",
+      "name": "Edit",
+      "status": "running",
+      "started_at": "2026-07-26T00:00:32.000Z",
+      "ended_at": null,
+      "input_payload_id": "6d13c468401ebc2ea559834cba945b711c9991509922a611746beeff7f003d7b",
+      "output_payload_id": null,
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [],
+      "attrs": {}
+    }
+  ],
+  "payloads": [
+    {
+      "id": "45f0694e47b651d53064faed807b1c2b70ae79a313f2cec9a4a20626f1c889cb",
+      "byte_size": 32,
+      "mime_hint": "application/json"
+    },
+    {
+      "id": "6d13c468401ebc2ea559834cba945b711c9991509922a611746beeff7f003d7b",
+      "byte_size": 37,
+      "mime_hint": "application/json"
+    },
+    {
+      "id": "e0d3e391760d0a9b6c24bf66cecfc5a66557784782cbc704052385bf6e9bb287",
+      "byte_size": 24,
+      "mime_hint": "application/json"
+    },
+    {
+      "id": "e6fa11f7af3c1bffee204692ce26e270df551891575c5f53439d684c7590cd7e",
+      "byte_size": 33,
+      "mime_hint": "application/json"
+    }
+  ],
+  "messages": [],
+  "archive": [
+    {
+      "id": "sess-orphan-resume:hook:PostToolUse:t1",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "PostToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:PostToolUse:t2",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "PostToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:PreToolUse:t1",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "PreToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:PreToolUse:t2",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "PreToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:PreToolUse:t3",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "PreToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:SessionStart:b686ab6022ff040b8d60cb319a982fb8",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "SessionStart",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:Stop:p1",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "Stop",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-orphan-resume:hook:UserPromptSubmit:p1",
+      "session_id": "sess-orphan-resume",
+      "source": "hook",
+      "hook_name": "UserPromptSubmit",
+      "status": "processed",
+      "error": null
+    }
+  ]
+}

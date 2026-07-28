@@ -1,0 +1,215 @@
+{
+  "fixture": "seed/drift",
+  "envelope_count": 8,
+  "health": {
+    "processed": 6,
+    "degraded": 2,
+    "dead_letter": 0
+  },
+  "sessions": [
+    {
+      "id": "sess-drift",
+      "harness": "claude-code",
+      "project_path": "/tmp/project",
+      "git_branch": null,
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-26T00:00:00.000Z",
+      "ended_at": "2026-07-26T00:00:07.000Z",
+      "status": "complete",
+      "capture_mode": "full",
+      "transcript_path": "/tmp/project/.claude/transcript.jsonl",
+      "total_tokens": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "est_cost": 0,
+      "tool_call_count": 1,
+      "error_count": 0,
+      "trace_count": 1,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    }
+  ],
+  "traces": [
+    {
+      "id": "sess-drift:1",
+      "session_id": "sess-drift",
+      "turn_seq": 1,
+      "trigger": "user_prompt",
+      "prompt_preview": "exercise the drift paths",
+      "started_at": "2026-07-26T00:00:01.000Z",
+      "ended_at": "2026-07-26T00:00:06.000Z",
+      "status": "complete",
+      "total_tokens": 0,
+      "est_cost": 0,
+      "duration_ms": 5000,
+      "tool_call_count": 1,
+      "error_count": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_cache_read": 0,
+      "tokens_cache_write": 0
+    }
+  ],
+  "spans": [
+    {
+      "id": "sess-drift:hook:SomeFutureHook_v3:p1",
+      "trace_id": "sess-drift:1",
+      "parent_span_id": null,
+      "span_type": "generic",
+      "name": "SomeFutureHook_v3",
+      "status": "unknown",
+      "started_at": "2026-07-26T00:00:02.000Z",
+      "ended_at": "2026-07-26T00:00:02.000Z",
+      "input_payload_id": null,
+      "output_payload_id": null,
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [
+        "degraded"
+      ],
+      "attrs": {
+        "nested": {
+          "depth": {
+            "value": 7
+          }
+        },
+        "novel_field": "value"
+      }
+    },
+    {
+      "id": "t1",
+      "trace_id": "sess-drift:1",
+      "parent_span_id": null,
+      "span_type": "tool_call",
+      "name": "Bash",
+      "status": "ok",
+      "started_at": "2026-07-26T00:00:03.000Z",
+      "ended_at": "2026-07-26T00:00:04.000Z",
+      "input_payload_id": "4cf29611a66934862f29acfcc817e30b905c1ab73d5e65831413eb6b454d49db",
+      "output_payload_id": "6f0a142214e5e86eff9adeb2df2d09457a3b6bddf01db1ccb5729b9d5d9a4d1d",
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [],
+      "attrs": {
+        "duration_ms": 42,
+        "effort": "low",
+        "future_field_a": "kept",
+        "permission_mode": "acceptEdits"
+      }
+    },
+    {
+      "id": "sess-drift:hook:AnotherUnknownHook:ed4ac1be090ee0027e366b0fbb6de184",
+      "trace_id": "sess-drift:1",
+      "parent_span_id": null,
+      "span_type": "generic",
+      "name": "AnotherUnknownHook",
+      "status": "unknown",
+      "started_at": "2026-07-26T00:00:05.000Z",
+      "ended_at": "2026-07-26T00:00:05.000Z",
+      "input_payload_id": null,
+      "output_payload_id": null,
+      "model": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tokens_cache_read": null,
+      "tokens_cache_write": null,
+      "est_cost": null,
+      "source": "hook",
+      "tags": [
+        "degraded"
+      ],
+      "attrs": {
+        "shape": "unrecognized"
+      }
+    }
+  ],
+  "payloads": [
+    {
+      "id": "4cf29611a66934862f29acfcc817e30b905c1ab73d5e65831413eb6b454d49db",
+      "byte_size": 16,
+      "mime_hint": "application/json"
+    },
+    {
+      "id": "6f0a142214e5e86eff9adeb2df2d09457a3b6bddf01db1ccb5729b9d5d9a4d1d",
+      "byte_size": 24,
+      "mime_hint": "application/json"
+    }
+  ],
+  "messages": [],
+  "archive": [
+    {
+      "id": "sess-drift:hook:AnotherUnknownHook:ed4ac1be090ee0027e366b0fbb6de184",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "AnotherUnknownHook",
+      "status": "degraded",
+      "error": "unknown hook AnotherUnknownHook"
+    },
+    {
+      "id": "sess-drift:hook:PostToolUse:t1",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "PostToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-drift:hook:PreToolUse:t1",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "PreToolUse",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-drift:hook:SessionEnd:1194a43242c2ffdd878ccf711c613f35",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "SessionEnd",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-drift:hook:SessionStart:afc31185e0f12e9dfad1a6cda0c6de47",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "SessionStart",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-drift:hook:SomeFutureHook_v3:p1",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "SomeFutureHook_v3",
+      "status": "degraded",
+      "error": "unknown hook SomeFutureHook_v3"
+    },
+    {
+      "id": "sess-drift:hook:Stop:p1",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "Stop",
+      "status": "processed",
+      "error": null
+    },
+    {
+      "id": "sess-drift:hook:UserPromptSubmit:p1",
+      "session_id": "sess-drift",
+      "source": "hook",
+      "hook_name": "UserPromptSubmit",
+      "status": "processed",
+      "error": null
+    }
+  ]
+}

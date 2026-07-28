@@ -17,4 +17,11 @@ npm run dev       # boot the Vite UI dev server
 npm run typecheck # TypeScript strict check (src + ui)
 npm run lint      # ESLint
 node ./bin        # print the CLI help
+
+npm run snapshots:update  # regenerate the golden projection snapshots
 ```
+
+`snapshots:update` is the **only** supported way to change the committed
+projection snapshots in `src/capture/__tests__/__snapshots__/golden/`. Run it
+when a schema or normalizer change is intentional, then review the resulting
+line diff like any other code change — never hand-edit a snapshot.

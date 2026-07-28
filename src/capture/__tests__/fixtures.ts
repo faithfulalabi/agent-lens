@@ -13,6 +13,15 @@ export const SESSION = 'sess-1';
 export const TS = '2026-07-26T00:00:00.000Z';
 
 /**
+ * ISO timestamp `seconds` after the fixture epoch {@link TS}. The one way to
+ * build a ts-spaced envelope sequence, so the rollup tests, the golden seed
+ * fixtures, and Task 2.6's property generator all space events identically.
+ */
+export function at(seconds: number): string {
+  return new Date(Date.parse(TS) + seconds * 1000).toISOString();
+}
+
+/**
  * In-memory migrated DB per test (migrate.test conventions) plus the
  * prompt→trace side-table `openDb` would create. The normalizer assumes it runs
  * inside a transaction; direct calls rely on SQLite's implicit per-statement one.
