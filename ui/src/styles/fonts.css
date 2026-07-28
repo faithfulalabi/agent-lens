@@ -1,0 +1,86 @@
+/*
+ * Self-hosted fonts — hand-authored, deliberately not `@import`ed from
+ * `@fontsource*`. See ../assets/fonts/README.md for provenance, SHA-256s and
+ * the reasoning; the short version:
+ *
+ *   - `@fontsource-variable/inter` declares the family as `Inter Variable`, so
+ *     `--font-sans: "Inter", …` would match nothing and silently fall back.
+ *     The family names below are exactly the ones `theme.css` asks for, and
+ *     `no-egress.test.ts` asserts that equality.
+ *   - `font-display: block` (both packages ship `swap`): same-origin fonts load
+ *     in milliseconds, and an instrument UI should not flash a fallback metric.
+ *
+ * `url()`s stay relative so Vite fingerprints and emits each file as a real
+ * asset. `vite.config.ts` pins `assetsInlineLimit` to keep .woff2 out of base64.
+ */
+
+/* Inter — variable weight axis, one file per subset. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: block;
+  font-weight: 100 900;
+  src: url('../assets/fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: block;
+  font-weight: 100 900;
+  src: url('../assets/fonts/inter-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+/* JetBrains Mono — static weights 400 + 500 only (design-system.md needs no more). */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: block;
+  font-weight: 400;
+  src: url('../assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: block;
+  font-weight: 400;
+  src: url('../assets/fonts/jetbrains-mono-latin-ext-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: block;
+  font-weight: 500;
+  src: url('../assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: block;
+  font-weight: 500;
+  src: url('../assets/fonts/jetbrains-mono-latin-ext-500-normal.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
