@@ -571,6 +571,40 @@ export {
   recomputeRollups,
 } from './rollups.js';
 
+// --- Reads (Task 5.0) ------------------------------------------------------
+// The query API's SQL, plus the fixture seeder that composes the writers above.
+// Re-exported here so `src/db` stays the single SQL door; the SQL itself lives
+// in `./reads.js` and `./seed.js` contains none at all.
+
+export type {
+  PageParams,
+  PayloadMeta,
+  SessionListQuery,
+  SessionSpansQuery,
+  SqlQuery,
+} from './reads.js';
+export {
+  buildSessionListSql,
+  buildSessionSpansSql,
+  readPayloadMeta,
+  readPayloadSlice,
+  readSession,
+  readSessions,
+  readSessionSpans,
+  readSessionTraces,
+  readTraceMessages,
+  sessionExists,
+  toMessage,
+  toSession,
+  toSpan,
+  toTrace,
+  traceBelongsToSession,
+  traceExists,
+} from './reads.js';
+
+export type { SeedManifest, SeedOptions } from './seed.js';
+export { seedFixtureDb, seedInto, SEED_EPOCH } from './seed.js';
+
 /**
  * Open an in-memory database, exercise a table + FTS5 virtual table, and close.
  * Returns true if the round-trip succeeds. Used by the scaffold smoke test to

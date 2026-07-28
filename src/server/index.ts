@@ -9,6 +9,7 @@ export { Broadcaster } from './sse.js';
 export type { Subscriber } from './sse.js';
 export { buildApp } from './app.js';
 export type { AppDeps } from './app.js';
+export { registerReadApi, jsonNotFound } from './read-api.js';
 export { readConfig, writeConfig, clearConfig } from './config.js';
 export type { RuntimeConfig } from './config.js';
 
