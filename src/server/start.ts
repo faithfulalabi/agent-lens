@@ -31,6 +31,8 @@ export interface StartOptions {
   sweepIntervalMs?: number;
   /** Called with each sweep's result — observability hook (and test seam). */
   onSweep?: (result: SweepResult) => void;
+  /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
+  uiDir?: string;
 }
 
 /** A running server handle. */
@@ -103,7 +105,7 @@ export async function startServer(
   // that overlaps a prior run costs nothing.
   replaySpool(db, broadcaster, dataDir);
 
-  const app = buildApp({ db, token, broadcaster, host });
+  const app = buildApp({ db, token, broadcaster, host, uiDir: options.uiDir });
   const fetch = app.fetch;
 
   const explicit = options.port !== undefined;

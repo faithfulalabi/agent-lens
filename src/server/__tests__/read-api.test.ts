@@ -579,9 +579,18 @@ describe('AC5 — Test 12: an unmatched /api path is JSON 404 even under a SPA w
 
   it('answers /api/nope with JSON while /session/x still gets the HTML fallback', async () => {
     db = freshDb();
-    const app = buildApp({ db, token: 'tok', broadcaster: new Broadcaster() });
-    // Task 5.1b's future SPA fallback, registered AFTER buildApp.
-    app.get('*', (c) => c.html('<html>spa</html>'));
+    // Task 5.1b moved the SPA fallback INSIDE `buildApp`, where it is now the
+    // last route in the app — so this test can no longer register its own
+    // wildcard afterwards (it would be shadowed and silently prove nothing;
+    // `static-serving.test.ts` pins that one-way door). It asserts against
+    // `buildApp`'s own fallback instead. `uiDir` is the file-level server's
+    // fake bundle, so nothing here resolves the real, gitignored `ui/dist`.
+    const app = buildApp({
+      db,
+      token: 'tok',
+      broadcaster: new Broadcaster(),
+      uiDir: server.uiDir,
+    });
 
     const api = await app.request('/api/nope', { headers: MOUNTED_HEADERS });
     expect(api.status).toBe(404);
@@ -592,7 +601,8 @@ describe('AC5 — Test 12: an unmatched /api path is JSON 404 even under a SPA w
 
     const spa = await app.request('/session/x', { headers: { host: 'localhost' } });
     expect(spa.status).toBe(200);
-    expect(await spa.text()).toContain('spa');
+    expect(spa.headers.get('content-type')).toContain('text/html');
+    expect(await spa.text()).toContain('<div id="root">');
   });
 });
 
@@ -644,6 +654,7 @@ describe('AC5 — Test 18: an uncaught throw on an /api path is a JSON 500', () 
       db: exploding,
       token: 'tok',
       broadcaster: new Broadcaster(),
+      uiDir: server.uiDir,
     });
     const res = await app.request('/api/sessions', { headers: MOUNTED_HEADERS });
 

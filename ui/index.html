@@ -7,6 +7,11 @@
          stylesheet lands, so there is no white flash on first load. -->
     <meta name="color-scheme" content="dark" />
     <title>agent-lens</title>
+    <!-- The server replaces this marker with the token bootstrap script when it
+         serves this file (src/server/static-ui.ts). Vite preserves HTML
+         comments verbatim, so it survives the build. Do not remove or rename:
+         `injectToken` throws without it, and the UI would 401 on every call. -->
+    <!--agent-lens-bootstrap-->
   </head>
   <body style="background-color: #0b0b0e">
     <div id="root"></div>
