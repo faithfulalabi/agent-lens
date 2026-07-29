@@ -1,0 +1,44 @@
+/*
+ * The CSS entrypoint. Imported once, from ../main.tsx — that import is what
+ * makes `@tailwindcss/vite` do anything at all.
+ */
+
+@import 'tailwindcss';
+@import './fonts.css';
+@import './theme.css';
+
+@layer base {
+  /* Dark canvas. v1 is dark-only and ships no toggle; `color-scheme` makes the
+     browser's own chrome (scrollbars, form controls) match. */
+  html {
+    background-color: var(--color-background);
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 2px accent ring on every interactive element (accessibility baseline). */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* "Respect prefers-reduced-motion: pulse becomes a static badge." */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

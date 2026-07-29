@@ -12,5 +12,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // Never base64-inline a font. Inlining would defeat no-egress.test.ts's
+    // "the .woff2 files are actually bundled" check — the only automated signal
+    // that the fonts didn't silently fall back — and bloat the CSS by a third.
+    assetsInlineLimit: (filePath: string) => (filePath.endsWith('.woff2') ? false : undefined),
   },
 });

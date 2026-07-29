@@ -21,6 +21,11 @@ node ./bin        # print the CLI help
 npm run snapshots:update  # regenerate the golden projection snapshots
 ```
 
+With the dev server running, [`/showcase`](http://localhost:5173/showcase) renders
+every design token — colors, type scale, radii, shadow, motion — as the visual
+reference for UI work. Copy class names from there; the tokens are defined once in
+`ui/src/styles/theme.css` and tested against `internal_docs/agent-lens/spec/design-system.md`.
+
 `snapshots:update` is the **only** supported way to change the committed
 projection snapshots in `src/capture/__tests__/__snapshots__/golden/`. Run it
 when a schema or normalizer change is intentional, then review the resulting

@@ -2,8 +2,16 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    environment: 'node',
-    include: ['src/**/*.test.ts', 'experiments/**/*.test.mjs'],
+    projects: [
+      {
+        test: {
+          name: 'node',
+          environment: 'node',
+          include: ['src/**/*.test.ts', 'experiments/**/*.test.mjs'],
+        },
+      },
+      './ui/vitest.config.ts',
+    ],
     coverage: {
       reportsDirectory: 'coverage',
     },
