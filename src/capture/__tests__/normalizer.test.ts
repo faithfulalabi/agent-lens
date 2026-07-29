@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { normalize, mapToolStatus } from '../normalizer.js';
+import { makeEnvelope } from '../../shared/index.js';
+import type { Envelope } from '../../shared/index.js';
 import { ingestEnvelope } from '../../server/ingest.js';
 import { Broadcaster } from '../../server/sse.js';
 import {
@@ -345,5 +347,118 @@ describe('normalizer — post-Stop attachment (Task 2.3 regression)', () => {
     const rows = traces(db);
     expect(rows).toHaveLength(1);
     expect(first(rows).ended_at).toBe('2026-07-26T02:00:00.000Z');
+  });
+});
+
+describe('normalizer — transcript envelopes (Task 3.1, scoped guard)', () => {
+  let db: DatabaseSync;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  /** A transcript-sourced envelope, as the tailer builds one. */
+  function transcriptEnvelope(
+    payload: Record<string, unknown>,
+    overrides: { session_id?: string; ts?: string; uuid?: string } = {},
+  ): Envelope {
+    return makeEnvelope({
+      source: 'transcript',
+      session_id: overrides.session_id ?? SESSION,
+      file_identity: '/private/tmp/projects/proj/sess-1.jsonl',
+      line_offset: 0,
+      line: JSON.stringify(payload),
+      uuid: overrides.uuid ?? 'line-1',
+      raw_payload: payload,
+      ts: overrides.ts ?? TS,
+    });
+  }
+
+  it('revives an interrupted session — the guard is NOT a top-of-function return', () => {
+    // Goes RED if the transcript branch is placed ahead of `reviveSession`: a
+    // session the sweep interrupted would stay interrupted forever while its
+    // transcript is visibly growing.
+    normalize(db, hookEnvelope('SessionStart', { cwd: '/proj' }));
+    db.prepare(`UPDATE sessions SET status = 'interrupted' WHERE id = ?`).run(SESSION);
+
+    normalize(db, transcriptEnvelope({ type: 'assistant', cwd: '/proj' }));
+    expect(first(sessions(db)).status).toBe('live');
+  });
+
+  it('creates a taggable session row from a cwd-carrying line', () => {
+    // Task 3.3 (parallel with 3.2) needs this row to exist; without it its AC1
+    // is unreachable until 3.2 lands.
+    normalize(db, transcriptEnvelope({ type: 'assistant', cwd: '/Users/dev/proj' }));
+
+    const rows = sessions(db);
+    expect(rows).toHaveLength(1);
+    expect(first(rows)).toMatchObject({
+      id: SESSION,
+      project_path: '/Users/dev/proj',
+      capture_mode: 'transcript_only',
+      status: 'live',
+      started_at: TS,
+    });
+  });
+
+  it('never clobbers a hook-created session', () => {
+    // Goes RED if `upsertSession` is used instead of insert-if-absent: its
+    // conflict clause sets `status = excluded.status`, resurrecting a completed
+    // session to `live` on any late transcript line.
+    normalize(db, hookEnvelope('SessionStart', { cwd: '/real/proj' }));
+    normalize(db, hookEnvelope('SessionEnd', {}, { ts: '2026-07-26T05:00:00.000Z' }));
+    expect(first(sessions(db)).status).toBe('complete');
+
+    normalize(
+      db,
+      transcriptEnvelope(
+        { type: 'assistant', cwd: '/wrong/proj' },
+        { ts: '2026-07-26T06:00:00.000Z' },
+      ),
+    );
+
+    expect(first(sessions(db))).toMatchObject({
+      project_path: '/real/proj',
+      capture_mode: 'full',
+      status: 'complete',
+    });
+  });
+
+  it('projects no traces and no spans, and never counts as drift', () => {
+    // Guards the scoped early return against regressing into the `genericSpan`
+    // default branch, which would mint a degraded span for every line.
+    const verdict = normalize(db, transcriptEnvelope({ type: 'assistant', cwd: '/proj' }));
+    expect(verdict.degraded).toBe(false);
+    expect(traces(db)).toHaveLength(0);
+    expect(spans(db)).toHaveLength(0);
+  });
+
+  it('creates no session row from cwd-less lines', () => {
+    // Pins the `cwd` gate: a row minted with `project_path:'unknown'` could
+    // never be repaired, because `upsertSession` does not update that column.
+    normalize(db, transcriptEnvelope({ type: 'file-history-snapshot', messageId: 'm1' }));
+    expect(sessions(db)).toHaveLength(0);
+  });
+
+  it('lets the first hook repair a transcript_only label', () => {
+    // Goes RED without `setCaptureMode`: `upsertSession`'s ON CONFLICT list
+    // omits `capture_mode`, so the tailer winning the race would mislabel the
+    // session forever and pre-empt Task 3.3's upgrade path.
+    normalize(db, transcriptEnvelope({ type: 'assistant', cwd: '/Users/dev/proj' }));
+    expect(first(sessions(db)).capture_mode).toBe('transcript_only');
+
+    normalize(
+      db,
+      hookEnvelope(
+        'PostToolUse',
+        { tool_name: 'Bash', cwd: '/Users/dev/proj' },
+        { tool_use_id: 'toolu_1', ts: '2026-07-26T07:00:00.000Z' },
+      ),
+    );
+
+    expect(first(sessions(db))).toMatchObject({
+      capture_mode: 'full',
+      project_path: '/Users/dev/proj',
+      started_at: TS,
+    });
   });
 });

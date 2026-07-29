@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readToken, TOKEN_HEADER } from '../../shared/index.js';
 import { DB_FILE } from '../../db/index.js';
 import type { SweepResult } from '../../capture/inactivity.js';
+import type { TailResult } from '../../capture/tailer.js';
 import { startServer, type ServerHandle } from '../start.js';
 
 /** A booted test server plus its temp data dir and convenience accessors. */
@@ -13,6 +14,8 @@ export interface TestServer {
   dataDir: string;
   /** The `ui/dist` the server was booted against — a fake bundle by default. */
   uiDir: string;
+  /** The transcript root the server was booted against — a fresh empty dir by default. */
+  transcriptRoot: string;
   token: string;
   url: (path: string) => string;
   close: () => Promise<void>;
@@ -25,6 +28,11 @@ export interface BootOptions {
   onSweep?: (result: SweepResult) => void;
   /** `ui/dist` override; defaults to a fresh `makeFakeUiDist()`. */
   uiDir?: string;
+  /** Transcript root override; defaults to a fresh EMPTY temp dir. */
+  transcriptRoot?: string;
+  /** Tail period in ms; defaults to `0` — a test opts IN to tailing. */
+  tailIntervalMs?: number;
+  onTail?: (result: TailResult) => void;
 }
 
 /** The fingerprint-shaped basename every fake bundle's assets share. */
@@ -67,6 +75,13 @@ export function makeFakeUiDist(dir = mkdtempSync(join(tmpdir(), 'agent-lens-ui-'
  * Boot a hermetic server on an ephemeral port in a fresh temp data dir. Accepts
  * either the legacy positional data dir or an options bag forwarded to
  * `startServer`.
+ *
+ * `transcriptRoot` and `tailIntervalMs` default the same way `uiDir` does, and
+ * for the same reason spelled out on {@link makeFakeUiDist}: the production
+ * default is the developer's real `~/.claude/projects` (20 MB / 4000 lines / a
+ * dozen unrelated projects on a working machine), which every server test would
+ * otherwise scan synchronously before the socket binds. A fresh EMPTY root plus
+ * tailing OFF means a test opts IN to the tailer and says exactly what it feeds it.
  */
 export async function bootTestServer(
   options: string | BootOptions = {},
@@ -74,26 +89,34 @@ export async function bootTestServer(
   const opts: BootOptions = typeof options === 'string' ? { dataDir: options } : options;
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'agent-lens-'));
   const uiDir = opts.uiDir ?? makeFakeUiDist();
+  const transcriptRoot =
+    opts.transcriptRoot ?? mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
   // Only a dir we created ourselves gets removed on close; a caller-supplied one
   // is the caller's to manage.
   const ownedUiDir = opts.uiDir === undefined ? uiDir : undefined;
+  const ownedTranscriptRoot = opts.transcriptRoot === undefined ? transcriptRoot : undefined;
   const handle = await startServer({
     port: 0,
     dataDir,
     sweepIntervalMs: opts.sweepIntervalMs,
     onSweep: opts.onSweep,
     uiDir,
+    transcriptRoot,
+    tailIntervalMs: opts.tailIntervalMs ?? 0,
+    onTail: opts.onTail,
   });
   const token = readToken(dataDir)!;
   return {
     handle,
     dataDir,
     uiDir,
+    transcriptRoot,
     token,
     url: (path) => `http://127.0.0.1:${handle.port}${path}`,
     close: async () => {
       await handle.close();
       if (ownedUiDir !== undefined) cleanupDir(ownedUiDir);
+      if (ownedTranscriptRoot !== undefined) cleanupDir(ownedTranscriptRoot);
     },
   };
 }

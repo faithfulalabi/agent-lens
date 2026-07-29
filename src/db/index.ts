@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import type { Envelope } from '../shared/index.js';
 import { makeEnvelope } from '../shared/index.js';
 import type {
+  CaptureMode,
   Session,
   Trace,
   Span,
   Message,
   RawEventStatus,
+  TailerOffset,
 } from '../shared/index.js';
 import { runMigrations } from './migrate.js';
 
@@ -543,6 +545,126 @@ export function lastActivityBySession(
                      WHERE t.session_id = s.id AND t.status = 'live')`,
     )
     .all() as unknown as { session_id: string; last_activity: string }[];
+}
+
+// --- Transcript tailer helpers (Task 3.1) ---------------------------------
+// Offset bookkeeping, transcript discovery, and the two session writes the
+// tailer needs. SQL stays here; `src/capture/tailer.ts` decides policy.
+
+/** One transcript path known to the tailer, with the session that named it. */
+export interface TranscriptPathRow {
+  session_id: string;
+  transcript_path: string;
+}
+
+/** The committed resume point for one transcript file, or `undefined` if new. */
+export function readTailerOffset(
+  db: DatabaseSync,
+  transcriptPath: string,
+): TailerOffset | undefined {
+  const row = db
+    .prepare(
+      `SELECT transcript_path, session_id, committed_offset, file_identity
+       FROM tailer_offsets WHERE transcript_path = ?`,
+    )
+    .get(transcriptPath) as
+    | {
+        transcript_path: string;
+        session_id: string;
+        committed_offset: number;
+        file_identity: string | null;
+      }
+    | undefined;
+  if (row === undefined) return undefined;
+  return {
+    transcript_path: row.transcript_path,
+    session_id: row.session_id,
+    committed_offset: Number(row.committed_offset),
+    file_identity: row.file_identity ?? undefined,
+  };
+}
+
+/**
+ * Write a transcript file's resume point, keyed on the `transcript_path` PK.
+ * Called from inside `ingestBatch`'s transaction (`beforeCommit`), so the offset
+ * and the events it covers commit or roll back together.
+ */
+export function commitTailerOffset(db: DatabaseSync, row: TailerOffset): void {
+  db.prepare(
+    `INSERT INTO tailer_offsets (transcript_path, session_id, committed_offset, file_identity)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(transcript_path) DO UPDATE SET
+       session_id       = excluded.session_id,
+       committed_offset = excluded.committed_offset,
+       file_identity    = excluded.file_identity`,
+  ).run(
+    row.transcript_path,
+    row.session_id,
+    row.committed_offset,
+    row.file_identity ?? null,
+  );
+}
+
+/**
+ * Every transcript path a session has told us about — the tailer's PRIMARY
+ * discovery source (populated from `SessionStart`). Values are stored exactly as
+ * the harness spelled them, so the caller must canonicalize before use.
+ */
+export function transcriptPathsFromSessions(db: DatabaseSync): TranscriptPathRow[] {
+  return db
+    .prepare(
+      `SELECT id AS session_id, transcript_path FROM sessions
+       WHERE transcript_path IS NOT NULL AND transcript_path <> ''
+       ORDER BY id`,
+    )
+    .all() as unknown as TranscriptPathRow[];
+}
+
+/**
+ * Create a session row only if one does not exist — `INSERT ... DO NOTHING`.
+ *
+ * Deliberately NOT {@link upsertSession}, whose conflict clause sets
+ * `status = excluded.status` unconditionally: a late transcript line would
+ * resurrect a `complete` session to `live`. The tailer must be able to
+ * materialize a row it has evidence for without editing one it does not own.
+ */
+export function insertSessionIfAbsent(db: DatabaseSync, s: SessionUpsert): void {
+  db.prepare(
+    `INSERT INTO sessions (id, harness, project_path, git_branch, model,
+                           started_at, ended_at, status, capture_mode, transcript_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(
+    s.id,
+    s.harness,
+    s.project_path,
+    s.git_branch ?? null,
+    s.model ?? null,
+    s.started_at,
+    s.ended_at ?? null,
+    s.status,
+    s.capture_mode,
+    s.transcript_path ?? null,
+  );
+}
+
+/**
+ * Correct a session's `capture_mode`. This exists because `upsertSession`'s
+ * `ON CONFLICT` list omits `capture_mode`, so whichever writer creates the row
+ * owns the label FOREVER — and the tailer can legitimately win that race
+ * (install agent-lens mid-session: no `SessionStart`, the transcript is
+ * discovered, the row is minted `transcript_only`). Without this repair a later,
+ * perfectly healthy hook could never fix the label, and Task 3.3's upgrade path
+ * would be pre-empted. A no-op when the value already matches.
+ */
+export function setCaptureMode(
+  db: DatabaseSync,
+  sessionId: string,
+  mode: CaptureMode,
+): void {
+  db.prepare(
+    `UPDATE sessions SET capture_mode = ? WHERE id = ? AND capture_mode <> ?`,
+  ).run(mode, sessionId, mode);
 }
 
 /** Archive counts by status — the drift/dead-letter counter the UI banner reads. */

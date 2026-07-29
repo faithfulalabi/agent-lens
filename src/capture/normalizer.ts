@@ -15,6 +15,8 @@ import type { Envelope } from '../shared/index.js';
 import type { SpanStatus, TraceTrigger } from '../shared/index.js';
 import { canonicalJson } from '../shared/index.js';
 import {
+  insertSessionIfAbsent,
+  setCaptureMode,
   upsertSession,
   upsertTrace,
   upsertSpan,
@@ -114,7 +116,25 @@ export function normalize(db: DatabaseSync, envelope: Envelope): NormalizeResult
   const hook = envelope.hook_name ?? '';
 
   // Any event at all proves the session is alive again after an inactivity sweep.
+  // Deliberately AHEAD of the transcript branch: a session the sweep marked
+  // `interrupted` while its transcript is visibly growing must come back to life.
   reviveSession(db, envelope.session_id);
+
+  if (envelope.source === 'transcript') {
+    // A transcript line carries no hook name, so left alone it would fall
+    // through to the `default` branch, mint a degraded generic span, and inflate
+    // the drift counter for every line of every session. The guard is SCOPED to
+    // trace/span projection: Task 3.2 owns traces and spans from transcripts,
+    // and Task 3.3 (parallel with 3.2) needs a `sessions` row to tag, so session
+    // presence and liveness are 3.1's to deliver.
+    ensureTranscriptSession(db, envelope, payload);
+    return OK;
+  }
+
+  // A hook landed, so hooks demonstrably work for this session. If the tailer
+  // won the race and minted the row `transcript_only`, nothing else could ever
+  // correct it — `upsertSession`'s ON CONFLICT list omits `capture_mode`.
+  setCaptureMode(db, envelope.session_id, 'full');
 
   switch (hook) {
     case 'SessionStart':
@@ -506,6 +526,43 @@ function ensureSession(db: DatabaseSync, env: Envelope, p: HookPayload): void {
     capture_mode: 'full',
     model: str(p.model),
     transcript_path: str(p.transcript_path),
+  });
+}
+
+/**
+ * Materialize the session a transcript line belongs to, so Task 3.3 has a row to
+ * tag and the read API can show the session at all.
+ *
+ * **Insert-if-absent, never `upsertSession`**, whose conflict clause sets
+ * `status = excluded.status` unconditionally — a late transcript line would
+ * resurrect a `complete` session to `live`.
+ *
+ * **Gated on the line carrying a `cwd`** (67% of real lines do, and every real
+ * session emits some). `upsertSession` updates neither `project_path` nor
+ * `capture_mode` on conflict, so a row created with `project_path:'unknown'`
+ * could never be repaired by a later `SessionStart`. Gating avoids widening that
+ * pre-existing hazard and needs no change to the hook path: a transcript with no
+ * cwd-carrying line yet simply has no session row, which is Task 3.3's detection
+ * window rather than 3.1's problem.
+ *
+ * `capture_mode: 'transcript_only'` is the honest label at creation time — we
+ * have seen zero hooks for this session. It is not a ratchet: the first hook to
+ * arrive corrects it via `setCaptureMode` at the top of `normalize`.
+ */
+function ensureTranscriptSession(
+  db: DatabaseSync,
+  env: Envelope,
+  p: HookPayload,
+): void {
+  const cwd = str(p.cwd);
+  if (cwd === undefined || cwd === '') return;
+  insertSessionIfAbsent(db, {
+    id: env.session_id,
+    harness: env.harness,
+    project_path: cwd,
+    started_at: env.ts,
+    status: 'live',
+    capture_mode: 'transcript_only',
   });
 }
 

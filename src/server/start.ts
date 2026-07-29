@@ -7,6 +7,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import type { DatabaseSync } from 'node:sqlite';
 import { readOrCreateToken } from '../shared/index.js';
 import { openDb } from '../db/index.js';
 import { buildApp } from './app.js';
@@ -18,6 +19,11 @@ import {
   DEFAULT_SWEEP_INTERVAL_MS,
   type SweepResult,
 } from '../capture/inactivity.js';
+import {
+  tailOnce,
+  DEFAULT_TAIL_INTERVAL_MS,
+  type TailResult,
+} from '../capture/tailer.js';
 
 /** Options for `startServer`. */
 export interface StartOptions {
@@ -33,6 +39,20 @@ export interface StartOptions {
   onSweep?: (result: SweepResult) => void;
   /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
   uiDir?: string;
+  /**
+   * Transcript root; defaults to $AGENT_LENS_TRANSCRIPT_ROOT then
+   * ~/.claude/projects. Setting it also confines sessions-derived transcript
+   * paths to that subtree, which is what makes a test boot hermetic.
+   */
+  transcriptRoot?: string;
+  /**
+   * Transcript-tail period in ms; `0` disables the tailer entirely — the timer
+   * AND the boot catch-up pass, so it is a real off switch rather than a quiet
+   * one-scan-then-stop.
+   */
+  tailIntervalMs?: number;
+  /** Called with each tail pass's result — observability hook (and test seam). */
+  onTail?: (result: TailResult) => void;
 }
 
 /** A running server handle. */
@@ -85,6 +105,29 @@ function bind(
 }
 
 /**
+ * One tail pass, from the boot catch-up or the interval. Housekeeping: a tailer
+ * failure must never take the collector down, nor throw inside a timer callback
+ * where nothing can catch it.
+ */
+function runTailPass(
+  db: DatabaseSync,
+  broadcaster: Broadcaster,
+  options: StartOptions,
+): void {
+  try {
+    // Bind the result FIRST. `options.onTail?.(tailOnce(...))` short-circuits
+    // the WHOLE expression — argument included — whenever no callback is
+    // supplied, so the tailer would only ever run for tests that observe it.
+    const result = tailOnce(db, broadcaster, {
+      transcriptRoot: options.transcriptRoot,
+    });
+    options.onTail?.(result);
+  } catch (err) {
+    console.warn('agent-lens: transcript tail failed:', err);
+  }
+}
+
+/**
  * Boot the server. Explicit `port` is used verbatim (throws on EADDRINUSE).
  * `port === 0` binds an ephemeral port (tests). Otherwise the default port
  * auto-increments on EADDRINUSE, printing the chosen port.
@@ -104,6 +147,14 @@ export async function startServer(
   // we accept new connections. Idempotent (upsert-by-event_id), so a replay
   // that overlaps a prior run costs nothing.
   replaySpool(db, broadcaster, dataDir);
+
+  // Catch-up for transcripts that grew while we were down, in the same
+  // before-bind slot and for the same reason. `tailIntervalMs: 0` skips it too:
+  // an off switch that still performs one full scan is not an off switch.
+  const tailIntervalMs = options.tailIntervalMs ?? DEFAULT_TAIL_INTERVAL_MS;
+  if (tailIntervalMs > 0) {
+    runTailPass(db, broadcaster, options);
+  }
 
   const app = buildApp({ db, token, broadcaster, host, uiDir: options.uiDir });
   const fetch = app.fetch;
@@ -154,12 +205,21 @@ export async function startServer(
     sweepIntervalMs > 0
       ? setInterval(() => {
           try {
-            options.onSweep?.(sweepInactive(db));
+            // Same short-circuit hazard as `runTailPass`: with the call written
+            // as `options.onSweep?.(sweepInactive(db))` the sweep NEVER RAN in
+            // production, where no callback is passed. Bind the result first.
+            const result = sweepInactive(db);
+            options.onSweep?.(result);
           } catch (err) {
             // A sweep is housekeeping; never let it take the collector down.
             console.warn('agent-lens: inactivity sweep failed:', err);
           }
         }, sweepIntervalMs)
+      : undefined;
+
+  const tailTimer =
+    tailIntervalMs > 0
+      ? setInterval(() => runTailPass(db, broadcaster, options), tailIntervalMs)
       : undefined;
 
   writeConfig(dataDir, {
@@ -182,9 +242,10 @@ export async function startServer(
     port: boundPort,
     close: () =>
       new Promise<void>((resolve) => {
-        // Clear the sweep FIRST: `server.close` is async, and a timer that fires
-        // after `db.close()` throws where no caller can catch it.
+        // Clear the timers FIRST: `server.close` is async, and a timer that
+        // fires after `db.close()` throws where no caller can catch it.
         if (sweepTimer !== undefined) clearInterval(sweepTimer);
+        if (tailTimer !== undefined) clearInterval(tailTimer);
         server.close(() => {
           db.close();
           clearConfig(dataDir);
