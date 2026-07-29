@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
+    // Kept in lockstep with ui/tsconfig.json `paths`: tsc reads that, the
+    // bundler reads this, and configuring only one fails invisibly until the
+    // other tool runs.
     alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@shared': fileURLToPath(new URL('../src/shared', import.meta.url)),
     },
   },
