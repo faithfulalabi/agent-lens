@@ -17,6 +17,10 @@ import {
 /**
  * Raw HTTP request that can set a custom Host header — `fetch` forbids Host as a
  * header name, so the host guard can only be exercised via `node:http`.
+ *
+ * `agent: false` keeps teardown quick: `serveStatic` streams its response, and a
+ * client holding the socket open afterwards delays `server.close()` by seconds
+ * on the `/assets/*` rows.
  */
 function rawRequest(
   port: number,
@@ -27,7 +31,7 @@ function rawRequest(
 ): Promise<{ status: number }> {
   return new Promise((resolve, reject) => {
     const req = request(
-      { host: '127.0.0.1', port, path, method, headers },
+      { host: '127.0.0.1', port, path, method, headers, agent: false },
       (res) => {
         res.resume();
         res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
@@ -149,24 +153,61 @@ describe('host-header guard', () => {
     },
   );
 
-  it.each(['/', '/api/events', '/api/stream'])(
-    'rejects a spoofed Host on %s (403)',
+  // `hostGuard` is registered as `app.use('*', ...)`, so Task 5.1b's UI routes
+  // inherit it for free — but "for free" is only true while something asserts
+  // it, hence the asset and deep-link rows.
+  it.each([
+    '/',
+    '/api/events',
+    '/api/stream',
+    '/assets/app-abc123.js',
+    '/session/abc',
+    '/session/abc/trace/3',
+  ])('rejects a spoofed Host on %s (403)', async (path) => {
+    server = await bootTestServer();
+    const res = await rawRequest(server.handle.port, path, {
+      [TOKEN_HEADER]: server.token,
+      host: 'evil.com',
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it.each(['/', '/assets/app-abc123.js'])(
+    'serves the UI at %s under a loopback Host (200)',
     async (path) => {
       server = await bootTestServer();
       const res = await rawRequest(server.handle.port, path, {
-        [TOKEN_HEADER]: server.token,
-        host: 'evil.com',
+        host: `localhost:${server.handle.port}`,
       });
-      expect(res.status).toBe(403);
+      // 200 even on a machine with no `ui/dist`: the placeholder page is a 200,
+      // because the server IS up — only the bundle is missing.
+      expect(res.status).toBe(200);
+    },
+  );
+});
+
+// AC5: the UI is host-guarded but deliberately NOT token-guarded, while
+// `/api/*` stays token-guarded. That split is the recorded ruling from Task 2.5
+// — merging them "would lock the UI out or force the token into a URL/cookie",
+// and a `<script src>` cannot carry a header at all. Asserted here so a future
+// "harden everything" pass argues with a named test, not a comment.
+describe('the UI is reachable without a token; /api/* is not', () => {
+  it.each(['/', '/assets/app-abc123.js', '/session/abc'])(
+    'serves %s with no token at all (200)',
+    async (path) => {
+      server = await bootTestServer();
+      const res = await rawRequest(server.handle.port, path, {
+        host: `localhost:${server.handle.port}`,
+      });
+      expect(res.status).toBe(200);
     },
   );
 
-  it('serves the static page under a loopback Host (200)', async () => {
+  it('still 401s /api/* without a token, and never answers it with SPA HTML', async () => {
     server = await bootTestServer();
-    const res = await rawRequest(server.handle.port, '/', {
-      host: `localhost:${server.handle.port}`,
-    });
-    expect(res.status).toBe(200);
+    const res = await fetch(server.url('/api/events'));
+    expect(res.status).toBe(401);
+    expect((await res.text()).startsWith('<')).toBe(false);
   });
 });
 

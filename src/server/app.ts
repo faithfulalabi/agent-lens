@@ -11,7 +11,7 @@ import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
 import { jsonNotFound, registerReadApi } from './read-api.js';
 import { Broadcaster } from './sse.js';
-import { renderPage } from './static-page.js';
+import { makeServeIndex, registerUi } from './static-ui.js';
 
 /** Wiring the app needs from `startServer`. */
 export interface AppDeps {
@@ -20,6 +20,8 @@ export interface AppDeps {
   broadcaster: Broadcaster;
   /** Configured bind host; a non-loopback value widens the Host allowlist. */
   host?: string;
+  /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
+  uiDir?: string;
 }
 
 const HEARTBEAT_MS = 15_000;
@@ -33,15 +35,18 @@ function readString(body: unknown, key: string): string | undefined {
 
 /** Assemble the Hono app with all Phase-1 routes. */
 export function buildApp(deps: AppDeps): Hono {
-  const { db, token, broadcaster, host } = deps;
+  const { db, token, broadcaster, host, uiDir } = deps;
   const app = new Hono();
 
   // App-wide host allowlist, before anything else. A non-loopback bind widens
   // it to the machine's resolved interface addresses (token stays mandatory).
   app.use('*', hostGuard(host === undefined ? [] : resolveBindHosts(host)));
 
-  // Static page: same-origin token bootstrap, no token header required.
-  app.get('/', (c) => c.html(renderPage(token)));
+  // The built UI's index.html with the token bootstrap injected: deliberately
+  // NOT token-guarded, and registered ahead of `tokenAuth` so that stays
+  // visible. `/assets/*` and the SPA fallback go in at the bottom, after the
+  // `/api/*` terminator — see `registerUi`.
+  app.get('/', makeServeIndex({ token, uiDir }));
 
   // Everything under /api/* is token-guarded.
   app.use('/api/*', tokenAuth(token));
@@ -112,8 +117,16 @@ export function buildApp(deps: AppDeps): Hono {
   // order, so an `app.all('/api/*')` placed before `/api/stream` shadows it and
   // 404s the SSE endpoint (probed on hono 4.12.31). Registered LAST among the
   // `/api` routes, it turns an unmatched API path into a JSON 404 and stops it
-  // falling through to Task 5.1b's future SPA `app.get('*')` fallback.
+  // falling through to the SPA `app.get('*')` fallback registered just below.
   app.all('/api/*', jsonNotFound);
+
+  // --- The UI, last (Task 5.1b) ---------------------------------------------
+  // `/assets/*` (+ its own terminator) and the SPA `app.get('*')` fallback.
+  // Registered here because the fallback is a catch-all: every `/api` route
+  // above, terminator included, must be claimed before it. It is the LAST route
+  // in the app — a route registered after `buildApp` returns is shadowed, even
+  // a specific one (`static-serving.test.ts` Test 13 pins this).
+  registerUi(app, { token, uiDir });
 
   // The other half of that guarantee: an uncaught throw in a handler would
   // otherwise be hono's `500 text/plain "Internal Server Error"`, which AC5
