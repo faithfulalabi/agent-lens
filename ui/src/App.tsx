@@ -1,3 +1,4 @@
+import { AppShell } from './components/shell/AppShell.js';
 import { Home } from './pages/Home.js';
 import { Showcase } from './pages/Showcase.js';
 
@@ -7,5 +8,5 @@ export function App() {
   // unknown paths, and keeps working once 5.1b's SPA fallback lands. No test
   // depends on this switch — the token tests render <Showcase /> directly.
   const isShowcase = window.location.pathname === '/showcase';
-  return isShowcase ? <Showcase /> : <Home />;
+  return <AppShell>{isShowcase ? <Showcase /> : <Home />}</AppShell>;
 }
