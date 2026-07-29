@@ -9,6 +9,7 @@ import { deadLetterRaw, getAllEventsOrdered, ingestHealth } from '../db/index.js
 import { hostGuard, resolveBindHosts } from './middleware/host-guard.js';
 import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
+import { jsonNotFound, registerReadApi } from './read-api.js';
 import { Broadcaster } from './sse.js';
 import { renderPage } from './static-page.js';
 
@@ -78,6 +79,10 @@ export function buildApp(deps: AppDeps): Hono {
   // Drift/dead-letter counters. Phase 5 renders the degradation banner from this.
   app.get('/api/health', (c) => c.json(ingestHealth(db)));
 
+  // The five read endpoints (Task 5.0). Five plain routes, no catch-all — the
+  // `/api/*` terminator is registered below, after `/api/stream`.
+  registerReadApi(app, db);
+
   app.get('/api/stream', (c) =>
     streamSSE(c, async (stream) => {
       const unsubscribe = broadcaster.subscribe((event) => {
@@ -99,6 +104,33 @@ export function buildApp(deps: AppDeps): Hono {
       }
     }),
   );
+
+  // --- Nothing under /api/* escapes as HTML (Task 5.0) ----------------------
+  // Both registrations belong to `buildApp`, not to `registerReadApi`.
+
+  // Terminator, and its position is load-bearing: hono matches in registration
+  // order, so an `app.all('/api/*')` placed before `/api/stream` shadows it and
+  // 404s the SSE endpoint (probed on hono 4.12.31). Registered LAST among the
+  // `/api` routes, it turns an unmatched API path into a JSON 404 and stops it
+  // falling through to Task 5.1b's future SPA `app.get('*')` fallback.
+  app.all('/api/*', jsonNotFound);
+
+  // The other half of that guarantee: an uncaught throw in a handler would
+  // otherwise be hono's `500 text/plain "Internal Server Error"`, which AC5
+  // forbids on the read endpoints. Scoped to `/api/` so `/` keeps today's
+  // behaviour; `onError` is a hook, so its registration point does not matter —
+  // it sits here to read alongside the terminator.
+  app.onError((err, c) => {
+    if ('getResponse' in err) {
+      const res = err.getResponse();
+      return c.newResponse(res.body, res);
+    }
+    console.error(err);
+    if (c.req.path.startsWith('/api/')) {
+      return c.json({ error: 'internal error' }, 500);
+    }
+    return c.text('Internal Server Error', 500);
+  });
 
   return app;
 }
