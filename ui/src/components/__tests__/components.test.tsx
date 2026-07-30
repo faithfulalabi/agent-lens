@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { appSource, pagesImportedBy } from '../../__tests__/app-pages';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import {
   ContextMenu,
@@ -22,8 +21,6 @@ import {
   ContextMenuTrigger,
 } from '../ui/context-menu';
 import { AppShell } from '../shell/AppShell';
-
-const APP_PATH = fileURLToPath(new URL('../../App.tsx', import.meta.url));
 
 /*
  * AC1 — a smoke check, and only that. Read the next paragraph before adding an
@@ -120,7 +117,7 @@ describe('AppShell', () => {
    * and there is no `window` under environment: 'node'.
    */
   it('wraps every branch of App.tsx', () => {
-    const source = readFileSync(APP_PATH, 'utf8');
+    const source = appSource();
     expect(source).toMatch(/import\s*\{\s*AppShell\s*\}/);
 
     const opened = source.indexOf('<AppShell');
@@ -128,13 +125,37 @@ describe('AppShell', () => {
     expect(opened, 'App.tsx does not render <AppShell>').toBeGreaterThan(-1);
     expect(closed, 'App.tsx does not close <AppShell>').toBeGreaterThan(opened);
 
+    /*
+     * Generalised by Task 5.2a from the hardcoded pair it used to hold. The
+     * claim is unchanged — every page renders inside the shell — but the list
+     * of pages now comes from App.tsx's own imports, so a task that adds a page
+     * adds one import and edits no test. (Task 5.3 asked for this; 5.2a runs
+     * first, so 5.2a makes it. route-match.test.ts carries the same change.)
+     */
+    const pages = pagesImportedBy(source);
+    expect(pages.length, 'no page import was derived from App.tsx').toBeGreaterThan(0);
+    expect(
+      pages,
+      'the showcase page is the vacuity guard: a regex that matched only its ' +
+        'first hit would return one page and green the loop below against it.',
+    ).toContain('Showcase');
+
     const wrapped = source.slice(opened, closed);
-    for (const page of ['<Showcase', '<Home']) {
+    for (const page of pages) {
       expect(
         wrapped,
-        `${page} /> renders outside <AppShell> — both branches of the temporary ` +
-          '/showcase switch must render inside the shell.',
-      ).toContain(page);
+        `<${page} /> renders outside <AppShell> — every page App.tsx imports ` +
+          'must render inside the shell.',
+      ).toContain(`<${page}`);
     }
+  });
+
+  it('derives the page list from App.tsx page imports and nothing else', () => {
+    const pages = pagesImportedBy(appSource());
+    // Narrowing to the `./pages/` prefix is the whole mechanism: the shell
+    // comes from `./components/shell/` and the router binding from `./lib/`,
+    // so neither can be mistaken for a page and demanded inside the shell tags.
+    expect(pages).not.toContain('AppShell');
+    expect(pages).not.toContain('useRoute');
   });
 });

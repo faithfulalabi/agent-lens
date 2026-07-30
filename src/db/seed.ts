@@ -53,6 +53,28 @@ export interface SeedOptions {
   sessions?: number;
   tracesPerSession?: number;
   spansPerTrace?: number;
+  /**
+   * Slide every timestamp so the LAST session starts here. Default: absent,
+   * meaning `SEED_EPOCH` — byte-identical to what this seeder has always
+   * written, which is what keeps every existing test unchanged.
+   *
+   * Exists because the UI's time-range control is unverifiable without it:
+   * `SEED_EPOCH` is 2026-07-01, so `{sessions: 300}` covers 2026-07-01 to
+   * 07-13 and falls entirely outside a 3d/7d/30d window measured from a real
+   * clock. A browser pointed at that fixture shows an out-of-range empty state
+   * rather than 300 rows, and the manual pass proves nothing.
+   */
+  nowAnchor?: Date;
+  /**
+   * Add the two shapes the uniform fixture lacks: one `transcript_only`
+   * session, and one failed span so that `error_count > 0` exists somewhere.
+   * Default: absent, and then nothing changes.
+   *
+   * Without it every seeded session is `capture_mode: 'full'` and every span is
+   * `ok` or `running`, so the degraded-capture chip and the error affordance
+   * have no input to render from at all.
+   */
+  variants?: boolean;
 }
 
 /** Ids and counts a test needs to assert against what was written. */
@@ -84,16 +106,33 @@ export interface SeedManifest {
   };
 }
 
-/** ISO timestamp `seconds` after {@link SEED_EPOCH}. */
-function seedAt(seconds: number): string {
-  return new Date(Date.parse(SEED_EPOCH) + seconds * 1000).toISOString();
+/** How far apart consecutive seeded sessions start. */
+const SESSION_STRIDE_SECONDS = 3600;
+
+/** ISO timestamp `seconds` after `epochMs`. */
+function seedAt(epochMs: number, seconds: number): string {
+  return new Date(epochMs + seconds * 1000).toISOString();
+}
+
+/**
+ * The epoch every timestamp is measured from: {@link SEED_EPOCH} by default,
+ * or whatever puts the last session's start exactly on `nowAnchor`.
+ */
+function epochFor(sessionCount: number, nowAnchor: Date | undefined): number {
+  if (nowAnchor === undefined) return Date.parse(SEED_EPOCH);
+  return nowAnchor.getTime() - (sessionCount - 1) * SESSION_STRIDE_SECONDS * 1000;
 }
 
 /**
  * Seed an already-open DB. Deterministic: ids are
  * `seed-s{i}` / `seed-s{i}:{turn}` / `seed-s{i}:{turn}:sp{j}`, timestamps derive
- * from {@link SEED_EPOCH}, and every writer involved is an upsert, so seeding
- * twice converges on the same rows instead of doubling them.
+ * from {@link SEED_EPOCH} (or from `nowAnchor`, when one is given), and every
+ * writer involved is an upsert, so seeding twice converges on the same rows
+ * instead of doubling them.
+ *
+ * Both `nowAnchor` and `variants` default to the behaviour this seeder has
+ * always had, so calling it with no options — or with only the three count
+ * options — writes byte-identical rows.
  *
  * The LAST session is deliberately left live — no `ended_at`, `git_branch`,
  * `model`, or `transcript_path`, with a live final trace and a `running` final
@@ -105,6 +144,9 @@ export function seedInto(db: DatabaseSync, options: SeedOptions = {}): SeedManif
   const sessionCount = options.sessions ?? 3;
   const tracesPerSession = options.tracesPerSession ?? 2;
   const spansPerTrace = options.spansPerTrace ?? 3;
+  const variants = options.variants ?? false;
+  const epochMs = epochFor(sessionCount, options.nowAnchor);
+  const at = (seconds: number): string => seedAt(epochMs, seconds);
 
   const manifest: SeedManifest = {
     sessionIds: [],
@@ -129,21 +171,24 @@ export function seedInto(db: DatabaseSync, options: SeedOptions = {}): SeedManif
     const sessionId = `seed-s${i}`;
     const project = `/tmp/agent-lens/project-${i % 2}`;
     const live = i === sessionCount - 1;
-    const sessionStart = i * 3600;
+    const sessionStart = i * SESSION_STRIDE_SECONDS;
+    // Exactly one degraded session, and only under `variants` — the first, so
+    // it exists at any session count.
+    const degraded = variants && i === 0;
 
     upsertSession(db, {
       id: sessionId,
       harness: 'claude-code',
       project_path: project,
-      started_at: seedAt(sessionStart),
+      started_at: at(sessionStart),
       status: live ? 'live' : 'complete',
-      capture_mode: 'full',
+      capture_mode: degraded ? 'transcript_only' : 'full',
       ...(live
         ? {}
         : {
             git_branch: 'main',
             model: KNOWN_MODEL,
-            ended_at: seedAt(sessionStart + 1800),
+            ended_at: at(sessionStart + 1800),
             transcript_path: `/tmp/agent-lens/transcripts/${sessionId}.jsonl`,
           }),
     });
@@ -162,9 +207,9 @@ export function seedInto(db: DatabaseSync, options: SeedOptions = {}): SeedManif
         turn_seq: turn,
         trigger: 'user_prompt',
         prompt_preview: `Seeded prompt ${turn} for ${sessionId}`,
-        started_at: seedAt(traceStart),
+        started_at: at(traceStart),
         status: liveTrace ? 'live' : 'complete',
-        ...(liveTrace ? {} : { ended_at: seedAt(traceStart + 30) }),
+        ...(liveTrace ? {} : { ended_at: at(traceStart + 30) }),
       });
       manifest.traceIds.push(traceId);
       if (liveTrace) manifest.liveTraceId = traceId;
@@ -178,6 +223,10 @@ export function seedInto(db: DatabaseSync, options: SeedOptions = {}): SeedManif
         // The very first llm_call gets an unpriced model so `est_cost` is a real
         // NULL somewhere in every seeded DB, however small the options.
         const unpriced = i === 0 && turn === 1 && isRoot;
+        // One failed span under `variants`, so `error_count > 0` exists at all.
+        // `rollups.ts:102` counts `error` and `denied`; every span this seeder
+        // writes is otherwise `ok` or `running`.
+        const failed = variants && i === 0 && turn === 1 && j === spansPerTrace - 1 && !openSpan;
 
         const inputPayloadId = unpriced
           ? manifest.unicodePayloadId
@@ -191,14 +240,14 @@ export function seedInto(db: DatabaseSync, options: SeedOptions = {}): SeedManif
           trace_id: traceId,
           span_type: isRoot ? 'llm_call' : 'tool_call',
           name: isRoot ? 'assistant turn' : `Bash #${j}`,
-          status: openSpan ? 'running' : 'ok',
-          started_at: seedAt(spanStart),
+          status: openSpan ? 'running' : failed ? 'error' : 'ok',
+          started_at: at(spanStart),
           source: 'hook',
           tags: ['seeded'],
           attrs: { seed: true, turn },
           input_payload_id: inputPayloadId,
           ...(isRoot ? {} : { parent_span_id: rootSpanId }),
-          ...(openSpan ? {} : { ended_at: seedAt(spanStart + 1) }),
+          ...(openSpan ? {} : { ended_at: at(spanStart + 1) }),
           ...(outputPayloadId === undefined ? {} : { output_payload_id: outputPayloadId }),
         });
 
