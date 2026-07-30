@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 
+import { appSource, pagesImportedBy } from '../../__tests__/app-pages';
 import { hrefFor, matchRoute, type Route } from '../route-match';
 
 /*
@@ -15,7 +16,6 @@ import { hrefFor, matchRoute, type Route } from '../route-match';
  */
 
 const MODULE_PATH = fileURLToPath(new URL('../route-match.ts', import.meta.url));
-const APP_PATH = fileURLToPath(new URL('../../App.tsx', import.meta.url));
 
 describe('matchRoute covers every locked route plus the miss', () => {
   it.each([
@@ -162,14 +162,25 @@ describe('the temporary /showcase switch became a real route', () => {
   });
 
   it('leaves App.tsx reading the router instead of the address bar', () => {
-    const source = readFileSync(APP_PATH, 'utf8');
+    const source = appSource();
     expect(source, 'the ad-hoc path check is what 5.1c replaces').not.toContain(
       'window.location.pathname',
     );
     expect(source).toContain('useRoute');
-    // Belt and braces beside components.test.tsx's own App.tsx source pin,
-    // which this task does NOT amend: both pages still render in the shell.
-    expect(source).toContain('<Showcase');
-    expect(source).toContain('<Home');
+    /*
+     * Belt and braces beside components.test.tsx's own App.tsx page pin.
+     *
+     * That pin IS amended — by Task 5.2a, and this one with it. (The line that
+     * used to sit here said the opposite; it was written when 5.1c chose not to
+     * touch either, and it went stale the moment 5.2a generalised both.) Both
+     * now derive the page list from App.tsx's own imports rather than naming
+     * pages, so shipping a page costs one import and no test edit.
+     */
+    const pages = pagesImportedBy(source);
+    expect(pages.length, 'no page import was derived from App.tsx').toBeGreaterThan(0);
+    expect(pages, 'the vacuity guard — see app-pages.ts').toContain('Showcase');
+    for (const page of pages) {
+      expect(source, `App.tsx imports ${page} but never renders it`).toContain(`<${page}`);
+    }
   });
 });
