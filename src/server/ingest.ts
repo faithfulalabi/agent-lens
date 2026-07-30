@@ -107,6 +107,31 @@ export interface IngestBatchItem {
   status?: 'processed' | 'dead_letter';
 }
 
+/**
+ * Optional per-call wiring for {@link ingestBatch}. An options BAG rather than
+ * positional parameters: more than one caller needs to hook the same one-line
+ * gap between the rollup flush and `COMMIT`, and a bag lets each add a field
+ * without churning every call site.
+ */
+export interface IngestBatchOptions {
+  /**
+   * Runs inside the batch transaction, after the rollup flush and immediately
+   * before `COMMIT` — so whatever it writes commits atomically with the slice.
+   * The transcript tailer commits its resume offset here: the offset can then
+   * never advance past events that did not commit.
+   *
+   * **It fires exactly once per `ingestBatch` call, whatever the slice size —
+   * including an EMPTY slice.** A caller that consumed bytes yielding zero
+   * envelopes (a whitespace-only region) still needs its offset committed, or it
+   * re-reads that region every tick forever. The uniform contract is why callers
+   * must NOT guard their flush on a non-empty batch.
+   *
+   * A throw rolls the whole slice back on purpose and every item is reported
+   * unwritten; nothing is rethrown, because ingest never throws (Task 2.3 AC1).
+   */
+  beforeCommit?: (db: DatabaseSync) => void;
+}
+
 /** The publish-only slice of `Broadcaster` that ingest needs. */
 type EventSink = Pick<Broadcaster, 'publish'>;
 
@@ -167,13 +192,26 @@ export function ingestEnvelope(
  * **Broadcast is deferred past `COMMIT`** — items publish into a buffer, which
  * is drained only once the whole slice is durable, so a subscriber never sees an
  * event that a later rollback erased.
+ *
+ * `options.beforeCommit` runs once per call inside the transaction, even for an
+ * empty slice — see {@link IngestBatchOptions}.
  */
 export function ingestBatch(
   db: DatabaseSync,
   broadcaster: Broadcaster,
   items: readonly IngestBatchItem[],
+  options: IngestBatchOptions = {},
 ): IngestResult[] {
-  if (items.length === 0) return [];
+  if (items.length === 0) {
+    // An empty slice still has to honour the hook contract: the zero-item early
+    // return sits ABOVE the transaction frame, so without this branch a caller
+    // whose consumed region yielded no envelopes would never commit its
+    // bookkeeping and would re-read that region forever.
+    if (options.beforeCommit !== undefined) {
+      runEmptyBatchHook(db, options.beforeCommit);
+    }
+    return [];
+  }
 
   const pending: SpanLite[] = [];
   const buffer: EventSink = {
@@ -192,12 +230,15 @@ export function ingestBatch(
       );
     }
     flushRollups(db, dirty);
+    options.beforeCommit?.(db);
     db.exec(TXN_TOP.commit);
   } catch {
-    // Only BEGIN/COMMIT itself can land here — per-item and rollup failures are
-    // both contained. Nothing was persisted, so report every item as unwritten
-    // and needing triage rather than throwing: ingest never throws (Task 2.3
-    // AC1), and calling these "replayed" would make the counters lie.
+    // Only BEGIN/COMMIT itself and `options.beforeCommit` can land here —
+    // per-item and rollup failures are both contained. Nothing was persisted, so
+    // report every item as unwritten and needing triage rather than throwing:
+    // ingest never throws (Task 2.3 AC1), and calling these "replayed" would
+    // make the counters lie. A `beforeCommit` that throws therefore takes the
+    // whole slice down WITH its own bookkeeping, which is the point.
     try {
       db.exec(TXN_TOP.rollback);
     } catch {
@@ -210,6 +251,29 @@ export function ingestBatch(
   // Durable now: fan out the buffered events (I/O outside the transaction).
   for (const span of pending) broadcaster.publish(span);
   return results;
+}
+
+/**
+ * Run `beforeCommit` for a zero-item slice in a transaction of its own, so the
+ * hook's writes are still atomic and still all-or-nothing. Deliberately silent
+ * on failure: ingest never throws, and the caller learns about it the same way
+ * it would for a non-empty slice — its bookkeeping simply did not advance.
+ */
+function runEmptyBatchHook(
+  db: DatabaseSync,
+  beforeCommit: (db: DatabaseSync) => void,
+): void {
+  db.exec(TXN_TOP.begin);
+  try {
+    beforeCommit(db);
+    db.exec(TXN_TOP.commit);
+  } catch {
+    try {
+      db.exec(TXN_TOP.rollback);
+    } catch {
+      /* no transaction to roll back — already the state we want */
+    }
+  }
 }
 
 /**

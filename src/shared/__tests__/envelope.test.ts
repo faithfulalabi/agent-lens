@@ -35,7 +35,8 @@ describe('makeEnvelope', () => {
     const env = makeEnvelope({
       source: 'transcript',
       session_id: 'sess',
-      file_identity: 'inode:1',
+      file_identity: '/proj/sess.jsonl',
+      line_offset: 0,
       line: '{"type":"assistant"}',
       uuid: 'line-uuid',
       ts: '2026-07-22T00:00:01.000Z',

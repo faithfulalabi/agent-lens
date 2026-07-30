@@ -12,3 +12,17 @@ export {
   DEFAULT_SWEEP_INTERVAL_MS,
 } from './inactivity.js';
 export type { SweepOptions, SweepResult } from './inactivity.js';
+export {
+  tailOnce,
+  canonicalizeTranscriptPath,
+  resolveTranscriptRoot,
+  DEFAULT_TAIL_INTERVAL_MS,
+  MAX_BYTES_PER_FILE_PER_PASS,
+  MAX_LINE_BYTES,
+} from './tailer.js';
+export type { TailOptions, TailResult, TailFileResult, TailReset } from './tailer.js';
+export { parseTranscriptLine, transcriptDeadLetter } from './transcript-line.js';
+export type {
+  ParsedTranscriptLine,
+  TranscriptLineContext,
+} from './transcript-line.js';

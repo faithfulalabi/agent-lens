@@ -234,7 +234,14 @@ describe('--host (non-loopback bind)', () => {
   it('warns, enforces token, admits the resolved interface Host, and rejects spoofs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dir = mkdtempSync(join(tmpdir(), 'agent-lens-host-'));
-    handle = await startServer({ port: 0, dataDir: dir, host: '0.0.0.0' });
+    handle = await startServer({
+      port: 0,
+      dataDir: dir,
+      host: '0.0.0.0',
+      // Bypasses `bootTestServer`, so opt out of the tailer explicitly: the boot
+      // catch-up would otherwise scan the developer's real `~/.claude/projects`.
+      tailIntervalMs: 0,
+    });
     const token = readToken(dir)!;
 
     // Loud network-exposure warning was emitted.
@@ -272,7 +279,7 @@ describe('--host (non-loopback bind)', () => {
   it('does not warn on a default loopback bind', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dir = mkdtempSync(join(tmpdir(), 'agent-lens-host-'));
-    handle = await startServer({ port: 0, dataDir: dir });
+    handle = await startServer({ port: 0, dataDir: dir, tailIntervalMs: 0 });
     expect(warn).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,7 @@ const transcriptInput = fc.record(
     source: fc.constant('transcript' as const),
     session_id: fc.string({ minLength: 1 }),
     file_identity: fc.string({ minLength: 1 }),
+    line_offset: fc.nat(),
     line: fc.string(),
     uuid: fc.option(fc.string({ minLength: 1 }), { nil: undefined }),
     raw_payload: fc.object(),
@@ -31,6 +32,7 @@ const transcriptInput = fc.record(
       'source',
       'session_id',
       'file_identity',
+      'line_offset',
       'line',
       'raw_payload',
     ],
@@ -148,7 +150,8 @@ describe('deriveEventId — transcript precedence', () => {
     const id = deriveEventId({
       source: 'transcript',
       session_id: 'sess',
-      file_identity: 'inode:123',
+      file_identity: '/proj/sess.jsonl',
+      line_offset: 4096,
       line: '{"type":"assistant"}',
       uuid: 'abc-uuid',
       raw_payload: {},
@@ -156,20 +159,53 @@ describe('deriveEventId — transcript precedence', () => {
     expect(id).toBe('sess:transcript:abc-uuid');
   });
 
-  it('content hash of file identity + line when uuid absent', () => {
+  it('uuid ignores line_offset, so a uuid line survives a shift', () => {
     const base = {
       source: 'transcript' as const,
       session_id: 'sess',
-      file_identity: 'inode:123:size:456',
+      file_identity: '/proj/sess.jsonl',
+      line: '{"type":"assistant"}',
+      uuid: 'abc-uuid',
+      raw_payload: {},
+    };
+    expect(deriveEventId({ ...base, line_offset: 0 })).toBe(
+      deriveEventId({ ...base, line_offset: 900 }),
+    );
+  });
+
+  it('content hash of file identity + offset + line when uuid absent', () => {
+    const base = {
+      source: 'transcript' as const,
+      session_id: 'sess',
+      file_identity: '/proj/sess.jsonl',
+      line_offset: 0,
       line: '{"type":"assistant","text":"hi"}',
       raw_payload: {},
     };
     const id = deriveEventId(base);
     expect(id).toMatch(/^sess:transcript:[0-9a-f]{32}$/);
-    // Identical file+line -> identical id (idempotent re-read).
+    // Identical file+offset+line -> identical id (idempotent re-read).
     expect(deriveEventId({ ...base })).toBe(id);
     // Different line -> different id.
     expect(deriveEventId({ ...base, line: 'other' })).not.toBe(id);
+  });
+
+  it('byte-identical uuid-less lines at different offsets are distinct events', () => {
+    // 16.6% of the measured corpus is byte-identical uuid-less duplicates
+    // (`mode`, `permission-mode`, `ai-title`, and `last-prompt` — which carries
+    // the user's prompt text). Colliding them drops the later copy permanently.
+    const base = {
+      source: 'transcript' as const,
+      session_id: 'sess',
+      file_identity: '/proj/sess.jsonl',
+      line: '{"type":"last-prompt","prompt":"ship it"}',
+      raw_payload: {},
+    };
+    const first = deriveEventId({ ...base, line_offset: 0 });
+    const second = deriveEventId({ ...base, line_offset: 512 });
+    expect(first).not.toBe(second);
+    // ...and the same line at the same offset is stable across re-reads.
+    expect(deriveEventId({ ...base, line_offset: 512 })).toBe(second);
   });
 });
 

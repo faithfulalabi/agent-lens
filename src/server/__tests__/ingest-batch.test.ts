@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../../db/index.js';
 import { ingestBatch, type IngestBatchItem } from '../ingest.js';
 import { Broadcaster } from '../sse.js';
@@ -421,5 +422,109 @@ describe('ingestBatch — AC3: SAVEPOINT isolates a poison item', () => {
     ]);
     const healed = db.prepare('SELECT * FROM traces').get() as Record<string, unknown>;
     expect(healed.tool_call_count).toBe(3);
+  });
+});
+
+describe('ingestBatch — beforeCommit (Task 3.1)', () => {
+  /** A side table standing in for `tailer_offsets`: the hook's typical use. */
+  function markerTable(db: DatabaseSync): void {
+    db.exec('CREATE TABLE marker (k TEXT PRIMARY KEY, v INTEGER NOT NULL)');
+  }
+  const markerCount = (db: DatabaseSync): number =>
+    Number((db.prepare('SELECT COUNT(*) AS n FROM marker').get() as { n: number }).n);
+
+  it('fires exactly once per call, inside the transaction, for a non-empty slice', () => {
+    const db = freshDb();
+    markerTable(db);
+    let calls = 0;
+    ingestBatch(
+      db,
+      new Broadcaster(),
+      [{ envelope: hookEnvelope('SessionStart', { cwd: '/p' }) }],
+      {
+        beforeCommit: (conn) => {
+          calls += 1;
+          // Inside the frame: a nested BEGIN would be illegal here.
+          expect(() => conn.exec('BEGIN')).toThrow();
+          conn.prepare('INSERT INTO marker VALUES (?, ?)').run('a', 1);
+        },
+      },
+    );
+    expect(calls).toBe(1);
+    expect(markerCount(db)).toBe(1);
+  });
+
+  it('fires for an EMPTY slice too, and still commits', () => {
+    // The zero-item early return sits above the transaction frame, so without a
+    // dedicated branch a caller that consumed bytes yielding no envelopes would
+    // never commit its bookkeeping — and would re-read that region forever.
+    const db = freshDb();
+    markerTable(db);
+    let calls = 0;
+    const results = ingestBatch(db, new Broadcaster(), [], {
+      beforeCommit: (conn) => {
+        calls += 1;
+        conn.prepare('INSERT INTO marker VALUES (?, ?)').run('empty', 1);
+      },
+    });
+    expect(results).toEqual([]);
+    expect(calls).toBe(1);
+    expect(markerCount(db)).toBe(1);
+  });
+
+  it('rolls the whole slice back when the hook throws, without throwing out', () => {
+    const db = freshDb();
+    markerTable(db);
+    const results = ingestBatch(
+      db,
+      new Broadcaster(),
+      [
+        { envelope: hookEnvelope('SessionStart', { cwd: '/p' }) },
+        { envelope: hookEnvelope('UserPromptSubmit', { prompt: 'x' }, { prompt_id: 'p1' }) },
+      ],
+      {
+        beforeCommit: (conn) => {
+          conn.prepare('INSERT INTO marker VALUES (?, ?)').run('doomed', 1);
+          throw new Error('offset write failed');
+        },
+      },
+    );
+    // Ingest never throws; it reports every item unwritten instead.
+    expect(results).toEqual([
+      { inserted: false, seq: -1, deadLettered: true },
+      { inserted: false, seq: -1, deadLettered: true },
+    ]);
+    expect(
+      Number((db.prepare('SELECT COUNT(*) AS n FROM raw_events').get() as { n: number }).n),
+    ).toBe(0);
+    expect(markerCount(db)).toBe(0);
+    // The transaction closed cleanly.
+    expect(() => db.exec('BEGIN')).not.toThrow();
+    db.exec('ROLLBACK');
+  });
+
+  it('leaves no partial write when the hook throws on an empty slice', () => {
+    const db = freshDb();
+    markerTable(db);
+    expect(() =>
+      ingestBatch(db, new Broadcaster(), [], {
+        beforeCommit: (conn) => {
+          conn.prepare('INSERT INTO marker VALUES (?, ?)').run('doomed', 1);
+          throw new Error('offset write failed');
+        },
+      }),
+    ).not.toThrow();
+    expect(markerCount(db)).toBe(0);
+    expect(() => db.exec('BEGIN')).not.toThrow();
+    db.exec('ROLLBACK');
+  });
+
+  it('is optional: no options bag means no behaviour change', () => {
+    const db = freshDb();
+    ingestBatch(db, new Broadcaster(), []);
+    ingestBatch(db, new Broadcaster(), [{ envelope: hookEnvelope('SessionStart', { cwd: '/p' }) }]);
+    expect(
+      Number((db.prepare('SELECT COUNT(*) AS n FROM raw_events').get() as { n: number }).n),
+    ).toBe(1);
   });
 });

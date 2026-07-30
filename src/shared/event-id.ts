@@ -5,7 +5,7 @@
 //
 // Precedence (documented contract):
 //   hook       -> tool_use_id > prompt_id > stateless content hash
-//   transcript -> line uuid  > content hash of (file_identity + line)
+//   transcript -> line uuid  > content hash of (file_identity + line_offset + line)
 //   any        -> canonical content hash of raw_payload (universal fallback)
 //
 // The function is fully STATELESS and PURE: it takes no caller-supplied counter.
@@ -26,12 +26,39 @@ export interface HookEventIdInput {
   raw_payload: unknown;
 }
 
-/** Transcript line: line uuid preferred, else hash of file identity + line. */
+/** Transcript line: line uuid preferred, else hash of file identity + offset + line. */
 export interface TranscriptEventIdInput {
   source: 'transcript';
   session_id: string;
-  /** stable fingerprint of the source file (inode/size + head-hash). */
+  /**
+   * The CANONICALIZED absolute transcript path — invariant across growth,
+   * truncation, in-place rewrite AND rotation, which is exactly what an identity
+   * must be. It is deliberately NOT the detection fingerprint: rotation changes
+   * the inode by definition, so a `${dev}:${ino}` identity would re-key every
+   * uuid-less line of a rotated file and turn a re-read into duplicate rows
+   * instead of convergence. `{dev,ino,size,headLen,headHash}` lives in the
+   * `tailer_offsets.file_identity` COLUMN and is used for change detection only.
+   * Both concepts share a name in `spec/data-model.md:237`; they are distinct.
+   */
   file_identity: string;
+  /**
+   * Start byte offset of the line within the file. REQUIRED, and part of the
+   * uuid-less hash: 16.6% of real transcript lines are byte-identical uuid-less
+   * duplicates of an earlier line in the same file (measured over a 4197-line
+   * corpus), so without the offset they collide and the later copy is dropped
+   * permanently — including `last-prompt` lines, which carry user prompt text.
+   *
+   * Required rather than optional on purpose: an optional identity-affecting
+   * field is a footgun, since a producer that forgets it silently collides.
+   *
+   * Stability: append leaves prior offsets untouched; truncation removes a
+   * suffix, so surviving lines keep their offsets; an in-place rewrite is
+   * re-read from 0 with the same offsets for unchanged bytes; rotation with
+   * identical content keeps both path and offsets. NOT stable across a
+   * prefix-trim rewrite (leading lines removed, remainder shifted), which
+   * re-keys every uuid-less line — transcripts are append-only in practice.
+   */
+  line_offset: number;
   /** verbatim JSONL line text. */
   line: string;
   uuid?: string;
@@ -93,7 +120,9 @@ export function deriveEventId(input: EventIdInput): string {
       if (input.uuid !== undefined) {
         return `${input.session_id}:transcript:${input.uuid}`;
       }
-      const digest = sha256Hex128(`${input.file_identity}\n${input.line}`);
+      const digest = sha256Hex128(
+        `${input.file_identity}\n${input.line_offset}\n${input.line}`,
+      );
       return `${input.session_id}:transcript:${digest}`;
     }
     default: {
