@@ -10,10 +10,11 @@
  * Tasks 5.2b and 5.3a EXTEND this module rather than starting rivals to it.
  */
 
-import type { Message, Session, Span, Trace } from '@shared/entities.ts';
+import type { Message, Session, Span, SpanStatus, Trace, TraceTrigger } from '@shared/entities.ts';
 import type { Page } from '@shared/api.ts';
 
 import type { ApiClient } from '../api.js';
+import { buildTreeModel, flatten, type Row, type TreeModel } from '../span-tree.js';
 
 /** A complete, plausible session. Every field is overridable. */
 export function makeSession(overrides: Partial<Session> = {}): Session {
@@ -204,4 +205,143 @@ export function makeCyclePage(): Span[] {
       ended_at: atSecond(3),
     }),
   ];
+}
+
+/* --------------------------------------------- Task 5.3b: rendered rows --- */
+
+/*
+ * Task 5.3a deliberately left the four factories below to this task, saying so
+ * in as many words: they serve the rendered tree's tests and nothing in the
+ * pure model needed them.
+ *
+ * Every one of them answers with the shapes the SERVER can actually produce —
+ * the whole `SpanStatus` union, the whole `TraceTrigger` union, and the four
+ * degradation tags the normalizer writes — rather than with the one or two a
+ * particular assertion happens to want. That is what makes "and the ordinary
+ * case draws none of it" assertable on the same fixture.
+ */
+
+/** How many spans hang under each turn in {@link makeLargeTree} by default. */
+const LARGE_SPANS_PER_TRACE = 500;
+
+/** How many turns {@link makeLargeTree} builds by default. */
+const LARGE_TRACES = 10;
+
+export interface LargeTree {
+  readonly traces: Trace[];
+  readonly spansByTrace: Map<string, Span[]>;
+}
+
+/**
+ * A session at real scale: 10 turns of 500 spans, i.e. 5,000 spans.
+ *
+ * The same shape the manual measurement recipe seeds on disk
+ * (`seedFixtureDb(dir, {sessions: 1, tracesPerSession: 10, spansPerTrace: 500})`),
+ * so the automated row-count assertion and the hand-run browser measurement are
+ * looking at a session of the same size rather than at two different ones.
+ *
+ * Flat rather than deeply nested on purpose: this fixture exists to measure the
+ * row count and the model's complexity, and nesting would make the row count
+ * depend on expansion state instead of on the viewport.
+ */
+export function makeLargeTree({
+  traces = LARGE_TRACES,
+  spansPerTrace = LARGE_SPANS_PER_TRACE,
+}: { traces?: number; spansPerTrace?: number } = {}): LargeTree {
+  const turns: Trace[] = [];
+  const spansByTrace = new Map<string, Span[]>();
+
+  for (let t = 0; t < traces; t += 1) {
+    const id = `seed-s0:${t}`;
+    turns.push(makeTrace({ id, turn_seq: t, prompt_preview: `turn ${t}` }));
+    spansByTrace.set(
+      id,
+      Array.from({ length: spansPerTrace }, (_, s) =>
+        makeSpan({
+          id: `${id}-sp-${s}`,
+          trace_id: id,
+          name: `step ${s}`,
+          started_at: atSecond(t * spansPerTrace + s),
+          ended_at: atSecond(t * spansPerTrace + s + 1),
+        }),
+      ),
+    );
+  }
+
+  return { traces: turns, spansByTrace };
+}
+
+/** One span per `SpanStatus`, in a stable order, all under one turn. */
+export function makeStatusPage(): Span[] {
+  const statuses: readonly SpanStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
+  return statuses.map((status, i) =>
+    makeSpan({
+      id: `sp-${status}`,
+      name: status,
+      status,
+      started_at: atSecond(i),
+      // A running span has not ended. Giving it an `ended_at` would make it the
+      // one shape on this page that cannot exercise the live spelling.
+      ...(status === 'running' ? { ended_at: undefined } : { ended_at: atSecond(i + 1) }),
+    }),
+  );
+}
+
+/** The four tags the normalizer writes, plus one span carrying none of them. */
+export function makeDegradedPage(): Span[] {
+  const tags = ['degraded', 'transcript_only', 'synthetic_open', 'unattributed'];
+  return [
+    ...tags.map((tag, i) =>
+      makeSpan({
+        id: `sp-${tag}`,
+        tags: [tag],
+        started_at: atSecond(i),
+        ended_at: atSecond(i + 1),
+      }),
+    ),
+    makeSpan({ id: 'sp-clean', tags: [], started_at: atSecond(9), ended_at: atSecond(10) }),
+  ];
+}
+
+/**
+ * One turn per `TraceTrigger`.
+ *
+ * A trigger that is not `user_prompt` is what "synthetic trace" means — there
+ * is no other marker on the wire — so the ordinary case has to be on the same
+ * fixture for "and it draws no badge" to mean anything.
+ */
+export function makeSyntheticTraces(): Trace[] {
+  const triggers: readonly TraceTrigger[] = [
+    'user_prompt',
+    'system_resume',
+    'compaction',
+    'unknown',
+  ];
+  return triggers.map((trigger, i) =>
+    makeTrace({ id: `seed-s0:${i}`, turn_seq: i, trigger, prompt_preview: `turn ${i}` }),
+  );
+}
+
+/**
+ * A model and the row list it flattens to with everything opened.
+ *
+ * `model.rowIds` is every id that can be a row, so passing it as the expansion
+ * set opens the whole forest — which is what a render assertion about a nested
+ * span wants, and it saves each test hand-building an expansion set that would
+ * then be the thing under test rather than the thing being assumed.
+ */
+export function expandedRows(
+  traces: readonly Trace[],
+  spansByTrace: ReadonlyMap<string, readonly Span[]>,
+): { model: TreeModel; rows: Row[] } {
+  const model = buildTreeModel(traces, spansByTrace);
+  return { model, rows: flatten(model, model.rowIds) };
+}
+
+/** {@link expandedRows} for the common one-turn page. */
+export function rowsForSpans(spans: readonly Span[], trace: Trace = makeTrace()): Row[] {
+  return expandedRows(
+    [trace],
+    new Map([[trace.id, spans.map((s) => ({ ...s, trace_id: trace.id }))]]),
+  ).rows;
 }
