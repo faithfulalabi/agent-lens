@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { formatCost, formatDuration, formatStartedAt, formatTokens } from '../format';
-import { makeSession } from './fixtures';
+import {
+  formatCost,
+  formatDuration,
+  formatDurationMs,
+  formatStartedAt,
+  formatTokens,
+} from '../format';
+import { makeSession, makeTrace } from './fixtures';
 
 /*
  * AC2 — Tests 3 to 6 of the task plan.
@@ -113,6 +119,55 @@ describe('formatDuration reads the injected clock and never the ambient one', ()
     ['2026-07-29T09:00:00.000Z', 'not a timestamp'],
   ])('answers the em dash for unparseable input (%s, %s)', (started, ended) => {
     expect(formatDuration(started, ended, Date.parse('2026-07-29T10:00:00.000Z'))).toBe(NO_VALUE);
+  });
+});
+
+/* ------------------------------------------- Task 5.3a, Test 16 (ms) --- */
+
+describe('formatDurationMs spells a raw millisecond count', () => {
+  it.each([
+    [undefined, NO_VALUE],
+    [null, NO_VALUE],
+    [Number.NaN, NO_VALUE],
+    [Number.POSITIVE_INFINITY, NO_VALUE],
+    // A negative duration is a nonsense the screen must never show. The server
+    // clamps its own rollups at zero for the same reason (db/rollups.ts), but
+    // an older row can still carry one to the browser.
+    [-1, NO_VALUE],
+    [-60_000, NO_VALUE],
+    [0, '0ms'],
+  ])('%s renders as %s', (value, expected) => {
+    expect(formatDurationMs(value)).toBe(expected);
+  });
+
+  it.each([
+    [20, '20ms'],
+    [999, '999ms'],
+    [1_020, '1.02s'],
+    [59_999, '60.00s'],
+    [123_000, '2m 3s'],
+    [7_620_000, '2h 7m'],
+  ])('%sms renders as %s', (value, expected) => {
+    expect(formatDurationMs(value)).toBe(expected);
+  });
+
+  it.each([
+    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:00:00.020Z'],
+    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:00:01.020Z'],
+    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:02:03.000Z'],
+    ['2026-07-29T09:00:00.000Z', '2026-07-29T11:07:00.000Z'],
+  ])('agrees with formatDuration across %s -> %s', (started, ended) => {
+    // One speller, two entry points. This is what stops the millisecond path
+    // from drifting away from the timestamp path a boundary at a time.
+    expect(formatDurationMs(Date.parse(ended) - Date.parse(started))).toBe(
+      formatDuration(started, ended),
+    );
+  });
+
+  it('spells the duration a turn actually arrives with', () => {
+    // Trace.duration_ms is a plain number on the wire — the reason this
+    // function exists at all, since formatDuration only accepts ISO strings.
+    expect(formatDurationMs(makeTrace({ duration_ms: 1_020 }).duration_ms)).toBe('1.02s');
   });
 });
 

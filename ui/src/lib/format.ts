@@ -90,6 +90,21 @@ export function formatTokens(value: number | null | undefined): string {
 }
 
 /**
+ * The one spelling of an elapsed interval, shared by both public entry points
+ * so a millisecond count and a pair of timestamps can never drift apart.
+ * Callers own the sign check; this speller assumes a non-negative input.
+ */
+function spellElapsed(elapsed: number): string {
+  if (elapsed < 1000) return `${Math.round(elapsed)}ms`;
+  if (elapsed < 60_000) return `${(elapsed / 1000).toFixed(2)}s`;
+
+  const totalSeconds = Math.round(elapsed / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m ${totalSeconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
  * How long something ran.
  *
  * `endedAt` absent means it is still running, and then `now` is what closes the
@@ -105,13 +120,26 @@ export function formatDuration(startedAt: string, endedAt?: string, now?: number
 
   const elapsed = end - start;
   if (elapsed < 0) return NO_VALUE;
-  if (elapsed < 1000) return `${Math.round(elapsed)}ms`;
-  if (elapsed < 60_000) return `${(elapsed / 1000).toFixed(2)}s`;
+  return spellElapsed(elapsed);
+}
 
-  const totalSeconds = Math.round(elapsed / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  if (minutes < 60) return `${minutes}m ${totalSeconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+/**
+ * The same interval, already reduced to a millisecond count.
+ *
+ * `Trace.duration_ms` arrives from the server as a raw number, and every
+ * subtree rollup in `span-tree.ts` produces one, so there is nothing left to
+ * parse — round-tripping through ISO strings just to reach {@link
+ * formatDuration} would cost two `Date.parse`es per row for no answer this
+ * cannot already give.
+ *
+ * A negative count reads as the em dash rather than as a negative duration.
+ * The server clamps its own rollups at zero for that reason (`db/rollups.ts`),
+ * but a value can still reach the browser from an older row, and "-3s" is a
+ * nonsense no screen should ever show.
+ */
+export function formatDurationMs(ms: number | null | undefined): string {
+  if (!isUsableNumber(ms) || ms < 0) return NO_VALUE;
+  return spellElapsed(ms);
 }
 
 /**
