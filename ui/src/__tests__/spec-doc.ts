@@ -18,6 +18,40 @@ export function designSystemLines(): string[] {
   return readFileSync(DESIGN_SYSTEM_PATH, 'utf8').split('\n');
 }
 
+/*
+ * The user-flow documents, added by Task 5.2b.
+ *
+ * Until 5.2b nothing in any suite read them, and the empty-state ruling made
+ * that a gap rather than an omission: the binding spelling of the never-captured
+ * sentence lives in `01-first-run-install.md`, and the `agent-lens doctor` hint
+ * beside it lives in `03-inspect-session.md`. Copy pinned against the document
+ * that specifies it is the same instrument `spec-tokens.ts` uses for colours —
+ * the alternative is a bare literal in the component that drifts silently.
+ *
+ * Whole-text rather than by line: a flow document is prose in motion, and a line
+ * pin on it would break on any edit above the line. The token manifest's
+ * `specLine` pins stay line-based because design-system.md's token tables are
+ * genuinely positional.
+ */
+const USER_FLOW_DIR = new URL(
+  '../../../internal_docs/agent-lens/spec/user-flows/',
+  import.meta.url,
+);
+
+/** Flow documents this repo pins copy against. Extend rather than inline a path. */
+export const USER_FLOWS = {
+  firstRun: '01-first-run-install.md',
+  inspectSession: '03-inspect-session.md',
+} as const;
+
+export function userFlowPath(name: keyof typeof USER_FLOWS): string {
+  return fileURLToPath(new URL(USER_FLOWS[name], USER_FLOW_DIR));
+}
+
+export function userFlowText(name: keyof typeof USER_FLOWS): string {
+  return readFileSync(userFlowPath(name), 'utf8');
+}
+
 /**
  * The one machine-readable part of the spec: the fenced ```css block holding the
  * 20 colour tokens. Returns them keyed by their Tailwind namespace name, i.e.

@@ -21,11 +21,13 @@ import { cn } from '@/lib/utils';
  * TWO SPELLING RULES, both of which a future edit will want to break.
  * ===========================================================================
  * 1. The chip classes are written as ONE literal in a `className` position.
- *    `retokenized.test.ts`'s extractor reads `className="…"` and the string
- *    literals inside a `cn( … )` call and nothing else, so hoisting them into a
- *    `const` referenced as `className={NAME}` would make this component's
- *    classes invisible to the scan that proves they compile — and Task 5.2b
- *    adds this file to that scan.
+ *    `retokenized.test.ts`'s extractor reads a quoted class attribute and the
+ *    string literals inside a `cn( … )` call and nothing else, so hoisting them
+ *    into a `const` referenced by name would make this component's classes
+ *    invisible to the scan that proves they compile — and Task 5.2b adds this
+ *    file to that scan. (Spelling the attribute-and-quotes form out verbatim
+ *    here would ALSO feed the extractor: it is a regex over raw source, so the
+ *    placeholder inside the quotes would be scanned as a class name.)
  * 2. NEVER write the neutral background as one word. The same array feeds a
  *    deny-list which — for the reason that deny-list documents — contains the
  *    one-word form even though it is a real agent-lens token. The muted
