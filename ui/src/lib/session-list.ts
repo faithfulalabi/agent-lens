@@ -24,6 +24,29 @@ import type { Session } from '@shared/entities.ts';
 import type { ApiClient, SessionsQuery } from './api.js';
 import type { Router } from './router.js';
 
+/* ----------------------------------------------------------- row counts --- */
+
+/*
+ * Module-level, per 5.2a's rule that every Intl formatter in this codebase is
+ * constructed once: moving one into a function body costs a construction per
+ * render and reds that task's Test 6.
+ */
+const COUNT_FORMAT = new Intl.NumberFormat('en-US');
+
+/**
+ * Spell how many rows the list is showing, for the sort strip.
+ *
+ * `showing` is the total AFTER narrowing by project, not the page size — the
+ * question this answers is "how many am I looking at". When the page it was
+ * counted from stopped early, an exact number would be a claim the UI cannot
+ * support, so it degrades to `N+` on the same rule the empty-state counts use
+ * (`design-system.md`, Empty states).
+ */
+export function formatRowCount(showing: number, pageTruncated: boolean): string {
+  const noun = showing === 1 && !pageTruncated ? 'session' : 'sessions';
+  return `${COUNT_FORMAT.format(showing)}${pageTruncated ? '+' : ''} ${noun}`;
+}
+
 /* --------------------------------------------------------------- ranges --- */
 
 /** The segmented control's options, in the order the design system writes them. */
