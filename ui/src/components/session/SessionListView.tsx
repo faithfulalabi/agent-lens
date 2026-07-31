@@ -5,7 +5,12 @@ import type { Session } from '@shared/entities.ts';
 import { cn } from '@/lib/utils';
 import { hrefFor } from '@/lib/route-match';
 import { formatCost, formatDuration, formatStartedAt, formatTokens } from '@/lib/format';
-import { SORT_COLUMNS, type SortColumn, type SortDirection } from '@/lib/session-list';
+import {
+  SORT_COLUMNS,
+  formatRowCount,
+  type SortColumn,
+  type SortDirection,
+} from '@/lib/session-list';
 
 import { MetricChip } from './MetricChip';
 import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from './session-visuals';
@@ -57,6 +62,11 @@ export interface SessionListViewProps {
   /** The keyboard cursor's row, or `-1` for "not on a row". */
   cursor: number;
   now: number | Date;
+  /**
+   * The page these rows came from stopped early, so the count says `N+`.
+   * Defaults to `false` — an omitted flag must not overstate certainty.
+   */
+  pageTruncated?: boolean;
 }
 
 export function SessionListView({
@@ -66,6 +76,7 @@ export function SessionListView({
   onSortChange,
   cursor,
   now,
+  pageTruncated = false,
 }: SessionListViewProps) {
   return (
     <div data-slot="session-list">
@@ -91,6 +102,14 @@ export function SessionListView({
             {column === sort ? <SortChevron direction={direction} /> : null}
           </button>
         ))}
+
+        {/*
+         * The list states its own size. Pushed to the far end of the strip so
+         * it reads as a summary of the rows rather than a fifth sort control.
+         */}
+        <span data-slot="session-list-count" className="ml-auto text-2xs text-muted">
+          {formatRowCount(rows.length, pageTruncated)}
+        </span>
       </div>
 
       {rows.map((session, index) => (

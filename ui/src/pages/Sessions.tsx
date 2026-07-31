@@ -148,6 +148,7 @@ export function Sessions({ router = defaultRouter(), api }: SessionsProps = {}) 
           }}
           cursor={cursor}
           now={now}
+          pageTruncated={data?.truncated ?? false}
         />
       ) : (
         <EmptyState state={empty} />

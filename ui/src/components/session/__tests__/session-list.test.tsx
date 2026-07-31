@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Session } from '@shared/entities.ts';
 import {
   emptyStateCopy,
+  formatRowCount,
   LIST_LIMIT,
   type EmptyStateShown,
   type SortColumn,
@@ -243,6 +244,85 @@ describe('the empty-state copy is pinned to the spec, not invented (Test 11)', (
     expect(spec).toContain(hint);
     expect(sentence).toContain('/p/one');
     expect(sentence).toContain('12 in this range across all projects.');
+  });
+});
+
+describe('a populated list states its own size', () => {
+  it.each([
+    [0, false, '0 sessions'],
+    [1, false, '1 session'],
+    [2, false, '2 sessions'],
+    [300, false, '300 sessions'],
+    [1000, false, '1,000 sessions'],
+    [300, true, '300+ sessions'],
+    // Plural even at one, because "1+ session" would claim a precision the
+    // trailing `+` is there to deny.
+    [1, true, '1+ sessions'],
+  ])('formatRowCount(%i, truncated=%s) -> %s', (showing, truncated, expected) => {
+    expect(formatRowCount(showing, truncated)).toBe(expected);
+  });
+
+  it('counts the rows on screen, not the size of the page they came from', () => {
+    // Ten loaded, narrowed to three: the count answers "how many am I looking
+    // at", so it must follow `rows`, never the unnarrowed page.
+    const rows = Array.from({ length: 3 }, (_, i) => makeSession({ id: `s${i}` }));
+    const markup = renderToStaticMarkup(
+      <SessionListView
+        rows={rows}
+        sort={'started_at' as SortColumn}
+        direction="desc"
+        onSortChange={() => {}}
+        cursor={-1}
+        now={Date.parse('2026-07-30T12:00:00.000Z')}
+      />,
+    );
+    expect(markup).toContain('3 sessions');
+    expect(markup).not.toContain('10 sessions');
+  });
+
+  it('degrades to N+ when the page stopped early, and omits the + when it did not', () => {
+    const rows = Array.from({ length: 2 }, (_, i) => makeSession({ id: `s${i}` }));
+    const render = (pageTruncated: boolean) =>
+      renderToStaticMarkup(
+        <SessionListView
+          rows={rows}
+          sort={'started_at' as SortColumn}
+          direction="desc"
+          onSortChange={() => {}}
+          cursor={-1}
+          now={0}
+          pageTruncated={pageTruncated}
+        />,
+      );
+    expect(render(true)).toContain('2+ sessions');
+    expect(render(false)).toContain('2 sessions');
+    expect(render(false)).not.toContain('2+');
+  });
+
+  it('spells the noun and the degrade marker the spec asks for, not an invented pair', () => {
+    // Same discipline as the empty-state copy pin: the design system is the
+    // source, so a reworded count here goes red rather than drifting quietly.
+    const spec = designSystemLines().join('\n');
+    expect(spec).toContain('**"N sessions"**');
+    expect(spec).toContain('"1 session"');
+    expect(spec).toContain('**"N+ sessions"**');
+  });
+
+  it('defaults to the honest reading when the flag is omitted', () => {
+    // An absent flag must not overstate certainty in either direction: it means
+    // "not known to have stopped early", which spells as a plain count.
+    const markup = renderToStaticMarkup(
+      <SessionListView
+        rows={[makeSession({ id: 's0' })]}
+        sort={'started_at' as SortColumn}
+        direction="desc"
+        onSortChange={() => {}}
+        cursor={-1}
+        now={0}
+      />,
+    );
+    expect(markup).toContain('1 session');
+    expect(markup).not.toContain('+');
   });
 });
 
