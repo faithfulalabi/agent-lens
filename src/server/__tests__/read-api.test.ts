@@ -232,9 +232,7 @@ describe('AC1 — Test 1b: a NULL est_cost is key-absent over the wire', () => {
   });
 
   it('omits ended_at and output_payload_id on a still-running span', async () => {
-    const page = await getJson<Page<Span>>(
-      `/api/sessions/${manifest.liveSessionId}/spans`,
-    );
+    const page = await getJson<Page<Span>>(`/api/sessions/${manifest.liveSessionId}/spans`);
     const open = page.items.find((s) => s.id === manifest.openSpanId)!;
     expect(Object.hasOwn(open, 'ended_at')).toBe(false);
     expect(Object.hasOwn(open, 'output_payload_id')).toBe(false);
@@ -351,9 +349,7 @@ describe('AC3/AC5 — Test 6: bad limit/offset are 400s, not 500s or silent defa
 
 describe('AC4 — Tests 7/8/10: payload slices, clamping, and malformed ranges', () => {
   it('returns the whole payload with no ?range', async () => {
-    const slice = await getJson<PayloadSlice>(
-      `/api/payloads/${manifest.unicodePayloadId}`,
-    );
+    const slice = await getJson<PayloadSlice>(`/api/payloads/${manifest.unicodePayloadId}`);
     expect(slice.id).toBe(manifest.unicodePayloadId);
     expect(slice.truncated).toBe(false);
     expect(slice.range).toEqual({ start: 0, end: slice.byte_size - 1 });
@@ -362,9 +358,7 @@ describe('AC4 — Tests 7/8/10: payload slices, clamping, and malformed ranges',
   });
 
   it('Test 7 — ?range returns the requested slice with the FULL byte_size', async () => {
-    const whole = await getJson<PayloadSlice>(
-      `/api/payloads/${manifest.unicodePayloadId}`,
-    );
+    const whole = await getJson<PayloadSlice>(`/api/payloads/${manifest.unicodePayloadId}`);
     const slice = await getJson<PayloadSlice>(
       `/api/payloads/${manifest.unicodePayloadId}?range=0-4`,
     );
@@ -377,9 +371,7 @@ describe('AC4 — Tests 7/8/10: payload slices, clamping, and malformed ranges',
   });
 
   it('Test 7 — an open-ended ?range=n- runs to the end', async () => {
-    const whole = await getJson<PayloadSlice>(
-      `/api/payloads/${manifest.unicodePayloadId}`,
-    );
+    const whole = await getJson<PayloadSlice>(`/api/payloads/${manifest.unicodePayloadId}`);
     const slice = await getJson<PayloadSlice>(
       `/api/payloads/${manifest.unicodePayloadId}?range=2-`,
     );
@@ -388,9 +380,7 @@ describe('AC4 — Tests 7/8/10: payload slices, clamping, and malformed ranges',
   });
 
   it('Test 8 — an end past the payload truncates and still returns 200', async () => {
-    const { res, text } = await get(
-      `/api/payloads/${manifest.unicodePayloadId}?range=0-999999`,
-    );
+    const { res, text } = await get(`/api/payloads/${manifest.unicodePayloadId}?range=0-999999`);
     expect(res.status).toBe(200);
     const slice = JSON.parse(text) as PayloadSlice;
     expect(slice.range).toEqual({ start: 0, end: slice.byte_size - 1 });
@@ -483,9 +473,7 @@ describe('AC5 — Test 13: malformed from/to are 400; a foreign ?trace= is 404',
 
 describe('AC1/AC3 — Tests 13b/13c: ?trace= is optional on the span list', () => {
   it('13b — with ?trace=, returns only that trace’s spans', async () => {
-    const page = await getJson<Page<Span>>(
-      '/api/sessions/seed-s0/spans?trace=seed-s0:1',
-    );
+    const page = await getJson<Page<Span>>('/api/sessions/seed-s0/spans?trace=seed-s0:1');
     expect(page.items).toHaveLength(SEED.spansPerTrace);
     expect(page.items.every((s) => s.trace_id === 'seed-s0:1')).toBe(true);
   });
@@ -664,5 +652,57 @@ describe('AC5 — Test 18: an uncaught throw on an /api path is a JSON 500', () 
     expect(text).not.toBe('Internal Server Error');
     expect(text.startsWith('<')).toBe(false);
     expect(JSON.parse(text)).toEqual({ error: 'internal error' });
+  });
+});
+
+/*
+ * Task 5.2b, Test 8 — the server half of AC1a.
+ *
+ * The UI's own 300-row assertion renders a fixture; this one proves the server
+ * will actually hand over 300 rows in one page, which is the half a component
+ * test cannot reach. It lives here because this project owns the database.
+ *
+ * `?limit=1000` is not decoration: the route defaults to 100 and CLAMPS rather
+ * than rejecting, so a request with no limit answers 200 with a third of the
+ * data. That silent truncation is exactly what the client's own explicit
+ * `LIST_LIMIT` exists to prevent, and this is where the default is pinned.
+ *
+ * One trace and one span per session: the session count is what is under test,
+ * and the rest is a thousand rows of unrelated seeding.
+ */
+describe('AC1 — Task 5.2b Test 8: one page holds hundreds of sessions', () => {
+  const SCALE = 300;
+
+  it('returns all 300 seeded sessions under an explicit limit, and truncates without one', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-scale-'));
+    seedFixtureDb(dataDir, { sessions: SCALE, tracesPerSession: 1, spansPerTrace: 1 });
+    const scaled = await bootTestServer({ dataDir, sweepIntervalMs: 0 });
+
+    try {
+      const headers = { [TOKEN_HEADER]: scaled.token };
+      const res = await fetch(scaled.url(`/api/sessions?limit=${SCALE * 2}`), { headers });
+      expect(res.status).toBe(200);
+      const page = (await res.json()) as Page<Session>;
+
+      expect(page.items).toHaveLength(SCALE);
+      expect(page.has_more).toBe(false);
+      expect(new Set(page.items.map((s) => s.id)).size).toBe(SCALE);
+
+      // Newest first, which is the order the session list renders without sorting.
+      const startedAt = page.items.map((s) => s.started_at);
+      expect([...startedAt].sort((a, b) => b.localeCompare(a))).toEqual(startedAt);
+
+      const defaulted = await fetch(scaled.url('/api/sessions'), { headers });
+      const capped = (await defaulted.json()) as Page<Session>;
+      expect(
+        capped.items.length,
+        'the default limit is 100 and the server clamps rather than rejecting — ' +
+          'a client that omits ?limit gets a quiet third of the data.',
+      ).toBe(100);
+      expect(capped.has_more).toBe(true);
+    } finally {
+      await scaled.close();
+      cleanupDir(scaled.dataDir);
+    }
   });
 });

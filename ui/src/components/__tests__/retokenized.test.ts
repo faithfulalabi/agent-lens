@@ -1,7 +1,9 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { CaptureMode, SessionStatus } from '@shared/entities.ts';
 import { builtCss, cleanupBuilds } from '../../__tests__/build-ui';
+import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from '../session/session-visuals';
 
 afterAll(cleanupBuilds);
 
@@ -22,8 +24,33 @@ afterAll(cleanupBuilds);
  * no-ops, not errors. That is what AC3 catches.
  */
 
-/** Phase 8 adds `dialog.tsx` here when it builds it. */
-const SOURCE_FILES = ['../ui/tabs.tsx', '../ui/context-menu.tsx', '../shell/AppShell.tsx'] as const;
+/*
+ * Phase 8 adds `dialog.tsx` here when it builds it.
+ *
+ * Tasks 5.2a and 5.2b brought the session components in. Joining this array is
+ * not free and not automatic — a file listed here must ALSO clear the deny-list
+ * below (which contains one legitimate agent-lens token, for the reason stated
+ * there) and the per-file richness bar further down. Two files 5.2b created are
+ * deliberately absent:
+ *
+ *   - `../session/session-visuals.ts` holds its classes in a lookup map, and
+ *     `classTokensOf` extracts exactly nothing from one. Listing it would red
+ *     the richness bar while proving nothing; the manifest scan at the bottom
+ *     of this file covers it properly instead.
+ *   - `../../pages/Sessions.tsx` is a page module that renders the four
+ *     components below and writes almost no classes of its own — the same
+ *     richness bar, for the same reason.
+ */
+const SOURCE_FILES = [
+  '../ui/tabs.tsx',
+  '../ui/context-menu.tsx',
+  '../shell/AppShell.tsx',
+  '../session/MetricChip.tsx',
+  '../session/SessionListView.tsx',
+  '../session/VolumeHistogram.tsx',
+  '../session/RangeControl.tsx',
+  '../session/EmptyState.tsx',
+] as const;
 
 function sources(): { name: string; text: string }[] {
   return SOURCE_FILES.map((rel) => {
@@ -195,7 +222,7 @@ export function classTokensOf(source: string): Set<string> {
   return tokens;
 }
 
-/** Every class token across all three sources. */
+/** Every class token across every source. */
 function allClassTokens(): Set<string> {
   return new Set(sources().flatMap(({ text }) => [...classTokensOf(text)]));
 }
@@ -261,6 +288,72 @@ describe('every class string in the sources resolves to a real rule', () => {
       missing,
       'these classes compile to no CSS at all. Tailwind v4 emits nothing for a ' +
         'class outside the cleared namespaces — it is not an error, it is silence.',
+    ).toEqual([]);
+  });
+});
+
+/* ------------------------------------------- Task 5.2b — the manifest ----- */
+
+/*
+ * `session-visuals.ts` holds its class strings in a lookup map, which is the
+ * one shape `classTokensOf` is blind to: it reads `className="…"` positions and
+ * string literals inside `cn( … )`, and a map value is neither. Tailwind still
+ * EMITS those rules — it scans raw source — so the classes work; it is the
+ * proof that would go missing, silently, which is the failure mode this whole
+ * file exists to catch.
+ *
+ * So the manifest is scanned as data instead. It lives here rather than in a
+ * suite of its own because this assertion needs `builtCss()`, and `build-ui.ts`
+ * memoizes that Vite run in module scope: under vitest's per-file isolation a
+ * second file asking for it pays for a second full build. Importing `hasRule`
+ * from here into a new file is worse still — it re-registers this entire suite
+ * there.
+ */
+const STATUS_KEYS: readonly SessionStatus[] = ['live', 'complete', 'interrupted'];
+const CAPTURE_KEYS: readonly CaptureMode[] = ['full', 'transcript_only'];
+
+/** Every class string the manifest can put on screen, flattened. */
+function manifestTokens(): string[] {
+  const visuals = [
+    ...Object.values(SESSION_STATUS_VISUALS).flatMap((v) => [v.badge, v.dot]),
+    ...Object.values(CAPTURE_MODE_VISUALS).map((v) => v?.chip ?? ''),
+  ];
+  return visuals.flatMap((value) => value.split(/\s+/)).filter((token) => token !== '');
+}
+
+describe('the session-visuals manifest is exhaustive and every class in it compiles', () => {
+  it('covers every status and every capture mode the wire can carry', () => {
+    /*
+     * `satisfies` catches a MISSING key at compile time; this catches the other
+     * direction — a status added to `@shared/entities.ts` that nobody taught
+     * this manifest about would otherwise render an unstyled badge, and adding
+     * it to the union is exactly the change that would not touch this file.
+     */
+    expect(Object.keys(SESSION_STATUS_VISUALS).sort()).toEqual([...STATUS_KEYS].sort());
+    expect(Object.keys(CAPTURE_MODE_VISUALS).sort()).toEqual([...CAPTURE_KEYS].sort());
+  });
+
+  it('gives every status a word, so status is never colour alone', () => {
+    for (const status of STATUS_KEYS) {
+      expect(SESSION_STATUS_VISUALS[status].label, `${status} has no label`).not.toBe('');
+    }
+  });
+
+  it('the token list is not vacuous', () => {
+    const tokens = manifestTokens();
+    expect(tokens.length).toBeGreaterThan(6);
+    expect(tokens, 'the live pulse is the one class a token rename would break').toContain(
+      'animate-live-pulse',
+    );
+  });
+
+  it('every class in the manifest has a rule in the built CSS', async () => {
+    const css = await builtCss();
+    const missing = manifestTokens().filter((token) => !hasRule(css, token));
+    expect(
+      missing,
+      'these compile to no CSS at all — an out-of-vocabulary class is silence, ' +
+        'not an error, so a badge would simply render unstyled.',
     ).toEqual([]);
   });
 });
