@@ -13,11 +13,12 @@
 // exported pure functions in the hand-rolled style of `isValidEnvelopeShape`
 // (`ingest.ts:126-137`) — the repo has no validation library and gains none here.
 //
-// **`GET /api/traces/:id/messages` returns an EMPTY PAGE against real ingest
-// data, and that is expected, not a defect.** Its designated writer is Task 3.2
-// (Merge Policy + Messages Projection); `insertMessage` (`db/index.ts:266-272`)
-// has no production caller today, so until 3.2 lands the only thing that puts
-// rows in `messages` is `src/db/seed.ts`. Do not "fix" the empty response.
+// **`GET /api/traces/:id/messages` is fed by Task 3.2's transcript merge.** One
+// row per transcript content block, written by `src/capture/merge.ts` through
+// `insertMessage`. It returns an empty page for a session captured from HOOKS
+// ALONE, and that is expected rather than a defect: hook payloads carry no
+// conversation content, so a session with no transcript lines has no thread to
+// project. `src/db/seed.ts` remains the other writer, for fixtures.
 //
 // **The `/api/*` JSON-404 terminator is deliberately NOT registered here.** It
 // is exported as `jsonNotFound` and registered by `buildApp` AFTER every real

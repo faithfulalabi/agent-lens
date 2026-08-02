@@ -4,6 +4,7 @@ export const MODULE = 'capture';
 
 export { normalize, mapToolStatus } from './normalizer.js';
 export type { NormalizeResult } from './normalizer.js';
+export { mergeTranscriptLine } from './merge.js';
 export { reprocessDeadLetters } from './reprocess.js';
 export type { ReprocessResult } from './reprocess.js';
 export {

@@ -104,6 +104,10 @@ describe('manifest guard (AC1 — anti-silent-skip)', () => {
       'multi-turn',
       'orphan-resume',
       'tool-error-denied',
+      // Task 3.2: the first seed fixture carrying transcript envelopes, so it is
+      // the only one whose snapshot has non-empty `messages` and a `truncated_by
+      // _harness` span.
+      'transcript-merge',
     ]);
   });
 

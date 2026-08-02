@@ -164,10 +164,15 @@ export interface SnapshotOptions {
    * P2, P3). `replaySpool` re-stamps `source:'spool_replay'` on every envelope it
    * recovers and `insertRawEvent` is `DO NOTHING` on conflict, so the archive
    * legitimately records HOW an event reached us and must differ between a
-   * never-down run and a spooled one. `spans.source` is the hard-coded literal
-   * `'hook'` at every normalizer call site, so the projection proper is genuinely
-   * identical — which is the claim Phase 2 AC5 makes. Never set for a golden
-   * snapshot, where the transport IS part of the record.
+   * never-down run and a spooled one.
+   *
+   * This rewrites `archive[].source` ONLY, never `spans.source`. Those were the
+   * same claim while every normalizer call site wrote the hard-coded literal
+   * `'hook'`; Task 3.2's merge made them different, since a span the transcript
+   * creates is `'transcript'` and a hook span it enriches keeps `'hook'`. The
+   * projection is still genuinely identical across the runs these comparisons
+   * make — all of them are hook-only — which is the claim Phase 2 AC5 makes.
+   * Never set for a golden snapshot, where the transport IS part of the record.
    */
   normalizeSource?: boolean;
 }
