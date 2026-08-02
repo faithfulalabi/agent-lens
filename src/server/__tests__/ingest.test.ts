@@ -4,6 +4,7 @@ import {
   cleanupDir,
   makeTestEnvelope,
   openTestDb,
+  readOneEvent,
   TOKEN_HEADER,
   type TestServer,
 } from './helpers.js';
@@ -26,38 +27,6 @@ afterEach(async () => {
     cleanupDir(server.dataDir);
   }
 });
-
-/** Read one SSE data frame (for the given event type) from a stream response. */
-async function readOneEvent(
-  res: Response,
-  eventType: string,
-  timeoutMs = 1000,
-): Promise<Record<string, unknown>> {
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf('\n\n')) !== -1) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        if (!frame.includes(`event: ${eventType}`)) continue;
-        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-        if (dataLine) {
-          return JSON.parse(dataLine.slice('data:'.length).trim());
-        }
-      }
-    }
-    throw new Error(`no "${eventType}" frame within ${timeoutMs}ms`);
-  } finally {
-    await reader.cancel();
-  }
-}
 
 describe('POST /api/ingest -> row -> SSE', () => {
   it('ingests, persists one row, and broadcasts within ~1s; dedupes by event_id', async () => {

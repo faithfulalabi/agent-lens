@@ -470,20 +470,28 @@ export function liveTracesForSession(
 
 /**
  * Finalize every still-running span on a trace as `unknown` — an honest "we never
- * saw it close" rather than a fabricated success. Returns the number closed.
+ * saw it close" rather than a fabricated success. Returns the IDs it closed, in
+ * no particular order; `[]` when nothing was running.
+ *
+ * **It returns ids rather than a count because of Task 6.1.** All three callers
+ * (`normalizer.ts`'s `closeSession` and `closeActiveTrace`, and the inactivity
+ * sweep) close spans that no hook will ever report on again, so a live view can
+ * only learn about them from here. With a bare count, every span finalized by
+ * `Stop`, `SessionEnd`, or the sweep would spin forever in the UI. `.length` is
+ * the old return value, so counting callers are unaffected.
  */
 export function closeRunningSpans(
   db: DatabaseSync,
   traceId: string,
   endedAt: string,
-): number {
-  const result = db
+): string[] {
+  const rows = db
     .prepare(
       `UPDATE spans SET status = 'unknown', ended_at = COALESCE(ended_at, ?)
-       WHERE trace_id = ? AND status = 'running'`,
+       WHERE trace_id = ? AND status = 'running' RETURNING id`,
     )
-    .run(endedAt, traceId);
-  return Number(result.changes);
+    .all(endedAt, traceId) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 /** Flip a live trace to `interrupted` (inactivity timeout). Returns true if it did. */
@@ -501,11 +509,18 @@ export function markTraceInterrupted(
   return Number(result.changes) > 0;
 }
 
-/** Flip a live session to `interrupted` (inactivity timeout). */
-export function markSessionInterrupted(db: DatabaseSync, sessionId: string): void {
-  db.prepare(
-    `UPDATE sessions SET status = 'interrupted' WHERE id = ? AND status = 'live'`,
-  ).run(sessionId);
+/**
+ * Flip a live session to `interrupted` (inactivity timeout). Returns true if it
+ * did — the sweep publishes a delta only for sessions it actually changed, so it
+ * needs the same did-it-fire answer {@link markTraceInterrupted} already gives.
+ */
+export function markSessionInterrupted(db: DatabaseSync, sessionId: string): boolean {
+  const result = db
+    .prepare(
+      `UPDATE sessions SET status = 'interrupted' WHERE id = ? AND status = 'live'`,
+    )
+    .run(sessionId);
+  return Number(result.changes) > 0;
 }
 
 /**
@@ -714,6 +729,8 @@ export {
   readSessions,
   readSessionSpans,
   readSessionTraces,
+  readSpan,
+  readTrace,
   readTraceMessages,
   sessionExists,
   toMessage,

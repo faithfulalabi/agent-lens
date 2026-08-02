@@ -12,6 +12,9 @@ import { readOrCreateToken } from '../shared/index.js';
 import { openDb } from '../db/index.js';
 import { buildApp } from './app.js';
 import { Broadcaster } from './sse.js';
+import { DeltaPublisher } from './deltas.js';
+import { readSession, readSpan, readTrace } from '../db/index.js';
+import type { DeltaBody } from '../shared/delta.js';
 import { clearConfig, writeConfig } from './config.js';
 import { replaySpool } from '../capture/replay.js';
 import {
@@ -35,8 +38,15 @@ export interface StartOptions {
   host?: string;
   /** Inactivity-sweep period in ms; `0` disables the sweep entirely. */
   sweepIntervalMs?: number;
+  /**
+   * Silence threshold the sweep applies, in ms; defaults to `DEFAULT_TIMEOUT_MS`
+   * (30 min). Injectable so a test can make a session go stale on demand.
+   */
+  sweepTimeoutMs?: number;
   /** Called with each sweep's result — observability hook (and test seam). */
   onSweep?: (result: SweepResult) => void;
+  /** SSE heartbeat period in ms; defaults to 15s. Injectable for tests. */
+  heartbeatMs?: number;
   /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
   uiDir?: string;
   /**
@@ -128,6 +138,49 @@ function runTailPass(
 }
 
 /**
+ * Publish what the inactivity sweep just changed (Task 6.1).
+ *
+ * The sweep writes OUTSIDE ingest, so without this a client watching a session
+ * that simply goes quiet would never learn it was interrupted — a stale view
+ * presenting as live, which is the one thing live tail must not do. Re-reads go
+ * through the same `readSession`/`readTrace`/`readSpan` path ingest uses, so
+ * sweep-origin and ingest-origin deltas are one code path.
+ *
+ * Note the sweep only ever produces `interrupted`, never `complete`, so this can
+ * never end a stream — `reviveSession` can undo every state it writes, and a
+ * later revive arrives on the same connection.
+ */
+function publishSweep(
+  db: DatabaseSync,
+  deltas: DeltaPublisher,
+  result: SweepResult,
+): void {
+  const bodies: DeltaBody[] = [];
+  for (const id of result.spanIds) {
+    const span = readSpan(db, id);
+    if (span !== undefined) {
+      const trace = readTrace(db, span.trace_id);
+      if (trace !== undefined) {
+        bodies.push({ kind: 'span_closed', session_id: trace.session_id, span });
+      }
+    }
+  }
+  for (const id of result.traceIds) {
+    const trace = readTrace(db, id);
+    if (trace !== undefined) {
+      bodies.push({ kind: 'trace_updated', session_id: trace.session_id, trace });
+    }
+  }
+  for (const id of result.sessionIds) {
+    const session = readSession(db, id);
+    if (session !== undefined) {
+      bodies.push({ kind: 'session_updated', session_id: id, session });
+    }
+  }
+  deltas.publishAll(bodies);
+}
+
+/**
  * Boot the server. Explicit `port` is used verbatim (throws on EADDRINUSE).
  * `port === 0` binds an ephemeral port (tests). Otherwise the default port
  * auto-increments on EADDRINUSE, printing the chosen port.
@@ -142,6 +195,7 @@ export async function startServer(
   const token = readOrCreateToken(dataDir);
   const db = openDb(dataDir);
   const broadcaster = new Broadcaster();
+  const deltas = new DeltaPublisher();
 
   // Recover anything the adapter spooled while the collector was down, before
   // we accept new connections. Idempotent (upsert-by-event_id), so a replay
@@ -156,7 +210,18 @@ export async function startServer(
     runTailPass(db, broadcaster, options);
   }
 
-  const app = buildApp({ db, token, broadcaster, host, uiDir: options.uiDir });
+  // `replaySpool` and the tail catch-up above are deliberately given no
+  // publisher: both run before the socket binds, with no client attached, so
+  // pushing a historical spool through a ring would evict it for nobody.
+  const app = buildApp({
+    db,
+    token,
+    broadcaster,
+    host,
+    uiDir: options.uiDir,
+    deltas,
+    heartbeatMs: options.heartbeatMs,
+  });
   const fetch = app.fetch;
 
   const explicit = options.port !== undefined;
@@ -208,7 +273,10 @@ export async function startServer(
             // Same short-circuit hazard as `runTailPass`: with the call written
             // as `options.onSweep?.(sweepInactive(db))` the sweep NEVER RAN in
             // production, where no callback is passed. Bind the result first.
-            const result = sweepInactive(db);
+            const result = sweepInactive(db, { timeoutMs: options.sweepTimeoutMs });
+            publishSweep(db, deltas, result);
+            // Same interval, no timer of its own — see `DeltaPublisher.reap`.
+            deltas.reap();
             options.onSweep?.(result);
           } catch (err) {
             // A sweep is housekeeping; never let it take the collector down.
@@ -246,6 +314,9 @@ export async function startServer(
         // fires after `db.close()` throws where no caller can catch it.
         if (sweepTimer !== undefined) clearInterval(sweepTimer);
         if (tailTimer !== undefined) clearInterval(tailTimer);
+        // Tell every open stream WHY it is ending and let it close, before
+        // `server.close` waits on connections that would otherwise sit open.
+        deltas.shutdown();
         server.close(() => {
           db.close();
           clearConfig(dataDir);

@@ -33,10 +33,26 @@ export interface SweepOptions {
   timeoutMs?: number;
 }
 
-/** What one sweep pass changed. Both zero means nothing was stale. */
+/**
+ * What one sweep pass changed. All zero/empty means nothing was stale.
+ *
+ * **The id lists exist because the sweep writes outside ingest** (Task 6.1). It
+ * flips sessions/traces to `interrupted` and finalizes spans without any envelope
+ * passing through the normalizer, so a client watching a session that simply goes
+ * quiet has no other way to learn it was interrupted — the exact
+ * stale-view-presenting-as-live that live tail exists to prevent. `startServer`
+ * publishes a delta per id here. The two counts are kept alongside so
+ * `closedSpans` still means what it always meant.
+ */
 export interface SweepResult {
   interruptedTraces: number;
   closedSpans: number;
+  /** Sessions this pass actually flipped to `interrupted`. */
+  sessionIds: string[];
+  /** Traces this pass actually flipped to `interrupted`. */
+  traceIds: string[];
+  /** Spans this pass finalized `unknown`; `closedSpans === spanIds.length`. */
+  spanIds: string[];
 }
 
 /**
@@ -53,7 +69,13 @@ export function sweepInactive(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cutoff = now.getTime() - timeoutMs;
   const endedAt = now.toISOString();
-  const result: SweepResult = { interruptedTraces: 0, closedSpans: 0 };
+  const result: SweepResult = {
+    interruptedTraces: 0,
+    closedSpans: 0,
+    sessionIds: [],
+    traceIds: [],
+    spanIds: [],
+  };
 
   const stale = lastActivityBySession(db).filter((row) => {
     const last = Date.parse(row.last_activity);
@@ -68,10 +90,17 @@ export function sweepInactive(
       for (const traceId of liveTracesForSession(db, session_id)) {
         if (markTraceInterrupted(db, traceId, endedAt)) {
           result.interruptedTraces += 1;
+          result.traceIds.push(traceId);
         }
-        result.closedSpans += closeRunningSpans(db, traceId, endedAt);
+        const closed = closeRunningSpans(db, traceId, endedAt);
+        result.closedSpans += closed.length;
+        result.spanIds.push(...closed);
       }
-      markSessionInterrupted(db, session_id);
+      // Only rows the sweep genuinely changed are named, so a caller publishing
+      // from these lists never ships a delta for a row that did not move.
+      if (markSessionInterrupted(db, session_id)) {
+        result.sessionIds.push(session_id);
+      }
     }
     db.exec(TXN_TOP.commit);
   } catch (err) {

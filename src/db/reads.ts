@@ -376,6 +376,18 @@ export function readSessionTraces(
   return pageOf<TraceRow, Trace>(db, { sql, params }, toTrace, page);
 }
 
+/**
+ * One trace by id, or `undefined` if it does not exist. The single-row sibling of
+ * {@link readSessionTraces}, added for Task 6.1: a `trace_updated` delta must
+ * carry the row as it stands AFTER the rollup flush, which only a re-read gives.
+ */
+export function readTrace(db: DatabaseSync, id: string): Trace | undefined {
+  const row = db
+    .prepare(`SELECT ${TRACE_COLUMNS} FROM traces WHERE id = ?`)
+    .get(id) as TraceRow | undefined;
+  return row === undefined ? undefined : toTrace(row);
+}
+
 // --- Spans -----------------------------------------------------------------
 
 /**
@@ -421,6 +433,18 @@ export function readSessionSpans(
     toSpan,
     query,
   );
+}
+
+/**
+ * One span by id, or `undefined` if it does not exist. The single-row sibling of
+ * {@link readSessionSpans}, added for Task 6.1: `upsertSpan` merges in SQL, so
+ * the post-merge row is knowable only by reading it back.
+ */
+export function readSpan(db: DatabaseSync, id: string): Span | undefined {
+  const row = db
+    .prepare(`SELECT ${SPAN_COLUMNS} FROM spans WHERE id = ?`)
+    .get(id) as SpanRow | undefined;
+  return row === undefined ? undefined : toSpan(row);
 }
 
 // --- Messages --------------------------------------------------------------

@@ -11,6 +11,8 @@ import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
 import { jsonNotFound, registerReadApi } from './read-api.js';
 import { Broadcaster } from './sse.js';
+import { DeltaPublisher } from './deltas.js';
+import { registerStreamApi } from './stream-api.js';
 import { makeServeIndex, registerUi } from './static-ui.js';
 
 /** Wiring the app needs from `startServer`. */
@@ -22,6 +24,15 @@ export interface AppDeps {
   host?: string;
   /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
   uiDir?: string;
+  /**
+   * Live-tail publisher (Task 6.1). **Optional on purpose:** several tests
+   * construct `buildApp` directly, and a required field would break them for no
+   * gain. Absent -> a private instance nobody else can publish into, so the
+   * stream routes still answer correctly (with `refetch`) instead of 404ing.
+   */
+  deltas?: DeltaPublisher;
+  /** Heartbeat period in ms for both stream surfaces. Tests shorten it. */
+  heartbeatMs?: number;
 }
 
 const HEARTBEAT_MS = 15_000;
@@ -36,6 +47,8 @@ function readString(body: unknown, key: string): string | undefined {
 /** Assemble the Hono app with all Phase-1 routes. */
 export function buildApp(deps: AppDeps): Hono {
   const { db, token, broadcaster, host, uiDir } = deps;
+  const deltas = deps.deltas ?? new DeltaPublisher();
+  const heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS;
   const app = new Hono();
 
   // App-wide host allowlist, before anything else. A non-loopback bind widens
@@ -75,7 +88,7 @@ export function buildApp(deps: AppDeps): Hono {
       });
       return c.json({ error: 'invalid envelope' }, 400);
     }
-    const result = ingestEnvelope(db, broadcaster, body);
+    const result = ingestEnvelope(db, broadcaster, body, 'processed', { deltas });
     return c.json(result, 200);
   });
 
@@ -103,12 +116,18 @@ export function buildApp(deps: AppDeps): Hono {
       // closed. `write` swallows broken-pipe errors, so poll the flags rather
       // than relying on a throw to break the loop (else the timer leaks).
       while (!stream.aborted && !stream.closed) {
-        await stream.sleep(HEARTBEAT_MS);
+        await stream.sleep(heartbeatMs);
         if (stream.aborted || stream.closed) break;
         await stream.writeSSE({ event: 'heartbeat', data: '' });
       }
     }),
   );
+
+  // The per-session delta streams (Task 6.1). Registered HERE, inside `buildApp`,
+  // because everything below claims paths ahead of the SPA catch-all — see
+  // `stream-api.ts`'s header. `/api/stream` above is an exact-path route, so it
+  // does not shadow `/api/stream/sessions`.
+  registerStreamApi(app, { db, deltas, heartbeatMs });
 
   // --- Nothing under /api/* escapes as HTML (Task 5.0) ----------------------
   // Both registrations belong to `buildApp`, not to `registerReadApi`.

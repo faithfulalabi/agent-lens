@@ -25,6 +25,7 @@ import {
   bootTestServer,
   cleanupDir,
   makeTestEnvelope,
+  readOneEvent,
   TOKEN_HEADER,
   type TestServer,
 } from './helpers.js';
@@ -62,36 +63,6 @@ async function getJson<T>(path: string): Promise<T> {
   const { res, text } = await get(path);
   expect(res.status, `${path} -> ${text}`).toBe(200);
   return JSON.parse(text) as T;
-}
-
-/** Read one SSE frame of the given type (mirrors `ingest.test.ts:31-60`). */
-async function readOneEvent(
-  res: Response,
-  eventType: string,
-  timeoutMs = 1000,
-): Promise<Record<string, unknown>> {
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf('\n\n')) !== -1) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        if (!frame.includes(`event: ${eventType}`)) continue;
-        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-        if (dataLine) return JSON.parse(dataLine.slice('data:'.length).trim());
-      }
-    }
-    throw new Error(`no "${eventType}" frame within ${timeoutMs}ms`);
-  } finally {
-    await reader.cancel();
-  }
 }
 
 // --- The pure param guards, unit-tested directly ---------------------------
