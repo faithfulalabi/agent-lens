@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { normalize, mapToolStatus } from '../normalizer.js';
-import { makeEnvelope } from '../../shared/index.js';
-import type { Envelope } from '../../shared/index.js';
 import { ingestEnvelope } from '../../server/ingest.js';
 import { Broadcaster } from '../../server/sse.js';
 import {
   freshDb,
   hookEnvelope,
+  transcriptEnvelope,
   first,
   sessions,
   traces,
@@ -356,23 +355,6 @@ describe('normalizer — transcript envelopes (Task 3.1, scoped guard)', () => {
     db = freshDb();
   });
 
-  /** A transcript-sourced envelope, as the tailer builds one. */
-  function transcriptEnvelope(
-    payload: Record<string, unknown>,
-    overrides: { session_id?: string; ts?: string; uuid?: string } = {},
-  ): Envelope {
-    return makeEnvelope({
-      source: 'transcript',
-      session_id: overrides.session_id ?? SESSION,
-      file_identity: '/private/tmp/projects/proj/sess-1.jsonl',
-      line_offset: 0,
-      line: JSON.stringify(payload),
-      uuid: overrides.uuid ?? 'line-1',
-      raw_payload: payload,
-      ts: overrides.ts ?? TS,
-    });
-  }
-
   it('revives an interrupted session — the guard is NOT a top-of-function return', () => {
     // Goes RED if the transcript branch is placed ahead of `reviveSession`: a
     // session the sweep interrupted would stay interrupted forever while its
@@ -423,11 +405,24 @@ describe('normalizer — transcript envelopes (Task 3.1, scoped guard)', () => {
     });
   });
 
-  it('projects no traces and no spans, and never counts as drift', () => {
+  it('never counts as drift', () => {
     // Guards the scoped early return against regressing into the `genericSpan`
     // default branch, which would mint a degraded span for every line.
     const verdict = normalize(db, transcriptEnvelope({ type: 'assistant', cwd: '/proj' }));
     expect(verdict.degraded).toBe(false);
+  });
+
+  it('leaves a `mode` line archive-only — no trace, no span, no message', () => {
+    // The other half of this guard used to ride on an `assistant` line. Task 3.2
+    // made that line legitimately project an `llm_call` span, so the assertion
+    // moved onto a control line whose type maps to no `MessageRole` at all and
+    // must stay archive-only however the merge grows.
+    const verdict = normalize(
+      db,
+      transcriptEnvelope({ type: 'mode', mode: 'default', cwd: '/proj' }),
+    );
+    expect(verdict.degraded).toBe(false);
+    expect(verdict.traceIds ?? []).toEqual([]);
     expect(traces(db)).toHaveLength(0);
     expect(spans(db)).toHaveLength(0);
   });

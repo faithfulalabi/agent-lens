@@ -14,6 +14,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Envelope } from '../shared/index.js';
 import type { SpanStatus, TraceTrigger } from '../shared/index.js';
 import { canonicalJson } from '../shared/index.js';
+import { mergeTranscriptLine } from './merge.js';
 import {
   insertSessionIfAbsent,
   setCaptureMode,
@@ -159,12 +160,13 @@ export function normalize(
   if (envelope.source === 'transcript') {
     // A transcript line carries no hook name, so left alone it would fall
     // through to the `default` branch, mint a degraded generic span, and inflate
-    // the drift counter for every line of every session. The guard is SCOPED to
-    // trace/span projection: Task 3.2 owns traces and spans from transcripts,
-    // and Task 3.3 (parallel with 3.2) needs a `sessions` row to tag, so session
-    // presence and liveness are 3.1's to deliver.
+    // the drift counter for every line of every session. Session presence and
+    // liveness stay 3.1's; everything downstream of the row — traces, spans,
+    // tokens, messages — is Task 3.2's merge policy, which is why this returns
+    // `touched(...)` and not a bare `OK`: without the trace ids the caller's
+    // dirty set stays empty and every trace rollup would read 0.
     ensureTranscriptSession(db, envelope, payload);
-    return OK;
+    return touched(mergeTranscriptLine(db, envelope, payload));
   }
 
   // A hook landed, so hooks demonstrably work for this session. If the tailer

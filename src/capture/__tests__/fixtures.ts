@@ -63,6 +63,79 @@ export function hookEnvelope(
   });
 }
 
+/**
+ * A transcript-sourced envelope, as the tailer builds one. Promoted out of
+ * `normalizer.test.ts` for Task 3.2, whose merge suites all need it.
+ *
+ * The line's `uuid` and the envelope's are kept in lockstep deliberately: the
+ * event id is `{session}:transcript:{uuid}` and the `parentUuid` ancestor walk
+ * looks lines up by exactly that key, so a fixture where the two disagree would
+ * make correlation silently unresolvable.
+ */
+export function transcriptEnvelope(
+  payload: Record<string, unknown>,
+  overrides: {
+    session_id?: string;
+    ts?: string;
+    uuid?: string;
+    line_offset?: number;
+  } = {},
+): Envelope {
+  const uuid =
+    overrides.uuid ?? (typeof payload.uuid === 'string' ? payload.uuid : 'line-1');
+  const line = { ...payload, uuid };
+  const session_id = overrides.session_id ?? SESSION;
+  return makeEnvelope({
+    source: 'transcript',
+    session_id,
+    file_identity: `/private/tmp/projects/proj/${session_id}.jsonl`,
+    line_offset: overrides.line_offset ?? 0,
+    line: JSON.stringify(line),
+    uuid,
+    raw_payload: line,
+    ts: overrides.ts ?? TS,
+  });
+}
+
+/**
+ * A `user` transcript line carrying a `tool_result` block AND the line's
+ * `toolUseResult` mirror — the shape every merge output-side test needs.
+ *
+ * Both surfaces on purpose: the truncation gate reads `toolUseResult` (the
+ * transcript's byte-identical copy of the hook's `tool_response`), while the
+ * content and the text marker live on the `tool_result` block. A fixture that
+ * set the harness fields on the hook envelope alone would leave the gate blind.
+ */
+export function toolResultLine(input: {
+  tool_use_id: string;
+  /** The `tool_result` block's content — usually the rendered output string. */
+  content: unknown;
+  /** The line's `toolUseResult`; omit to model a build that emits none. */
+  toolUseResult?: unknown;
+  is_error?: boolean;
+  uuid?: string;
+  promptId?: string;
+  parentUuid?: string;
+  cwd?: string;
+}): Record<string, unknown> {
+  const block: Record<string, unknown> = {
+    type: 'tool_result',
+    tool_use_id: input.tool_use_id,
+    content: input.content,
+  };
+  if (input.is_error !== undefined) block.is_error = input.is_error;
+  const line: Record<string, unknown> = {
+    type: 'user',
+    uuid: input.uuid ?? 'line-result',
+    cwd: input.cwd ?? '/proj',
+    message: { role: 'user', content: [block] },
+  };
+  if (input.toolUseResult !== undefined) line.toolUseResult = input.toolUseResult;
+  if (input.promptId !== undefined) line.promptId = input.promptId;
+  if (input.parentUuid !== undefined) line.parentUuid = input.parentUuid;
+  return line;
+}
+
 export type Row = Record<string, unknown>;
 
 export const sessions = (db: DatabaseSync): Row[] =>
@@ -73,6 +146,8 @@ export const spans = (db: DatabaseSync): Row[] =>
   db.prepare('SELECT * FROM spans').all() as Row[];
 export const payloads = (db: DatabaseSync): Row[] =>
   db.prepare('SELECT * FROM payloads').all() as Row[];
+export const messages = (db: DatabaseSync): Row[] =>
+  db.prepare('SELECT * FROM messages ORDER BY trace_id, seq').all() as Row[];
 export const rawEvents = (db: DatabaseSync): Row[] =>
   db.prepare('SELECT * FROM raw_events').all() as Row[];
 

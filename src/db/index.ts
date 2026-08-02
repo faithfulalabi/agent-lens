@@ -10,6 +10,7 @@ import type {
   Span,
   Message,
   RawEventStatus,
+  SpanStatus,
   TailerOffset,
 } from '../shared/index.js';
 import { runMigrations } from './migrate.js';
@@ -694,6 +695,178 @@ export function ingestHealth(db: DatabaseSync): IngestHealth {
     }
   }
   return health;
+}
+
+// --- Transcript merge helpers (Task 3.2) ----------------------------------
+// The three writes/reads the merge policy needs that no existing helper can
+// express. Kept in a trailing block so parallel edits to this file rebase
+// cleanly. No new tables and no DDL: correlation reads the `raw_events`
+// archive, per the `lastSessionStartSource` precedent above.
+
+/** Content + provenance fields the transcript merge may write onto a span. */
+export interface SpanContentUpgrade {
+  span_id: string;
+  input_payload_id?: string;
+  output_payload_id?: string;
+  model?: string;
+  /** UNIONed with the existing tags — never assigned. */
+  tags?: string[];
+  /** Merged with `json_patch`; null-valued keys must be omitted by the caller. */
+  attrs?: Record<string, unknown>;
+}
+
+/**
+ * Write content + provenance onto an EXISTING span, and nothing else.
+ *
+ * Deliberately not {@link upsertSpan}, whose `ON CONFLICT` list also carries
+ * `status`, `started_at` and `ended_at`: a transcript block whose natural status
+ * is `ok` would clobber a hook-recorded `error`/`denied`, violating "hooks own
+ * lifecycle, transcript owns content" (RFC 001). This helper cannot express a
+ * lifecycle write at all, which is what makes that rule mechanical rather than
+ * conventional.
+ *
+ * Three details are load-bearing:
+ * - **Payload columns are `COALESCE`d, never assigned.** A payload ref is only
+ *   ever FILLED IN, so a transcript version can never downgrade one a hook
+ *   already stored. The caller still decides whether to insert the blob at all
+ *   ({@link spanOutputMissing}); the COALESCE is the structural backstop.
+ * - **`tags` UNION, never assign** — a plain assignment would erase the
+ *   `synthetic_open`/`degraded` markers the hook path set.
+ * - **`attrs` binds `'{}'` when absent, never SQL NULL.** `json_patch(x, NULL)`
+ *   returns NULL and `spans.attrs` is `NOT NULL`, so a null patch document would
+ *   throw and dead-letter the item. (Null-VALUED keys are a separate hazard:
+ *   `json_patch` treats them as deletes, so callers omit them.)
+ *
+ * `source` is absent on purpose. Task 3.2 never writes `source: 'merged'` —
+ * spans are `hook` (untouched by merge) or `transcript` (created by it). Mixed
+ * provenance becomes meaningful only when Task 3.4 completes a payload from the
+ * sidecar, and that task owns the transition.
+ */
+export function upgradeSpanContent(db: DatabaseSync, u: SpanContentUpgrade): void {
+  db.prepare(
+    `UPDATE spans SET
+       input_payload_id  = COALESCE(input_payload_id, ?),
+       output_payload_id = COALESCE(output_payload_id, ?),
+       model             = COALESCE(?, model),
+       attrs             = json_patch(attrs, ?),
+       tags              = (SELECT json_group_array(v) FROM (
+                              SELECT value AS v FROM json_each(spans.tags)
+                              UNION SELECT value FROM json_each(?)))
+     WHERE id = ?`,
+  ).run(
+    u.input_payload_id ?? null,
+    u.output_payload_id ?? null,
+    u.model ?? null,
+    JSON.stringify(u.attrs ?? {}),
+    JSON.stringify(u.tags ?? []),
+    u.span_id,
+  );
+}
+
+/**
+ * Close a span the TRANSCRIPT opened, and only such a span.
+ *
+ * The one lifecycle write the merge is allowed, and the `WHERE` clause is what
+ * makes it safe rather than a convention:
+ * - `source = 'transcript'` — the row was created by the merge, so no hook ever
+ *   established this span's lifecycle. A hook-created span is excluded outright,
+ *   which is "hooks own lifecycle" enforced in SQL.
+ * - `status = 'running'` — only the open state the merge itself wrote is
+ *   replaced. A hook that reached the span first and recorded a terminal status
+ *   keeps it, and a re-merge is a no-op because the span is no longer running.
+ *
+ * Without this, a transcript-only tool call could never record its outcome:
+ * `upgradeSpanContent` cannot express `status` by design, so the `tool_result`
+ * block's `is_error` would be unreachable and every failed call in a hookless
+ * session would read `ok` — silently zeroing `error_count` in the rollups.
+ */
+export function closeTranscriptSpan(
+  db: DatabaseSync,
+  spanId: string,
+  status: SpanStatus,
+  endedAt: string,
+): void {
+  db.prepare(
+    `UPDATE spans SET status = ?, ended_at = COALESCE(ended_at, ?)
+     WHERE id = ? AND source = 'transcript' AND status = 'running'`,
+  ).run(status, endedAt, spanId);
+}
+
+/** The payload refs a span currently holds; either may be absent. */
+export interface SpanPayloadRefs {
+  input_payload_id?: string;
+  output_payload_id?: string;
+}
+
+/**
+ * What content a span already has, or `undefined` when the span does not exist.
+ *
+ * The merge asks this BEFORE serializing a transcript block, and the "before"
+ * is load-bearing twice over. `payloads` is content-addressed and insert-only,
+ * so writing first and discarding the id would leave a permanent row for a blob
+ * nothing references. And when a hook already stored the richer object, the
+ * thread-view message must point at THAT — the transcript's flattened rendering
+ * is a downgrade for the reader exactly as it is for the span.
+ */
+export function spanPayloadRefs(
+  db: DatabaseSync,
+  spanId: string,
+): SpanPayloadRefs | undefined {
+  const row = db
+    .prepare(`SELECT input_payload_id AS i, output_payload_id AS o FROM spans WHERE id = ?`)
+    .get(spanId) as { i: string | null; o: string | null } | undefined;
+  if (row === undefined) return undefined;
+  return {
+    input_payload_id: row.i ?? undefined,
+    output_payload_id: row.o ?? undefined,
+  };
+}
+
+/** Next per-trace message seq (max existing + 1), starting at 1. */
+export function nextMessageSeq(db: DatabaseSync, traceId: string): number {
+  const row = db
+    .prepare(`SELECT MAX(seq) AS max FROM messages WHERE trace_id = ?`)
+    .get(traceId) as { max: number | null };
+  return (row.max ?? 0) + 1;
+}
+
+/** The two correlation fields one archived transcript line carries. */
+export interface TranscriptLineLinks {
+  promptId?: string;
+  parentUuid?: string;
+}
+
+/**
+ * Read a transcript line's `promptId`/`parentUuid` straight off the raw archive,
+ * keyed by the deterministic event id `{session}:transcript:{uuid}`.
+ *
+ * **No side table, by design.** `insertRawEvent` runs before `normalize` inside
+ * the same transaction, so every line — including the `attachment` and `system`
+ * lines that project nothing, and dead-lettered ones — is already a primary-key
+ * lookup away. A side table populated only by lines that PROJECT would miss the
+ * ~10% of assistant lines whose parent is an `attachment`/`system` line, and
+ * they would silently resolve to no trace. Same reasoning, and same precedent,
+ * as {@link lastSessionStartSource}.
+ */
+export function transcriptLineLinks(
+  db: DatabaseSync,
+  sessionId: string,
+  uuid: string,
+): TranscriptLineLinks | undefined {
+  const row = db
+    .prepare(
+      `SELECT json_extract(raw, '$.raw_payload.promptId')   AS prompt_id,
+              json_extract(raw, '$.raw_payload.parentUuid') AS parent_uuid
+       FROM raw_events WHERE id = ? AND json_valid(raw)`,
+    )
+    .get(`${sessionId}:transcript:${uuid}`) as
+    | { prompt_id: string | null; parent_uuid: string | null }
+    | undefined;
+  if (row === undefined) return undefined;
+  return {
+    promptId: row.prompt_id ?? undefined,
+    parentUuid: row.parent_uuid ?? undefined,
+  };
 }
 
 // --- Rollups (Task 2.4) ----------------------------------------------------
