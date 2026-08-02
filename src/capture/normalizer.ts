@@ -53,6 +53,31 @@ export interface NormalizeResult {
   traceIds?: string[];
 }
 
+/**
+ * Which spans one envelope wrote, collected by mutation rather than returned
+ * (Task 6.1). The live-tail publisher needs span identity; every handler here
+ * returns a TRACE id, span ids are function-locals, `touched()` hands back a
+ * frozen singleton it cannot decorate, and `normalize`'s switch has a dozen early
+ * returns — so widening the return type would mean restructuring all of them.
+ *
+ * **Spans only, deliberately.** There is no `traces` field because there would be
+ * no reader for one: trace and session deltas are staged from the batch's
+ * existing `DirtySet` after the rollup flush (`ingest.ts`), not from here. A
+ * field that is written and never read invites a future author to trust it.
+ */
+export interface Touched {
+  /** span id -> true iff THIS envelope created the row (drives `span_opened`). */
+  spans: Map<string, boolean>;
+}
+
+/** Record a span this envelope wrote. No-op when nobody is collecting. */
+export function markSpan(t: Touched | undefined, id: string, created: boolean): void {
+  if (t === undefined) return;
+  // First writer wins on `created`: an envelope that opens AND closes a span in
+  // one pass (a synthetic close) is still that span's first appearance.
+  if (!t.spans.has(id)) t.spans.set(id, created);
+}
+
 /** Shared no-drift verdict; frozen because every clean branch returns this instance. */
 const OK: NormalizeResult = Object.freeze({ degraded: false });
 
@@ -110,8 +135,19 @@ const KNOWN_KEYS: Record<string, readonly string[]> = {
  * a transaction (opened by the caller). Unknown/malformed hooks fall through to a
  * generic span and never throw; the returned verdict tells the caller whether the
  * archive row should be flagged `degraded`.
+ *
+ * `collector` is an optional live-tail span collector (Task 6.1); omit it and
+ * every branch behaves exactly as before. `reprocess.ts` omits it on purpose —
+ * dead-letter healing is a manual triage path, not a live one. It is NOT named
+ * `touched` here only because the module-private `touched()` verdict helper below
+ * already owns that name, and that helper deliberately stays untouched: it names
+ * the traces an envelope moved, which remains `DirtySet`'s concern, not this one.
  */
-export function normalize(db: DatabaseSync, envelope: Envelope): NormalizeResult {
+export function normalize(
+  db: DatabaseSync,
+  envelope: Envelope,
+  collector?: Touched,
+): NormalizeResult {
   const payload = asPayload(envelope.raw_payload);
   const hook = envelope.hook_name ?? '';
 
@@ -141,30 +177,32 @@ export function normalize(db: DatabaseSync, envelope: Envelope): NormalizeResult
       openSession(db, envelope, payload);
       return OK;
     case 'SessionEnd':
-      return touched(closeSession(db, envelope, 'complete'));
+      return touched(closeSession(db, envelope, 'complete', collector));
     case 'UserPromptSubmit':
       return touched([openTrace(db, envelope, payload, 'user_prompt')]);
     case 'PreToolUse':
-      return touched([openToolSpan(db, envelope, payload)]);
+      return touched([openToolSpan(db, envelope, payload, collector)]);
     case 'PostToolUse':
-      return touched([closeToolSpan(db, envelope, payload, mapToolStatus(payload))]);
+      return touched([
+        closeToolSpan(db, envelope, payload, mapToolStatus(payload), collector),
+      ]);
     case 'PostToolUseFailure':
-      return touched([closeToolSpan(db, envelope, payload, 'error')]);
+      return touched([closeToolSpan(db, envelope, payload, 'error', collector)]);
     case 'SubagentStart':
-      return touched([openSubagentSpan(db, envelope, payload)]);
+      return touched([openSubagentSpan(db, envelope, payload, collector)]);
     case 'SubagentStop':
-      return touched([closeSubagentSpan(db, envelope, payload)]);
+      return touched([closeSubagentSpan(db, envelope, payload, collector)]);
     case 'Stop':
-      return touched([closeActiveTrace(db, envelope)]);
+      return touched([closeActiveTrace(db, envelope, collector)]);
     case 'PreCompact':
     case 'PostCompact':
-      return touched([compactSpan(db, envelope, payload, hook)]);
+      return touched([compactSpan(db, envelope, payload, hook, collector)]);
     default:
       // Unknown hook: record a generic span on the active turn, never throw.
       return {
         degraded: true,
         reason: `unknown hook ${hook || '(none)'}`,
-        traceIds: [genericSpan(db, envelope, hook || 'unknown', payload)],
+        traceIds: [genericSpan(db, envelope, hook || 'unknown', payload, collector)],
       };
   }
 }
@@ -180,12 +218,15 @@ function closeSession(
   db: DatabaseSync,
   env: Envelope,
   status: 'complete' | 'interrupted',
+  c?: Touched,
 ): string[] {
   // Session over: anything still running never reported a close, so finalize it
   // honestly as `unknown` rather than leaving a span running forever.
   const finalized = liveTracesForSession(db, env.session_id);
   for (const traceId of finalized) {
-    closeRunningSpans(db, traceId, env.ts);
+    // These spans will never be reported on again, so this is the only chance a
+    // live view has to learn they stopped running.
+    for (const id of closeRunningSpans(db, traceId, env.ts)) markSpan(c, id, false);
   }
   // Upsert-by-id: if SessionEnd arrives before SessionStart (out-of-order,
   // Q6), still materialize the row so nothing is lost.
@@ -235,12 +276,19 @@ function openTrace(
   return traceId;
 }
 
-function openToolSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
+function openToolSpan(
+  db: DatabaseSync,
+  env: Envelope,
+  p: HookPayload,
+  c?: Touched,
+): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.tool_use_id) ?? env.event_id;
   const inputId = p.tool_input !== undefined
     ? insertPayload(db, canonicalJson(p.tool_input))
     : undefined;
+  // Asked BEFORE the upsert, or the answer is always "it exists".
+  markSpan(c, spanId, !spanExists(db, spanId));
 
   upsertSpan(db, {
     id: spanId,
@@ -261,6 +309,7 @@ function closeToolSpan(
   env: Envelope,
   p: HookPayload,
   status: SpanStatus,
+  c?: Touched,
 ): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.tool_use_id) ?? env.event_id;
@@ -272,6 +321,9 @@ function closeToolSpan(
   // A close with no matching open means the Pre was lost (or never fired). Record
   // the span anyway and mark it, so `started_at` is visibly a guess, not data.
   const synthetic = !spanExists(db, spanId);
+  // Doubles as the delta's created flag — this branch already had the pre-check
+  // the other five span writers had to grow.
+  markSpan(c, spanId, synthetic);
 
   upsertSpan(db, {
     id: spanId,
@@ -291,9 +343,15 @@ function closeToolSpan(
   return traceId;
 }
 
-function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
+function openSubagentSpan(
+  db: DatabaseSync,
+  env: Envelope,
+  p: HookPayload,
+  c?: Touched,
+): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.agent_id) ?? env.event_id;
+  markSpan(c, spanId, !spanExists(db, spanId));
   upsertSpan(db, {
     id: spanId,
     trace_id: traceId,
@@ -307,9 +365,15 @@ function openSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): stri
   return traceId;
 }
 
-function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): string {
+function closeSubagentSpan(
+  db: DatabaseSync,
+  env: Envelope,
+  p: HookPayload,
+  c?: Touched,
+): string {
   const traceId = resolveTrace(db, env, p);
   const spanId = str(p.agent_id) ?? env.event_id;
+  markSpan(c, spanId, !spanExists(db, spanId));
   upsertSpan(db, {
     id: spanId,
     trace_id: traceId,
@@ -331,11 +395,15 @@ function closeSubagentSpan(db: DatabaseSync, env: Envelope, p: HookPayload): str
  * clause advances just `status`/`ended_at`, so a synthesized `system_resume` or
  * `compaction` trace keeps its real trigger.
  */
-function closeActiveTrace(db: DatabaseSync, env: Envelope): string | undefined {
+function closeActiveTrace(
+  db: DatabaseSync,
+  env: Envelope,
+  c?: Touched,
+): string | undefined {
   const traceId = latestOpenTraceId(db, env.session_id);
   if (!traceId) return undefined;
   // Turn over: any span still running never reported a close.
-  closeRunningSpans(db, traceId, env.ts);
+  for (const id of closeRunningSpans(db, traceId, env.ts)) markSpan(c, id, false);
   const turnSeq = Number(traceId.slice(traceId.lastIndexOf(':') + 1));
   upsertTrace(db, {
     id: traceId,
@@ -355,8 +423,10 @@ function compactSpan(
   env: Envelope,
   p: HookPayload,
   hook: string,
+  c?: Touched,
 ): string {
   const traceId = resolveTrace(db, env, p);
+  markSpan(c, env.event_id, !spanExists(db, env.event_id));
   upsertSpan(db, {
     id: env.event_id,
     trace_id: traceId,
@@ -383,8 +453,10 @@ function genericSpan(
   env: Envelope,
   name: string,
   p: HookPayload,
+  c?: Touched,
 ): string {
   const traceId = resolveTrace(db, env, p);
+  markSpan(c, env.event_id, !spanExists(db, env.event_id));
   upsertSpan(db, {
     id: env.event_id,
     trace_id: traceId,

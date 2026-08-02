@@ -10,11 +10,16 @@ import {
   insertRawEvent,
   insertSpanLite,
   nextSeq,
+  readSession,
+  readSpan,
+  readTrace,
   recomputeRollups,
   setRawEventStatus,
   type SpanLite,
 } from '../db/index.js';
-import { normalize } from '../capture/normalizer.js';
+import { normalize, type Touched } from '../capture/normalizer.js';
+import type { DeltaBody } from '../shared/delta.js';
+import type { DeltaPublisher } from './deltas.js';
 import type { Broadcaster } from './sse.js';
 
 // --- Transaction frames ----------------------------------------------------
@@ -130,6 +135,18 @@ export interface IngestBatchOptions {
    * unwritten; nothing is rethrown, because ingest never throws (Task 2.3 AC1).
    */
   beforeCommit?: (db: DatabaseSync) => void;
+
+  /**
+   * Live-tail publisher (Task 6.1). Present -> this call stages entity deltas and
+   * fans them out AFTER `COMMIT`, next to the broadcaster drain.
+   *
+   * **Absent is a legitimate mode, not an oversight.** `replaySpool` and the
+   * transcript catch-up both run before the server binds, with no client
+   * connected, so pushing a 10k-line historical spool through a ring would only
+   * evict it for nobody; and the 2.6a golden harness must stay dependency-light
+   * and snapshot-stable, since deltas are I/O rather than projection state.
+   */
+  deltas?: DeltaPublisher;
 }
 
 /** The publish-only slice of `Broadcaster` that ingest needs. */
@@ -171,8 +188,9 @@ export function ingestEnvelope(
   broadcaster: Broadcaster,
   envelope: Envelope,
   status: 'processed' | 'dead_letter' = 'processed',
+  options?: IngestBatchOptions,
 ): IngestResult {
-  return ingestBatch(db, broadcaster, [{ envelope, status }])[0]!;
+  return ingestBatch(db, broadcaster, [{ envelope, status }], options)[0]!;
 }
 
 /**
@@ -221,15 +239,27 @@ export function ingestBatch(
   };
   const dirty: DirtySet = { traces: new Set(), sessions: new Set() };
   const results: IngestResult[] = [];
+  // Staged the same way `pending` is, and drained in the same place, for the same
+  // reason: a subscriber must never see a delta that a later rollback erased.
+  const publisher = options.deltas;
+  const staged: DeltaBody[] | undefined = publisher === undefined ? undefined : [];
 
   db.exec(TXN_TOP.begin);
   try {
     for (const item of items) {
       results.push(
-        ingestOne(db, buffer, item.envelope, item.status ?? 'processed', dirty),
+        ingestOne(db, buffer, item.envelope, item.status ?? 'processed', dirty, staged),
       );
     }
     flushRollups(db, dirty);
+    // AFTER the flush, deliberately: `flushRollups` rewrites the traces'/sessions'
+    // token, cost and duration columns, so a parent re-read inside an item's
+    // savepoint would ship stale chips. It also coalesces for free — a 64-envelope
+    // batch on one trace stages ONE `trace_updated`, not 64.
+    //
+    // Before `beforeCommit`: staging is pure in-memory, and if the hook throws
+    // the whole slice rolls back and `staged` is never drained.
+    if (staged !== undefined) stageParentDeltas(db, dirty, staged);
     options.beforeCommit?.(db);
     db.exec(TXN_TOP.commit);
   } catch {
@@ -250,7 +280,87 @@ export function ingestBatch(
 
   // Durable now: fan out the buffered events (I/O outside the transaction).
   for (const span of pending) broadcaster.publish(span);
+  if (publisher !== undefined && staged !== undefined) publisher.publishAll(staged);
   return results;
+}
+
+/**
+ * Re-read the batch's touched parents and stage a whole-entity delta for each.
+ *
+ * A missing row is skipped rather than staged: `dirty.traces` is populated inside
+ * an item's savepoint, BEFORE its commit, so an item that then throws leaves a
+ * rolled-back trace id behind. For rollups that costs one idempotent recompute;
+ * for deltas it would be a phantom entity on a client's screen.
+ */
+function stageParentDeltas(
+  db: DatabaseSync,
+  dirty: DirtySet,
+  out: DeltaBody[],
+): void {
+  for (const traceId of dirty.traces) {
+    const trace = readTrace(db, traceId);
+    if (trace !== undefined) {
+      out.push({ kind: 'trace_updated', session_id: trace.session_id, trace });
+    }
+  }
+  for (const sessionId of dirty.sessions) {
+    const session = readSession(db, sessionId);
+    if (session !== undefined) {
+      out.push({ kind: 'session_updated', session_id: sessionId, session });
+    }
+  }
+}
+
+/**
+ * Re-read the spans one item wrote and stage a whole-entity delta for each.
+ *
+ * **Called after the item's `try`/`catch` has closed, next to `sink.publish`.**
+ * That position is load-bearing twice over. Inside the `try` the re-read would sit
+ * in a frame whose `catch` runs `ROLLBACK TO item` — after `RELEASE item` has
+ * already popped it — which `node:sqlite` rejects with `no such savepoint: item`;
+ * that escapes to the batch catch and dead-letters all 64 items over one
+ * unreadable span. And a throw anywhere earlier in the item jumps to the same
+ * `catch`, leaving the collector unread, which is precisely how a rolled-back
+ * item ships no delta.
+ *
+ * The local `try`/`catch` is the other half: this is the first throwable statement
+ * in a region that is otherwise just an array push, and it must cost one delta
+ * rather than the whole batch. The `undefined` check below covers a MISSING row,
+ * which is a different failure from a throwing read.
+ */
+function stageSpanDeltas(
+  db: DatabaseSync,
+  sessionId: string,
+  touched: Touched,
+  out: DeltaBody[],
+): void {
+  try {
+    for (const [spanId, created] of touched.spans) {
+      // `upsertSpan` merges in SQL, so only a re-read knows the post-merge row.
+      const span = readSpan(db, spanId);
+      if (span === undefined) continue;
+      out.push({ kind: spanDeltaKind(created, span.status), session_id: sessionId, span });
+    }
+  } catch (err) {
+    console.warn('agent-lens: span delta staging failed:', err);
+  }
+}
+
+/**
+ * Which span kind to publish. `created` wins because first appearance is a
+ * distinct event for the UI (an arrival animation, not an in-place update), even
+ * when the same envelope both opened and closed the span.
+ *
+ * The distinction is a nicety, never a correctness dependency: coalescing can
+ * supersede a `span_opened` with a later `span_closed`, so consumers must apply
+ * any span delta for an unknown id as an insert.
+ */
+function spanDeltaKind(
+  created: boolean,
+  status: string,
+): 'span_opened' | 'span_updated' | 'span_closed' {
+  if (created) return 'span_opened';
+  return status === 'running' ? 'span_updated' : 'span_closed';
 }
 
 /**
@@ -319,9 +429,14 @@ function ingestOne(
   envelope: Envelope,
   status: 'processed' | 'dead_letter',
   dirty: DirtySet,
+  staged?: DeltaBody[],
 ): IngestResult {
   const txn = TXN_NESTED;
   let span: SpanLite;
+  // Fresh per item: the collection has to happen where the writes happen, and a
+  // failed item's collector must be discarded with its savepoint.
+  const touched: Touched | undefined =
+    staged === undefined ? undefined : { spans: new Map() };
   db.exec(txn.begin);
   try {
     const inserted = insertRawEvent(db, envelope, status);
@@ -333,7 +448,7 @@ function ingestOne(
     const seq = nextSeq(db);
     insertSpanLite(db, seq, envelope);
     if (status === 'processed') {
-      const verdict = normalize(db, envelope);
+      const verdict = normalize(db, envelope, touched);
       if (verdict.degraded) {
         setRawEventStatus(db, envelope.event_id, 'degraded', verdict.reason);
       }
@@ -351,6 +466,11 @@ function ingestOne(
   }
 
   sink.publish(span);
+  // Still inside `TXN_TOP`, so the re-read sees this item's committed writes and
+  // NOT a rolled-back sibling's. See `stageSpanDeltas` for why not one line up.
+  if (staged !== undefined && touched !== undefined) {
+    stageSpanDeltas(db, envelope.session_id, touched, staged);
+  }
   return { inserted: true, seq: span.seq };
 }
 

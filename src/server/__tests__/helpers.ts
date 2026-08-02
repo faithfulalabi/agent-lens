@@ -25,6 +25,8 @@ export interface TestServer {
 export interface BootOptions {
   dataDir?: string;
   sweepIntervalMs?: number;
+  /** Silence threshold the sweep applies; without it a test cannot age a session. */
+  sweepTimeoutMs?: number;
   onSweep?: (result: SweepResult) => void;
   /** `ui/dist` override; defaults to a fresh `makeFakeUiDist()`. */
   uiDir?: string;
@@ -33,6 +35,8 @@ export interface BootOptions {
   /** Tail period in ms; defaults to `0` — a test opts IN to tailing. */
   tailIntervalMs?: number;
   onTail?: (result: TailResult) => void;
+  /** SSE heartbeat period in ms; defaults to the production 15s. */
+  heartbeatMs?: number;
 }
 
 /** The fingerprint-shaped basename every fake bundle's assets share. */
@@ -99,11 +103,13 @@ export async function bootTestServer(
     port: 0,
     dataDir,
     sweepIntervalMs: opts.sweepIntervalMs,
+    sweepTimeoutMs: opts.sweepTimeoutMs,
     onSweep: opts.onSweep,
     uiDir,
     transcriptRoot,
     tailIntervalMs: opts.tailIntervalMs ?? 0,
     onTail: opts.onTail,
+    heartbeatMs: opts.heartbeatMs,
   });
   const token = readToken(dataDir)!;
   return {
@@ -133,6 +139,88 @@ export function openTestDb(dataDir: string): DatabaseSync {
 /** Delete a temp data dir tree. */
 export function cleanupDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
+}
+
+// --- SSE frame reading -----------------------------------------------------
+// One reader, shared. This lived as byte-near copies in `ingest.test.ts` and
+// `read-api.test.ts` (the second literally said "mirrors ingest.test.ts") until
+// Task 6.1 needed a third; both call sites now import from here.
+
+/** One parsed SSE frame: its `event:` name, raw `data:` text, and `id:` if present. */
+export interface SseFrame {
+  event: string;
+  data: string;
+  id?: string;
+}
+
+/** Split one `\n\n`-terminated SSE frame into its fields. */
+function parseFrame(raw: string): SseFrame {
+  const frame: SseFrame = { event: '', data: '' };
+  const dataLines: string[] = [];
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) frame.event = line.slice('event:'.length).trim();
+    else if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
+    else if (line.startsWith('id:')) frame.id = line.slice('id:'.length).trim();
+  }
+  frame.data = dataLines.join('\n');
+  return frame;
+}
+
+/**
+ * Read SSE frames off a streaming response until `stop` says to finish (or the
+ * deadline passes), then cancel the reader. Every frame is yielded to `stop`,
+ * heartbeats included, so a caller can assert on frame ORDER rather than just
+ * on the presence of the one it wanted.
+ *
+ * Deliberately returns raw `data` text: the parse belongs to the caller, because
+ * a heartbeat's `data` is the empty string and `JSON.parse('')` is exactly the
+ * crash this repo's SSE contract exists to prevent.
+ */
+export async function readSseFrames(
+  res: Response,
+  stop: (frame: SseFrame, all: SseFrame[]) => boolean,
+  timeoutMs = 1000,
+): Promise<SseFrame[]> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  const frames: SseFrame[] = [];
+  let buf = '';
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const frame = parseFrame(raw);
+        frames.push(frame);
+        if (stop(frame, frames)) return frames;
+      }
+    }
+    return frames;
+  } finally {
+    await reader.cancel();
+  }
+}
+
+/**
+ * Read one SSE frame of the given event type and JSON-parse its data. Throws if
+ * no such frame arrives inside `timeoutMs`.
+ */
+export async function readOneEvent(
+  res: Response,
+  eventType: string,
+  timeoutMs = 1000,
+): Promise<Record<string, unknown>> {
+  const frames = await readSseFrames(res, (f) => f.event === eventType, timeoutMs);
+  const match = frames.find((f) => f.event === eventType);
+  if (match === undefined) {
+    throw new Error(`no "${eventType}" frame within ${timeoutMs}ms`);
+  }
+  return JSON.parse(match.data) as Record<string, unknown>;
 }
 
 /** A minimal valid hook envelope for ingest tests. */

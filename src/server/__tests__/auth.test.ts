@@ -112,6 +112,30 @@ describe('token auth on /api/*', () => {
     await res.body?.cancel();
   });
 
+  // The Task 6.1 delta streams, both halves of the token check. `sess-1` does
+  // NOT exist in a fresh data dir, which is the point: the guards run as
+  // middleware, so an unknown session with a bad token is a 401, never the 404
+  // the handler would have returned.
+  it.each(['/api/stream/sessions', '/api/stream/sessions/sess-1'])(
+    'rejects %s without a token (401)',
+    async (path) => {
+      server = await bootTestServer();
+      const res = await fetch(server.url(path));
+      expect(res.status).toBe(401);
+      await res.body?.cancel();
+    },
+  );
+
+  it.each(['/api/stream/sessions', '/api/stream/sessions/sess-1'])(
+    'rejects %s with a wrong token (401)',
+    async (path) => {
+      server = await bootTestServer();
+      const res = await fetch(server.url(path), { headers: { [TOKEN_HEADER]: 'nope' } });
+      expect(res.status).toBe(401);
+      await res.body?.cancel();
+    },
+  );
+
   it('accepts requests with the correct token', async () => {
     server = await bootTestServer();
     const res = await fetch(server.url('/api/ingest'), {
@@ -160,6 +184,10 @@ describe('host-header guard', () => {
     '/',
     '/api/events',
     '/api/stream',
+    // The Task 6.1 delta streams inherit the same guards, and an unknown session
+    // id must not become an exception to them.
+    '/api/stream/sessions',
+    '/api/stream/sessions/sess-1',
     '/assets/app-abc123.js',
     '/session/abc',
     '/session/abc/trace/3',

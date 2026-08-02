@@ -28,6 +28,15 @@ beforeEach(() => {
 
 const MINUTE = 60 * 1000;
 
+/** A pass that changed nothing: both counts zero and all three id lists empty. */
+const NOTHING_SWEPT = {
+  interruptedTraces: 0,
+  closedSpans: 0,
+  sessionIds: [],
+  traceIds: [],
+  spanIds: [],
+};
+
 /** Latest arrival the sweep will measure staleness against. */
 function lastActivity(): number {
   const row = db
@@ -62,7 +71,15 @@ describe('sweepInactive — AC3: silence degrades, activity revives', () => {
 
     const result = sweepInactive(db, { now, timeoutMs: DEFAULT_TIMEOUT_MS });
 
-    expect(result).toEqual({ interruptedTraces: 1, closedSpans: 1 });
+    // Task 6.1 widened `SweepResult` with the ids it changed, so the live-tail
+    // publisher can emit a delta per row. The counts still mean what they meant.
+    expect(result).toEqual({
+      interruptedTraces: 1,
+      closedSpans: 1,
+      sessionIds: [SESSION],
+      traceIds: [`${SESSION}:1`],
+      spanIds: ['toolu_1'],
+    });
     expect(first(traces(db)).status).toBe('interrupted');
     expect(first(sessions(db)).status).toBe('interrupted');
     const span = only(spans(db), (r) => r.id === 'toolu_1');
@@ -79,7 +96,7 @@ describe('sweepInactive — AC3: silence degrades, activity revives', () => {
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
 
-    expect(result).toEqual({ interruptedTraces: 0, closedSpans: 0 });
+    expect(result).toEqual(NOTHING_SWEPT);
     expect(JSON.stringify({ t: traces(db), s: sessions(db), p: spans(db) })).toBe(before);
   });
 
@@ -94,7 +111,7 @@ describe('sweepInactive — AC3: silence degrades, activity revives', () => {
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
 
-    expect(second).toEqual({ interruptedTraces: 0, closedSpans: 0 });
+    expect(second).toEqual(NOTHING_SWEPT);
     expect(JSON.stringify({ t: traces(db), s: sessions(db), p: spans(db) })).toBe(after);
   });
 
@@ -170,5 +187,11 @@ describe('sweepInactive — AC3: silence degrades, activity revives', () => {
     expect(result.interruptedTraces).toBe(1);
     expect(only(sessions(db), (r) => r.id === SESSION).status).toBe('interrupted');
     expect(only(sessions(db), (r) => r.id === 'sess-2').status).toBe('live');
+    // The id lists name ONLY rows this pass actually moved — `sess-2` is still
+    // live, so publishing from these lists can never ship a phantom delta.
+    expect(result.sessionIds).toEqual([SESSION]);
+    expect(result.traceIds).toEqual([`${SESSION}:1`]);
+    expect(result.spanIds).toEqual(['toolu_1']);
+    expect(result.closedSpans).toBe(result.spanIds.length);
   });
 });
