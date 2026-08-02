@@ -1,11 +1,35 @@
 // Q3 bait — emit EXACTLY N bytes of deterministic, marker-rich text to stdout.
 //
-// The hook `tool_output` truncation threshold (Q3) is probed by driving Claude
-// Code to run tools whose output spans size bands {1KB, 100KB, 1MB, 10MB}. This
-// script is that tool: `node emit.mjs 1MB` writes exactly 1,048,576 bytes. The
-// stream is seeded with byte-offset markers ("<<@000000512>>") every 512 bytes
-// so the captured (possibly truncated) `tool_output` reveals the exact cutoff
-// offset. Output is pure ASCII → 1 char == 1 byte, so length math is exact.
+// Drives the Q3 sweep: Claude Code runs this via its Bash tool at a range of
+// sizes, and we compare what each capture surface kept against what was emitted.
+// `node emit.mjs 1MB` writes exactly 1,048,576 bytes. The stream is seeded with
+// byte-offset markers ("<<@000000512>>") every 512 bytes; the last surviving
+// marker locates the cut. Output is pure ASCII → 1 char == 1 byte, so length
+// math is exact.
+//
+// WHAT ACTUALLY HAPPENS (re-verified 2026-08-01, Claude Code 2.1.212). Claude
+// Code does NOT simply truncate and discard. Above the cap it SPILLS the whole
+// output to a sidecar file, and the three surfaces diverge:
+//
+//   * `toolUseResult.stdout` (transcript) and the hook payload — a raw prefix of
+//     the first 30,000 BYTES. No marker, no flag, no pointer: silent. The
+//     `<<@NNNNNNNNN>>` markers DO reveal the cut here (last marker @000029696).
+//   * the model-facing `tool_result` content block — the output is REPLACED by a
+//     `<persisted-output>` block: a rounded size label, the absolute path of the
+//     sidecar, and a head-only first-2KB preview. Markers reveal nothing here;
+//     the preview always ends near byte 2048 whatever the payload size.
+//   * `<session-dir>/tool-results/<id>.txt` — the COMPLETE output, byte-exact.
+//
+// So the payload is never lost, and "find the truncation offset from the last
+// marker" only describes the transcript/hook surface. The threshold is exactly
+// 30,000 bytes: <=30,000 is inlined whole and writes NO sidecar; >=30,001 spills.
+// Useful probe sizes are therefore 30000 and 30001, not just the round bands.
+//
+// LIMITATION: this emitter is ASCII-only, so it cannot exercise the multibyte
+// boundary. The cap counts bytes, so a payload whose character boundaries
+// straddle byte 30,000 is cut MID-SEQUENCE and the partial bytes land as U+FFFD
+// — making the stored prefix 30,001 bytes, not 30,000. Any "== 30000" detector
+// is wrong for non-ASCII output. See research/tracer-bullet-findings.md Q3.
 //
 // Run: node experiments/tracer-bullet/emit.mjs <size>
 //   <size> = an integer byte count, or a band label: 1KB | 100KB | 1MB | 10MB.
