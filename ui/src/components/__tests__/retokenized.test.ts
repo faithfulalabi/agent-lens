@@ -1,9 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { CaptureMode, SessionStatus } from '@shared/entities.ts';
+import type { CaptureMode, SessionStatus, SpanStatus, SpanType } from '@shared/entities.ts';
 import { builtCss, cleanupBuilds } from '../../__tests__/build-ui';
 import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from '../session/session-visuals';
+import { SPAN_VISUALS } from '../session/span-visuals';
 
 afterAll(cleanupBuilds);
 
@@ -40,6 +41,13 @@ afterAll(cleanupBuilds);
  *   - `../../pages/Sessions.tsx` is a page module that renders the four
  *     components below and writes almost no classes of its own — the same
  *     richness bar, for the same reason.
+ *
+ * Task 5.3b brought the span tree in, and left two of its own files out for
+ * exactly the two reasons above:
+ *
+ *   - `../session/span-visuals.ts` is a lookup map, like `session-visuals.ts`
+ *     beside it. The manifest scan at the bottom of this file covers both.
+ *   - `../../pages/SessionView.tsx` is a page module, like `Sessions.tsx`.
  */
 const SOURCE_FILES = [
   '../ui/tabs.tsx',
@@ -50,6 +58,11 @@ const SOURCE_FILES = [
   '../session/VolumeHistogram.tsx',
   '../session/RangeControl.tsx',
   '../session/EmptyState.tsx',
+  '../session/SpanTree.tsx',
+  '../session/SpanRow.tsx',
+  '../session/TraceGroup.tsx',
+  '../session/TruncationNotice.tsx',
+  '../session/SessionHeader.tsx',
 ] as const;
 
 function sources(): { name: string; text: string }[] {
@@ -354,6 +367,73 @@ describe('the session-visuals manifest is exhaustive and every class in it compi
       missing,
       'these compile to no CSS at all — an out-of-vocabulary class is silence, ' +
         'not an error, so a badge would simply render unstyled.',
+    ).toEqual([]);
+  });
+});
+
+/* ------------------------------------------- Task 5.3b — the span tree ---- */
+
+/*
+ * The same instrument again, over the span tree's own manifest (Test 12b).
+ *
+ * `span-visuals.ts` is a lookup map for the same reason `session-visuals.ts`
+ * is, and `classTokensOf` is blind to both by construction — it reads a
+ * `className="…"` position and the string literals inside a `cn( … )` call, and
+ * a map value is neither. The exhaustiveness test beside this one checks only
+ * the manifest's KEYS, so without this scan a tint that compiles to nothing
+ * would ship green with a passing key check above it.
+ *
+ * It also subsumes the pin on the 8% error wash, which is both the class most
+ * likely to be typed wrong and the one whose failure is hardest to notice: an
+ * out-of-vocabulary utility is silence rather than an error, so a mistyped wash
+ * renders an error row that looks exactly like an ordinary one.
+ */
+const SPAN_TYPE_KEYS: readonly SpanType[] = [
+  'llm_call',
+  'tool_call',
+  'thinking',
+  'subagent',
+  'generic',
+];
+const SPAN_STATUS_KEYS: readonly SpanStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
+
+/** Every class string the span-tree manifest can put on screen, flattened. */
+function spanManifestTokens(): string[] {
+  const values = [
+    ...Object.values(SPAN_VISUALS.type).map((v) => v.tint),
+    ...Object.values(SPAN_VISUALS.status).flatMap((v) => [v.row, v.tint]),
+    SPAN_VISUALS.trace.tint,
+    SPAN_VISUALS.triggerBadge,
+    SPAN_VISUALS.degradedChip,
+    SPAN_VISUALS.errorChip,
+  ];
+  return values.flatMap((value) => value.split(/\s+/)).filter((token) => token !== '');
+}
+
+describe('the span-visuals manifest is exhaustive and every class in it compiles', () => {
+  it('covers every span type and every span status the wire can carry', () => {
+    expect(Object.keys(SPAN_VISUALS.type).sort()).toEqual([...SPAN_TYPE_KEYS].sort());
+    expect(Object.keys(SPAN_VISUALS.status).sort()).toEqual([...SPAN_STATUS_KEYS].sort());
+  });
+
+  it('the token list is not vacuous', () => {
+    const tokens = spanManifestTokens();
+    expect(tokens.length).toBeGreaterThan(12);
+    expect(
+      tokens,
+      'the 8% error wash is the class this scan most exists for: mistyped, it ' +
+        'compiles to nothing and an error row renders as an ordinary one.',
+    ).toContain('bg-error/8');
+  });
+
+  it('every class in the manifest has a rule in the built CSS', async () => {
+    const css = await builtCss();
+    const missing = spanManifestTokens().filter((token) => !hasRule(css, token));
+    expect(
+      missing,
+      'these compile to no CSS at all. The opacity modifier on a spec colour ' +
+        'is the one worth watching — the cleared namespaces do not block it, ' +
+        'but a token rename would.',
     ).toEqual([]);
   });
 });
