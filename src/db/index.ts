@@ -10,6 +10,7 @@ import type {
   Span,
   Message,
   RawEventStatus,
+  SpanStatus,
   TailerOffset,
 } from '../shared/index.js';
 import { runMigrations } from './migrate.js';
@@ -745,6 +746,35 @@ export function upgradeSpanContent(db: DatabaseSync, u: SpanContentUpgrade): voi
     JSON.stringify(u.tags ?? []),
     u.span_id,
   );
+}
+
+/**
+ * Close a span the TRANSCRIPT opened, and only such a span.
+ *
+ * The one lifecycle write the merge is allowed, and the `WHERE` clause is what
+ * makes it safe rather than a convention:
+ * - `source = 'transcript'` — the row was created by the merge, so no hook ever
+ *   established this span's lifecycle. A hook-created span is excluded outright,
+ *   which is "hooks own lifecycle" enforced in SQL.
+ * - `status = 'running'` — only the open state the merge itself wrote is
+ *   replaced. A hook that reached the span first and recorded a terminal status
+ *   keeps it, and a re-merge is a no-op because the span is no longer running.
+ *
+ * Without this, a transcript-only tool call could never record its outcome:
+ * `upgradeSpanContent` cannot express `status` by design, so the `tool_result`
+ * block's `is_error` would be unreachable and every failed call in a hookless
+ * session would read `ok` — silently zeroing `error_count` in the rollups.
+ */
+export function closeTranscriptSpan(
+  db: DatabaseSync,
+  spanId: string,
+  status: SpanStatus,
+  endedAt: string,
+): void {
+  db.prepare(
+    `UPDATE spans SET status = ?, ended_at = COALESCE(ended_at, ?)
+     WHERE id = ? AND source = 'transcript' AND status = 'running'`,
+  ).run(status, endedAt, spanId);
 }
 
 /** The payload refs a span currently holds; either may be absent. */

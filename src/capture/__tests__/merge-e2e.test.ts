@@ -27,6 +27,7 @@ import {
   attrsOf,
   first,
   freshDb,
+  hookEnvelope,
   messages,
   only,
   sessions,
@@ -201,6 +202,97 @@ describe('AC1 + AC4 — a session with zero hook events still projects', () => {
     }
     expect(spans(db).map((row) => row.span_type).sort()).toEqual(['llm_call', 'tool_call']);
     expect(messages(db).map((row) => row.role)).toEqual(['user', 'assistant', 'tool_use']);
+    // The call was issued and no result reached us, so it is honestly still
+    // open. Defaulting a `tool_use` block to `ok` would fabricate a success.
+    expect(only(spans(db), (row) => row.span_type === 'tool_call').status).toBe('running');
+    db.close();
+  });
+
+  it('17b. a FAILING transcript-only tool call records `error`, not `ok`', () => {
+    // Regression. `upgradeSpanContent` cannot express `status` by design, and the
+    // `tool_use` block always creates the span before its `tool_result` arrives —
+    // so without `closeTranscriptSpan` the `is_error` flag is unreachable on real
+    // data and every failed call in a hookless session reads `ok`, silently
+    // zeroing `error_count` (`rollups.ts`: COUNT WHERE status IN ('error','denied')).
+    const db = freshDb();
+    const root = makeRoot();
+    writeTranscript(db, root, [
+      userPrompt({ uuid: 'f-u1', promptId: PROMPT }),
+      assistant({
+        uuid: 'f-a1',
+        parentUuid: 'f-u1',
+        content: [{ type: 'tool_use', id: 'toolu_boom', name: 'Bash', input: { command: 'false' } }],
+      }),
+      {
+        type: 'user',
+        uuid: 'f-u2',
+        parentUuid: 'f-a1',
+        sessionId: SESSION,
+        cwd: '/Users/dev/proj',
+        timestamp: TS,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_boom', content: 'command failed', is_error: true },
+          ],
+        },
+      },
+    ]);
+
+    tail(db, root);
+
+    const span = only(spans(db), (row) => row.id === 'toolu_boom');
+    expect(span.status).toBe('error');
+    expect(span.source).toBe('transcript');
+    expect(span.ended_at).not.toBeNull();
+    expect(first(traces(db)).error_count).toBe(1);
+    db.close();
+  });
+
+  it('17c. but a HOOK-opened span is never closed by the transcript', () => {
+    // The other side of `closeTranscriptSpan`'s guard, and the arm that actually
+    // discriminates. The span is left `running` by a `PreToolUse` whose
+    // `PostToolUse` never arrived, so the `status = 'running'` half of the WHERE
+    // passes and ONLY `source = 'transcript'` stands between the transcript's
+    // `is_error` and a hook-owned lifecycle row. RED if that half is dropped.
+    //
+    // Staying `running` is the honest outcome: `closeRunningSpans` finalizes it
+    // as `unknown` at `Stop`/`SessionEnd` — "we never saw it close" — rather than
+    // letting a second source invent a terminal status for a span it did not open.
+    const db = freshDb();
+    const root = makeRoot();
+    ingestAll(db, [
+      hookEnvelope('SessionStart', { cwd: '/Users/dev/proj' }, { session_id: SESSION }),
+      hookEnvelope('UserPromptSubmit', { prompt: 'go' }, { session_id: SESSION, prompt_id: PROMPT }),
+      hookEnvelope(
+        'PreToolUse',
+        { tool_name: 'Bash', tool_input: { command: 'false' } },
+        { session_id: SESSION, tool_use_id: 'toolu_hookowned', prompt_id: PROMPT },
+      ),
+    ]);
+    expect(only(spans(db), (row) => row.id === 'toolu_hookowned').status).toBe('running');
+
+    writeTranscript(db, root, [
+      {
+        type: 'user',
+        uuid: 'g-u1',
+        promptId: PROMPT,
+        sessionId: SESSION,
+        cwd: '/Users/dev/proj',
+        timestamp: TS,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_hookowned', content: 'fine', is_error: true },
+          ],
+        },
+      },
+    ]);
+    tail(db, root);
+
+    const span = only(spans(db), (row) => row.id === 'toolu_hookowned');
+    expect(span.status).toBe('running');
+    expect(span.source).toBe('hook');
     db.close();
   });
 });

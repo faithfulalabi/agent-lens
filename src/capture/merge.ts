@@ -8,9 +8,13 @@
 //
 // **The precedence rule, made mechanical (RFC 001):** hooks own lifecycle and
 // timing, the transcript owns content. Nothing here writes `status`,
-// `started_at` or `ended_at` onto a span that already exists — a span the merge
-// CREATES is a different matter, since then the transcript is the only source
-// there is. Payload refs are only ever filled in, never replaced.
+// `started_at` or `ended_at` onto a span a HOOK established. A span the merge
+// itself opened is a different matter — the transcript is then the only source
+// there is — so a tool span created from a `tool_use` block starts `running` and
+// is closed by its later `tool_result`, through `closeTranscriptSpan`, whose
+// `WHERE source = 'transcript' AND status = 'running'` makes that boundary a
+// SQL guarantee rather than a convention. Payload refs are only ever filled in,
+// never replaced.
 //
 // **Provenance:** this module writes `source: 'transcript'` on spans it creates
 // and leaves `source` alone on spans it merely enriches. It never writes
@@ -19,9 +23,10 @@
 // Task 3.4 completes a payload from the `tool-results/` sidecar.
 
 import type { DatabaseSync } from 'node:sqlite';
-import type { Envelope, MessageRole } from '../shared/index.js';
+import type { Envelope, MessageRole, SpanStatus } from '../shared/index.js';
 import { canonicalJson } from '../shared/index.js';
 import {
+  closeTranscriptSpan,
   getTraceIdByPromptId,
   insertMessage,
   insertPayload,
@@ -324,13 +329,13 @@ function projectToolUse(ctx: Ctx, block: Line, index: number, llmSpanId: string)
       trace_id: ctx.traceId,
       span_type: 'tool_call',
       name: str(block.name) ?? 'tool',
-      // The transcript records a call that was issued and answered, so `ok` is
-      // the honest default (the same one `mapToolStatus` returns absent an error
-      // signal). A hook landing later corrects it: `upsertSpan` lets a terminal
-      // status overwrite this one, and refuses to demote it back to `running`.
-      status: 'ok',
+      // OPEN, not closed. A `tool_use` block says the call was issued and says
+      // nothing about how it went; the outcome arrives on the later
+      // `tool_result` line, which `closeTranscriptSpan` applies. Defaulting to
+      // `ok` here would fabricate a success for any call whose result we never
+      // see — the thing `closeRunningSpans` exists to refuse.
+      status: 'running',
       started_at: env.ts,
-      ended_at: env.ts,
       source: 'transcript',
       parent_span_id: llmSpanId,
       input_payload_id: payloadId,
@@ -390,14 +395,17 @@ function projectToolResult(ctx: Ctx, line: Line, block: Line, index: number): vo
   // points at the hook's blob for the same reason — showing the reader less than
   // we hold would break "nothing hidden" in the thread view.
   const payloadId = refs?.output_payload_id ?? payloadOf(db, block.content);
+  const outcome: SpanStatus = block.is_error === true ? 'error' : 'ok';
 
   if (refs === undefined) {
+    // No `tool_use` block ever reached us for this call — its assistant line was
+    // lost or dead-lettered. Create the span outright, already closed.
     upsertSpan(db, {
       id: spanId,
       trace_id: ctx.traceId,
       span_type: 'tool_call',
       name: 'tool',
-      status: block.is_error === true ? 'error' : 'ok',
+      status: outcome,
       started_at: env.ts,
       ended_at: env.ts,
       source: 'transcript',
@@ -415,6 +423,14 @@ function projectToolResult(ctx: Ctx, line: Line, block: Line, index: number): vo
       tags: signal.truncated ? [TRUNCATED_TAG] : [],
       attrs,
     });
+    // The ONLY lifecycle write in this module, and it fires exactly where the
+    // transcript is the sole authority: a span the merge itself opened and left
+    // `running`. `closeTranscriptSpan`'s `WHERE` excludes hook-created spans and
+    // any span a hook already closed, so this cannot clobber a recorded outcome
+    // — but without it, `is_error` on a hookless session would be unreachable
+    // (the `tool_use` block always creates the span first) and every failed call
+    // would read `ok`, zeroing `error_count` in the rollups.
+    closeTranscriptSpan(db, spanId, outcome, env.ts);
   }
   addMessage(ctx, index, 'tool_result', spanId, payloadId);
 }
