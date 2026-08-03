@@ -36,6 +36,7 @@ import {
 } from '../db/index.js';
 import type { TailerOffset } from '../shared/index.js';
 import { BATCH_SIZE, ingestBatch, type IngestBatchItem } from '../server/ingest.js';
+import type { DeltaPublisher } from '../server/deltas.js';
 import type { Broadcaster } from '../server/sse.js';
 import {
   parseTranscriptLine,
@@ -107,6 +108,19 @@ export interface TailOptions {
   maxBytesPerFilePerPass?: number;
   /** Override for {@link MAX_LINE_BYTES} (tests). */
   maxLineBytes?: number;
+  /**
+   * Live-tail publisher, forwarded verbatim to `ingestBatch` (Task 6.1a).
+   *
+   * Without it the staging block in `ingestBatch` is never reached on the
+   * transcript path, so **every** transcript-sourced fact — tokens, cost,
+   * thinking blocks, and the completion of every tool call in a hookless session
+   * — is written to the DB and never put on the wire. Absent means "publish
+   * nothing", which is what the boot catch-up wants and nothing else does.
+   *
+   * The import is TYPE-ONLY and erased at run time (`verbatimModuleSyntax`): the
+   * value is forwarded and never called here, so this adds no runtime module edge.
+   */
+  deltas?: DeltaPublisher;
 }
 
 /**
@@ -311,8 +325,12 @@ function tailFile(
     // synchronously before the socket binds. Growth from here forward IS
     // captured, which is the backstop role the directory scan plays.
     if (stored === undefined && !file.known) {
+      // `deltas` is inert on an empty slice — `ingestBatch` short-circuits above
+      // its staging block — but a field threaded at one of two call sites is a
+      // trap for the next author.
       ingestBatch(db, broadcaster, [], {
         beforeCommit: offsetWriter(file, stat.size, identity),
+        deltas: options.deltas,
       });
       return {
         path: file.path,
@@ -414,6 +432,7 @@ function readAndIngest(
     batch = [];
     const outcomes = ingestBatch(db, broadcaster, items, {
       beforeCommit: offsetWriter(file, nextOffset, identity),
+      deltas: options.deltas,
     });
     outcomes.forEach((outcome, i) => {
       // Count what ingest actually did, not what the parser predicted.

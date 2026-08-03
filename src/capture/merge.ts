@@ -35,6 +35,7 @@ import {
   nextMessageSeq,
   recordSpanUsage,
   sessionExists,
+  spanExists,
   spanPayloadRefs,
   transcriptLineLinks,
   upgradeSpanContent,
@@ -90,11 +91,19 @@ const TRANSCRIPT_ONLY_TAG = 'transcript_only';
  * (`mode`, `ai-title`, `file-history-*`, `attachment`, `system`), or no
  * resolvable trace. Those stay archive-only, which is the honest outcome; the
  * alternative is an FK violation that dead-letters a perfectly good line.
+ *
+ * `mark` reports each span this line wrote, so live tail can publish it (Task
+ * 6.1a). A CALLBACK rather than Task 6.1's `Touched` collector: `normalizer.ts`
+ * already imports this module, so importing `markSpan` back would be a genuine
+ * ESM cycle, and a private copy of it here would duplicate the first-writer-wins
+ * rule that makes {@link projectToolResult} correct. Omit it and every branch
+ * below behaves exactly as it did before.
  */
 export function mergeTranscriptLine(
   db: DatabaseSync,
   env: Envelope,
   line: Line,
+  mark?: (id: string, created: boolean) => void,
 ): string[] {
   const uuid = str(line.uuid);
   const type = str(line.type);
@@ -108,7 +117,7 @@ export function mergeTranscriptLine(
   const traceId = resolveTrace(db, env, line);
   if (traceId === undefined) return [];
 
-  const ctx: Ctx = { db, env, traceId, uuid };
+  const ctx: Ctx = { db, env, traceId, uuid, mark };
   if (type === 'assistant') projectAssistant(ctx, line);
   else projectUser(ctx, line);
   return [traceId];
@@ -127,6 +136,18 @@ interface Ctx {
   traceId: string;
   /** The line's `uuid` — the id prefix that makes a re-merge a no-op. */
   uuid: string;
+  /**
+   * Report a span this line wrote, and whether the write CREATED it. Optional
+   * because only the live path collects; see {@link mergeTranscriptLine}.
+   *
+   * **`ctx.mark?.(id, !spanExists(...))` short-circuits its ARGUMENTS too**, so
+   * the replay, catch-up and dead-letter paths — which pass no `mark` — pay none
+   * of the existence queries below. That is the same short-circuit that once
+   * stopped the tailer running in production (`start.ts`'s `runTailPass`), and it
+   * is safe here for the reason it was not there: `spanExists` is a pure read
+   * whose only purpose is this callback, so skipping it changes nothing but cost.
+   */
+  mark?: (id: string, created: boolean) => void;
 }
 
 // --- Trace resolution ------------------------------------------------------
@@ -243,6 +264,12 @@ function projectAssistant(ctx: Ctx, line: Line): void {
   const model = str(message.model);
   const llmSpanId = `${env.session_id}:llm:${ctx.uuid}`;
 
+  // Asked BEFORE the upsert, or the answer is always "it exists". The delta's
+  // BODY is still built from a post-commit re-read (`ingest.ts`), which is what
+  // lets it carry `recordSpanUsage`'s tokens and cost below even though the mark
+  // fired before any of them were written.
+  ctx.mark?.(llmSpanId, !spanExists(db, llmSpanId));
+
   // No hook produces an `llm_call` span, so this one is transcript-owned by
   // construction and always carries the tag. Re-asserting it on a re-merge is a
   // no-op: `upsertSpan` UNIONs tags rather than assigning them.
@@ -290,6 +317,8 @@ function projectThinking(ctx: Ctx, block: Line, index: number, llmSpanId: string
   const { db, env } = ctx;
   const spanId = `${env.session_id}:think:${ctx.uuid}:${index}`;
   const payloadId = payloadOf(db, block.thinking);
+  // Asked BEFORE the upsert, as at every other span writer in the pipeline.
+  ctx.mark?.(spanId, !spanExists(db, spanId));
   upsertSpan(db, {
     id: spanId,
     trace_id: ctx.traceId,
@@ -322,6 +351,11 @@ function projectToolUse(ctx: Ctx, block: Line, index: number, llmSpanId: string)
   // Reuse whatever the hook already stored rather than inserting a second,
   // flatter copy of the same call — for the span AND for the message.
   const payloadId = refs?.input_payload_id ?? payloadOf(db, block.input);
+
+  // `refs` IS the pre-write existence answer — `spanPayloadRefs` returns
+  // `undefined` only when the row is absent — so this site pays no extra query
+  // for its `created` flag.
+  ctx.mark?.(spanId, refs === undefined);
 
   if (refs === undefined) {
     upsertSpan(db, {
@@ -396,6 +430,13 @@ function projectToolResult(ctx: Ctx, line: Line, block: Line, index: number): vo
   // we hold would break "nothing hidden" in the thread view.
   const payloadId = refs?.output_payload_id ?? payloadOf(db, block.content);
   const outcome: SpanStatus = block.is_error === true ? 'error' : 'ok';
+
+  // Same free pre-write answer as `projectToolUse`. When `refs` is absent the
+  // span below is created ALREADY CLOSED and `created` is still `true` — an
+  // envelope that opens and closes a span in one pass is that span's first
+  // appearance, which is what tells a client to insert rather than to look for a
+  // row it never received.
+  ctx.mark?.(spanId, refs === undefined);
 
   if (refs === undefined) {
     // No `tool_use` block ever reached us for this call — its assistant line was

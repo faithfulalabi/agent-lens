@@ -65,6 +65,12 @@ export interface NormalizeResult {
  * no reader for one: trace and session deltas are staged from the batch's
  * existing `DirtySet` after the rollup flush (`ingest.ts`), not from here. A
  * field that is written and never read invites a future author to trust it.
+ *
+ * **Both surfaces feed it.** The hook writers below call {@link markSpan}
+ * directly; the transcript merge is handed a `mark` callback closing over the
+ * same collector (Task 6.1a, `normalize`'s transcript branch), because
+ * `merge.js` is imported from here and importing `markSpan` back would be a
+ * cycle. `markSpan` therefore stays the single owner of first-writer-wins.
  */
 export interface Touched {
   /** span id -> true iff THIS envelope created the row (drives `span_opened`). */
@@ -165,8 +171,17 @@ export function normalize(
     // tokens, messages — is Task 3.2's merge policy, which is why this returns
     // `touched(...)` and not a bare `OK`: without the trace ids the caller's
     // dirty set stays empty and every trace rollup would read 0.
+    //
+    // The merge reports its spans through a `mark` callback rather than by being
+    // handed the collector (Task 6.1a): tokens, cost, thinking blocks and the
+    // completion of every hookless tool call reach the wire ONLY from here, so
+    // without this the live view's numbers never move.
     ensureTranscriptSession(db, envelope, payload);
-    return touched(mergeTranscriptLine(db, envelope, payload));
+    return touched(
+      mergeTranscriptLine(db, envelope, payload, (id, created) =>
+        markSpan(collector, id, created),
+      ),
+    );
   }
 
   // A hook landed, so hooks demonstrably work for this session. If the tailer
