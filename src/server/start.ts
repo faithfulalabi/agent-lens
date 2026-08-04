@@ -118,11 +118,16 @@ function bind(
  * One tail pass, from the boot catch-up or the interval. Housekeeping: a tailer
  * failure must never take the collector down, nor throw inside a timer callback
  * where nothing can catch it.
+ *
+ * `deltas` is passed by the INTERVAL and withheld by the boot catch-up — see the
+ * two call sites in `startServer`. Without it on the interval, live tail is dead
+ * for every transcript-sourced fact in the product (Task 6.1a).
  */
 function runTailPass(
   db: DatabaseSync,
   broadcaster: Broadcaster,
   options: StartOptions,
+  deltas?: DeltaPublisher,
 ): void {
   try {
     // Bind the result FIRST. `options.onTail?.(tailOnce(...))` short-circuits
@@ -130,6 +135,7 @@ function runTailPass(
     // supplied, so the tailer would only ever run for tests that observe it.
     const result = tailOnce(db, broadcaster, {
       transcriptRoot: options.transcriptRoot,
+      deltas,
     });
     options.onTail?.(result);
   } catch (err) {
@@ -213,6 +219,16 @@ export async function startServer(
   // `replaySpool` and the tail catch-up above are deliberately given no
   // publisher: both run before the socket binds, with no client attached, so
   // pushing a historical spool through a ring would evict it for nobody.
+  //
+  // **This is the ONLY thing pinning that divergence, and no test can replace
+  // it.** The `tailTimer` below passes `deltas`; the catch-up above does not,
+  // and after Task 6.1a the two calls read like an oversight. They are not — but
+  // neither would "fixing" it go red: the publisher is constructed above, the
+  // catch-up runs before `bind()`, so no scope can exist yet and `publishTo`
+  // drops on its lazy-allocation guard whether or not `deltas` is passed. A test
+  // asserting "the catch-up emitted nothing" would pass under the implementation
+  // AND under its negation. Defending it by machinery would take an injected
+  // clock or an `onCatchUp` observer, not an assertion.
   const app = buildApp({
     db,
     token,
@@ -285,9 +301,12 @@ export async function startServer(
         }, sweepIntervalMs)
       : undefined;
 
+  // `deltas` HERE and not on the catch-up above. This one argument is the whole
+  // of live tail for tokens, cost, thinking blocks and hookless tool completions
+  // — drop it and the feature is silently dead again (Task 6.1a).
   const tailTimer =
     tailIntervalMs > 0
-      ? setInterval(() => runTailPass(db, broadcaster, options), tailIntervalMs)
+      ? setInterval(() => runTailPass(db, broadcaster, options, deltas), tailIntervalMs)
       : undefined;
 
   writeConfig(dataDir, {

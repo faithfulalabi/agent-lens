@@ -9,12 +9,20 @@
 // span is still open — is spelled out explicitly.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Session, Span, Trace } from '../../shared/entities.js';
 import type { Envelope } from '../../shared/envelope.js';
 import type { Delta } from '../../shared/delta.js';
 import type { Page, SessionDetail } from '../../shared/api.js';
-import { hookEnvelope, freshDb, SESSION } from '../../capture/__tests__/fixtures.js';
+import {
+  freshDb,
+  hookEnvelope,
+  SESSION,
+  toolResultLine,
+  transcriptEnvelope,
+} from '../../capture/__tests__/fixtures.js';
 import { ingestBatch } from '../ingest.js';
 import { Broadcaster } from '../sse.js';
 import { DeltaPublisher, LIST_SCOPE } from '../deltas.js';
@@ -72,6 +80,10 @@ const isDelta = (f: SseFrame): boolean => !CONTROL.has(f.event);
 /** Parse a delta frame. Branching on `event:` first is the whole contract. */
 const asDelta = (f: SseFrame): Delta => JSON.parse(f.data) as Delta;
 
+/** Narrow to the three `Delta` arms that carry a `Span`. */
+const isSpanDelta = (d: Delta): d is Delta & { span: Span } =>
+  d.kind === 'span_opened' || d.kind === 'span_updated' || d.kind === 'span_closed';
+
 /** Apply deltas last-write-wins per entity id, inserting on an unknown id. */
 function fold(frames: SseFrame[]): {
   session?: Session;
@@ -111,6 +123,64 @@ function openingEnvelopes(): Envelope[] {
   ];
 }
 
+/** The transcript line uuid every transcript-minted span id below derives from. */
+const LINE = 'tl-a1';
+
+/**
+ * One assistant transcript line: token usage, a `thinking` block and a `tool_use`
+ * — i.e. all three span types the merge mints (Task 6.1a). Used verbatim as an
+ * envelope payload below and as a real `.jsonl` line by the tailer test.
+ *
+ * **`promptId` is load-bearing, not decoration.** `mergeTranscriptLine` projects
+ * NOTHING for a line it cannot attribute to a turn, and `transcriptEnvelope`
+ * supplies neither a `promptId` nor a `parentUuid` chain by default. Drop it and
+ * this line writes zero spans and zero messages, silently — which a SYMMETRIC
+ * set-equality assertion cannot see, because both sides stay unchanged and the
+ * guard stays green while guarding nothing.
+ */
+function transcriptLine(toolUseId = 'toolu_tail'): Record<string, unknown> {
+  return {
+    type: 'assistant',
+    uuid: LINE,
+    sessionId: SESSION,
+    cwd: '/proj',
+    timestamp: '2026-07-26T00:00:00.000Z',
+    promptId: 'p1',
+    message: {
+      model: 'claude-fable-5',
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'weighing it up', signature: 'sig' },
+        { type: 'tool_use', id: toolUseId, name: 'Bash', input: { cmd: 'ls' } },
+      ],
+      usage: { input_tokens: 500, output_tokens: 120 },
+    },
+  };
+}
+
+/** That line as an envelope, plus the `tool_result` line that closes its call. */
+function transcriptEnvelopes(): Envelope[] {
+  return [
+    transcriptEnvelope(transcriptLine('toolu_3')),
+    transcriptEnvelope(
+      toolResultLine({
+        tool_use_id: 'toolu_3',
+        content: 'output',
+        uuid: 'tl-u1',
+        promptId: 'p1',
+        cwd: '/proj',
+      }),
+    ),
+  ];
+}
+
+/** Exactly the spans the two transcript lines above mint. */
+const TRANSCRIPT_SPANS = [
+  `${SESSION}:llm:${LINE}`,
+  `${SESSION}:think:${LINE}:0`,
+  'toolu_3',
+];
+
 const items = (envelopes: Envelope[]) => envelopes.map((envelope) => ({ envelope }));
 const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -131,13 +201,31 @@ describe('GET /api/stream/sessions/:id — ordered deltas match final DB state (
   it('folds to exactly what the read endpoints serve, ending on SessionEnd', async () => {
     server = await bootTestServer({ sweepIntervalMs: 0 });
     const envelopes = openingEnvelopes();
+    const transcript = transcriptEnvelopes();
     // The session must exist before the stream can address it.
     await post(envelopes[0]!);
 
     const res = await openSse(STREAM);
-    for (const envelope of envelopes.slice(1)) await post(envelope);
+    // **Hook and transcript envelopes INTERLEAVED on one session (Task 6.1a).**
+    // This crossing is the whole point: 6.1's delta tests are hook-only by design
+    // and 3.2's merge tests never construct a publisher, so the seam between them
+    // was green from both sides while carrying nothing.
+    for (const envelope of [
+      envelopes[1]!, // UserPromptSubmit p1
+      envelopes[2]!, // PreToolUse toolu_1
+      transcript[0]!, // assistant line: llm_call + thinking + tool_use toolu_3
+      envelopes[3]!, // PostToolUse toolu_1
+      transcript[1]!, // tool_result closing toolu_3
+      envelopes[4]!, // PreToolUse toolu_2, left running
+    ]) {
+      await post(envelope);
+    }
     // SessionEnd with `toolu_2` still running — the case that emits nothing at
     // all unless `closeRunningSpans` reports the ids it closed.
+    //
+    // **It must stay LAST.** `session_updated{complete}` calls `finish`, which
+    // deletes the scope, so any span written after it is in the DB and never on
+    // the wire — and the set equality below would be *correctly* red.
     await post(hookEnvelope('SessionEnd', {}, { ts: '2026-07-26T01:00:00.000Z' }));
 
     const frames = await readSseFrames(res, (f) => f.event === 'stream_end', 4000);
@@ -156,9 +244,23 @@ describe('GET /api/stream/sessions/:id — ordered deltas match final DB state (
     const spans = await getJson<Page<Span>>(`/api/sessions/${SESSION}/spans`);
 
     expect(folded.session).toEqual(detail.session);
+    // POSITIVELY pin the transcript-minted ids BEFORE the symmetric compare. A
+    // transcript line that resolved no trace would write nothing, leaving both
+    // sides of that compare equal and the guard vacuous — this is what stops it.
+    for (const id of TRANSCRIPT_SPANS) {
+      expect([...folded.spans.keys()], id).toContain(id);
+    }
+    // An unnoticed truncation would turn set equality into a subset check.
+    expect(spans.has_more).toBe(false);
+    // **THE INVARIANT: no span written into a live scope goes unpublished.** Not
+    // a list this test maintains — the spans endpoint's own answer — so a future
+    // writer that creates a span without marking it reds here with no new test.
     expect([...folded.spans.values()].sort(byId)).toEqual([...spans.items].sort(byId));
     // Both tool spans are accounted for, including the one only SessionEnd closed.
     expect(folded.spans.get('toolu_2')!.status).toBe('unknown');
+    // And the transcript's own tool span was CLOSED by its `tool_result` line —
+    // the delta that stops a spinner in a hookless session.
+    expect(folded.spans.get('toolu_3')!.status).toBe('ok');
     expect(detail.session.status).toBe('complete');
   });
 
@@ -178,6 +280,60 @@ describe('GET /api/stream/sessions/:id — ordered deltas match final DB state (
     );
     expect(tail[1]!.event).toBe('stream_end');
     expect(JSON.parse(tail[1]!.data)).toEqual({ reason: 'session_complete' });
+  });
+});
+
+describe('the production transcript path publishes (Task 6.1a, AC3)', () => {
+  it('delivers span, trace and session deltas from a real tail pass over a real file', async () => {
+    // **The ONLY test in the repo that can fail on the transport hole.** Every
+    // other delta test — including the invariant above — hands `ingestBatch` a
+    // publisher by hand, and is therefore structurally blind to the fact that
+    // production never did. Deleting this as "subsumed by the set-equality
+    // guard" silently returns the product to a live view whose numbers never move.
+    server = await bootTestServer({ sweepIntervalMs: 0, tailIntervalMs: 20 });
+    const dir = join(server.transcriptRoot, '-proj');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${SESSION}.jsonl`);
+
+    // `transcript_path` reaches the `sessions` row ONLY through a SessionStart
+    // payload, and `tailFile` records EOF and ingests ZERO on first sight of a
+    // file no session ever named. Without this POST the tailer reads the file and
+    // the test observes a silent no-op that every assertion below would survive.
+    await post(hookEnvelope('SessionStart', { cwd: '/proj', transcript_path: path }));
+
+    const res = await openSse(STREAM);
+    // The file is written from the `hello` frame, so the scope provably exists
+    // first: `publishTo` drops silently when it does not, and a write that landed
+    // before the subscribe would look exactly like an unwired tailer.
+    let written = false;
+    const frames = await readSseFrames(
+      res,
+      (frame, all) => {
+        if (frame.event === 'hello' && !written) {
+          written = true;
+          writeFileSync(path, `${JSON.stringify(transcriptLine())}\n`);
+        }
+        const kinds = new Set(all.filter(isDelta).map((f) => asDelta(f).kind));
+        return (
+          kinds.has('span_opened') && kinds.has('trace_updated') && kinds.has('session_updated')
+        );
+      },
+      5000,
+    );
+
+    const deltas = frames.filter(isDelta).map(asDelta);
+    const spanDeltas = deltas.filter(isSpanDelta);
+    const spanIds = spanDeltas.map((d) => d.span.id);
+    expect(spanIds).toContain(`${SESSION}:llm:${LINE}`);
+    expect(spanIds).toContain('toolu_tail');
+    expect(deltas.some((d) => d.kind === 'trace_updated')).toBe(true);
+    expect(deltas.some((d) => d.kind === 'session_updated')).toBe(true);
+
+    // Tokens have exactly ONE source in this pipeline, and it is this path. If
+    // the chips a live client renders ever move, they move because of this frame.
+    const llm = spanDeltas.find((d) => d.span.id === `${SESSION}:llm:${LINE}`)!;
+    expect(llm.span.tokens_in).toBe(500);
+    expect(llm.span.tokens_out).toBe(120);
   });
 });
 
