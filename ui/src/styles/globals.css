@@ -8,32 +8,14 @@
 @import './theme.css';
 
 /*
- * Take the test tree out of Tailwind's scan.
+ * Lifts the test tree out of Tailwind's scan, so the guard in src/__tests__
+ * cannot mint the rules it exempts.
  *
- * Tailwind v4 scans comments and ordinary English prose, not just class
- * attributes, and by default it scans ALL of `ui/` — tests included. That makes
- * a test that guards against unreferenced utilities self-fulfilling: naming a
- * class in the guard's own allowlist is enough to mint the rule the entry
- * exempts. With `__tests__` outside the scan, the guard's staleness check
- * (`src/__tests__/phantom-utilities.test.ts`) becomes live, and two rules whose
- * only source was prose in a test file stop shipping.
- *
- * THE `../` PREFIX IS LOAD-BEARING — do not "correct" it to `src/`. Tailwind
- * resolves an `@source` pattern against the directory of the stylesheet that
- * declares it, which for this file is `ui/src/styles`. `"src/**\/__tests__/**"`
- * would therefore glob `ui/src/styles/src/**` — a path that does not exist —
- * and Tailwind emits NO warning for it: the build succeeds and the exclusion
- * silently does nothing. `phantom-utilities.test.ts`'s first assertion — the
- * canary — exists to catch exactly that, because a wrong path is
- * indistinguishable from a working one by build output alone.
- *
- * NOTE this comment is itself inside Tailwind's scan (the prose "2px accent
- * ring" further down is the sole source of the `.ring` rule in the built
- * stylesheet), so nothing here may be spelled as a real utility — which is why
- * the canary class is described rather than named.
- *
- * Must stay at top level: a nested `@source` throws "`@source` cannot be
- * nested".
+ * `../` is load-bearing: patterns resolve against this file's own directory
+ * (ui/src/styles), so the "obvious" src/ form matches nothing and warns about
+ * nothing — a wrong path is a no-op that exits 0, caught only by the guard's
+ * canary. Must stay at top level; nested, it throws. Keep this comment clear
+ * of any word that names a utility — the file is inside the scan it configures.
  */
 @source not "../**/__tests__/**";
 

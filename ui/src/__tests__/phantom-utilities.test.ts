@@ -8,37 +8,13 @@ import { builtCss, cleanupBuilds } from './build-ui';
 afterAll(cleanupBuilds);
 
 /*
- * Task 0.1 — the phantom-utility guard.
+ * Guards the built stylesheet against utility rules no source token declares.
+ * Tailwind v4 compiles candidates out of comments and JSX text, not just class
+ * attributes, so prose leaks dead CSS into the bundle.
  *
- * Tailwind v4 scans comments and ordinary English prose, not just class
- * attributes: "a fixed seed" compiles a `.fixed` rule, "filter state" compiles
- * a `.filter` rule. Every one of those is CSS shipped to users that no element
- * uses, and it makes "is this class real?" unanswerable by reading the built
- * bundle — the exact question the design-system tests exist to answer.
- *
- * The instrument: build the stylesheet for real, extract the class names in
- * SELECTOR position, and subtract the tokens production source actually
- * declares. What remains is emitted-but-undeclared and has to be on the
- * allowlist below with a written reason. The reverse direction runs too — an
- * entry the build no longer produces reds instead of quietly widening the net —
- * which is `KNOWN_INERT_URLS` in `no-egress.test.ts`, in a second domain.
- *
- * SCOPE, stated up front so it is not mistaken for something stricter. The leak
- * surface this guard defends is COMMENTS AND JSX TEXT. The declared set is
- * deliberately over-broad — every string literal and template-literal text part
- * counts, not only `className` positions — because the strict alternative
- * false-positives on every class held in a lookup map, which
- * `retokenized.test.ts:36-50` documents at length. Two consequences are accepted
- * on purpose: `.collapse` is "declared" by the aria-label template at
- * `session/TraceGroup.tsx:87`, and `.inline` by the string-literal type member
- * at `design/spec-tokens.ts:43`. Both are laundered, both are known.
- *
- * This file depends on Step 0 of its own task: the `@source not` line in
- * `styles/globals.css` that lifts `__tests__` out of Tailwind's scan. Without
- * it, naming a class in the allowlist below is enough to mint the rule the entry
- * exempts, both directions of the diff go vacuous, and the dead rules ship
- * forever. The canary test is the first assertion in this file, because a
- * mistyped `@source` path is a silent no-op — no warning, no error, no diff.
+ * Depends on the `@source not` line in `styles/globals.css` lifting `__tests__`
+ * out of Tailwind's scan: without it, naming a class in the allowlist below
+ * mints the rule that entry exempts and both directions of the diff go vacuous.
  */
 
 const UI_DIR = fileURLToPath(new URL('../..', import.meta.url));
@@ -48,64 +24,40 @@ const STYLES_DIR = fileURLToPath(new URL('../styles', import.meta.url));
 /** This file's own path, relative to `ui/` — see the self-blame note on `formatPhantomFailure`. */
 const GUARD_FILE = 'src/__tests__/phantom-utilities.test.ts';
 
-/**
- * A utility-shaped literal that appears nowhere else in `ui/`, used to prove the
- * `@source not` exclusion is live. Theme-independent (`text-decoration-line`),
- * so it cannot go quietly dead when the theme changes, and it is the exact class
- * a broken exclusion was measured to mint.
- */
+/** Utility-shaped, written nowhere else in `ui/`: the rule can only appear if the exclusion broke. */
 const CANARY_UTILITY = 'underline';
 
 /**
- * Utilities the build emits that no source token declares, each with the reason
- * it is tolerated rather than fixed. Every entry must still be emitted-and-
- * undeclared: a stale exemption reds, because an exemption nothing needs is an
- * exemption that has stopped being reviewed.
- *
- * The fix for a NEW phantom is almost always to widen the prose, not to add a
- * line here — a suffixed form is not a utility candidate at all.
+ * Utilities the build emits that no source token declares, with the reason each
+ * is tolerated. A stale entry reds too — an exemption nothing needs has stopped
+ * being reviewed.
  */
 export const KNOWN_UNREFERENCED_UTILITIES: readonly { utility: string; why: string }[] = [
   {
     utility: 'block',
-    why:
-      'a local identifier, not prose: `src/lib/sse.ts:136` iterates `for (const block of blocks)`. ' +
-      "Renaming a variable for CSS's sake is worse than one dead rule.",
+    why: 'a loop variable at `src/lib/sse.ts:136`, not prose — renaming it for CSS would be worse.',
   },
   {
     utility: 'invisible',
-    why:
-      'ordinary English in component headers (`session/MetricChip.tsx:27`, `session/SpanRow.tsx:28`, ' +
-      '`session/span-visuals.ts:10`) describing what a scan cannot see. No synonym reads as clearly.',
+    why: 'plain English in component headers (`session/MetricChip.tsx:27` and two others).',
   },
   {
     utility: 'lowercase',
-    why:
-      '`design/normalize-css-value.ts:40`,`:65` documents the casing rule it implements, and the ' +
-      'word IS the behaviour being described — paraphrasing it would make the comment worse.',
+    why: '`design/normalize-css-value.ts:40` documents the casing rule it implements.',
   },
   {
     utility: 'ring-accent',
-    why:
-      "`components/ui/tabs.tsx:23` names the design system's 2px focus ring by role in the " +
-      'retokenizing table. The class the component actually uses is the variant-prefixed form, ' +
-      'which Tailwind extracts as a separate candidate.',
+    why: '`components/ui/tabs.tsx:23` names the focus ring by role; the component uses the variant-prefixed form.',
   },
   {
     utility: 'shrink',
-    why:
-      '`src/lib/tree-nav.ts:111` — "a shrink pulls focusedIndex back into range" — describes list ' +
-      'behaviour, not layout. The layout utility the components use is the suffixed form.',
+    why: '`src/lib/tree-nav.ts:111` describes list behaviour; the layout utility used is the suffixed form.',
   },
   {
     utility: 'transition',
-    why:
-      "`components/ui/context-menu.tsx:16` refers to the design system's 150ms default, which is a " +
-      'theme setting (`--default-transition-*`) rather than a class anything applies.',
+    why: '`components/ui/context-menu.tsx:16` refers to the theme default, not a class.',
   },
 ];
-
-/* ------------------------------------------------------------ the emitted set --- */
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -113,17 +65,11 @@ function escapeRegExp(value: string): string {
 
 const ASCII_IDENT = /[A-Za-z0-9_-]/;
 
-/**
- * Code points >= U+0080 count as ident characters. This is defence-in-depth and
- * a pragmatic match to what Tailwind's escaper emits, NOT a consequence of the
- * grammar: CSS Syntax L3 narrowed "non-ASCII ident code point" to enumerated
- * ranges and U+2026 is not among them, yet Tailwind leaves it unescaped anyway.
- */
+/** Non-ASCII code points count as ident characters — matches what Tailwind's escaper leaves bare. */
 function isIdentChar(ch: string): boolean {
   return ASCII_IDENT.test(ch) || (ch.codePointAt(0) ?? 0) >= 0x80;
 }
 
-/** Class names in a single selector prelude. */
 function harvestSelectorClasses(selector: string, into: Set<string>): void {
   let i = 0;
   while (i < selector.length) {
@@ -136,7 +82,6 @@ function harvestSelectorClasses(selector: string, into: Set<string>): void {
     while (end < selector.length) {
       const ch = selector[end] ?? '';
       if (ch === '\\') {
-        // An escape pair contributes its second character verbatim.
         name += selector[end + 1] ?? '';
         end += 2;
         continue;
@@ -146,26 +91,16 @@ function harvestSelectorClasses(selector: string, into: Set<string>): void {
       end += 1;
     }
     if (name !== '') into.add(name);
-    /*
-     * Resume at the stop index, never at `i + 1`. Load-bearing: `.p-0\.5` has to
-     * yield `p-0.5`, and restarting at every `.` would also mint a bogus `5`
-     * from the escaped dot it just consumed.
-     */
+    // Resume at the stop index: restarting at `i + 1` would mint a bogus `5`
+    // out of the escaped dot in `.p-0\.5`.
     i = end;
   }
 }
 
 /**
- * Every class name the built stylesheet declares a rule for.
- *
- * A single character walk rather than a regex, quote- and comment-aware in the
- * same pass so that a `content: "…/*…"` declaration cannot desynchronise it.
- * `@`-preludes are skipped whole, which drops `@layer`, `@media`, `@supports`,
- * `@property` and `@keyframes` without enumerating them.
- *
- * Direction matters: this goes selector -> class. `retokenized.test.ts`'s
- * `hasRule` goes class -> selector and cannot be reused, and `build-ui.ts`'s
- * `ruleBody` never CSS-escapes, so it returns null for most of the vocabulary.
+ * Every class name the built stylesheet declares a rule for: a character walk,
+ * quote- and comment-aware in the same pass, going selector -> class.
+ * `@`-preludes are skipped whole.
  */
 export function emittedUtilityClasses(css: string): Set<string> {
   const classes = new Set<string>();
@@ -224,15 +159,10 @@ export function emittedUtilityClasses(css: string): Set<string> {
   return classes;
 }
 
-/* ----------------------------------------------------------- the declared set --- */
-
 /**
- * Whitespace-separated tokens from one TS/TSX source's string literals and
- * template-literal text parts, via the TypeScript scanner.
- *
- * Comment trivia and `JsxText` contribute NOTHING, deliberately: they are
- * precisely what Tailwind is wrongly reading, so counting them as a declaration
- * would make the whole guard a tautology.
+ * Whitespace-separated tokens from one source's string literals and template
+ * text parts. Comments and `JsxText` contribute nothing, deliberately: they are
+ * what Tailwind is wrongly reading, so counting them would make this a tautology.
  */
 export function declaredTokensOfSource(fileName: string, text: string): Set<string> {
   const tokens = new Set<string>();
@@ -250,7 +180,6 @@ export function declaredTokensOfSource(fileName: string, text: string): Set<stri
 
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteralLike(node)) {
-      // StringLiteral and NoSubstitutionTemplateLiteral.
       push(node.text);
     } else if (
       node.kind === ts.SyntaxKind.TemplateHead ||
@@ -281,7 +210,6 @@ export function productionSourceFiles(): string[] {
   return found.sort();
 }
 
-/** Every token any production source could plausibly be declaring as a class. */
 export function declaredTokens(): Set<string> {
   const tokens = new Set<string>();
 
@@ -290,18 +218,9 @@ export function declaredTokens(): Set<string> {
   }
 
   /*
-   * Plus raw whitespace-split tokens from the stylesheets themselves — the hook
-   * an `@apply` would need. There is no `@apply` in `ui/` today, so this scan
-   * currently declares nothing real, and it launders exactly two dead rules:
-   *
-   *   - `.static`, "declared" only by the word `static` in `@theme static {`
-   *     (`styles/theme.css:50`);
-   *   - `.ring`,   "declared" only by "2px accent ring" in the base-layer comment
-   *     in `styles/globals.css`.
-   *
-   * Named here so a later reader finds them deliberately rather than by
-   * accident. Narrowing this to `@apply` arguments only is a follow-up, and it
-   * belongs to whichever task first introduces an `@apply`.
+   * Plus raw tokens from the stylesheets themselves — the hook an `@apply` would
+   * need. There is none in `ui/` today, so this only launders `.static` and
+   * `.ring`, each spelled in stylesheet prose.
    */
   for (const name of readdirSync(STYLES_DIR)) {
     if (!name.endsWith('.css')) continue;
@@ -313,12 +232,7 @@ export function declaredTokens(): Set<string> {
   return tokens;
 }
 
-/* ------------------------------------------------------------------ the diff --- */
-
-/**
- * Both directions of the allowlist, over plain sets so the rule is provable
- * without mutating a real build (`no-egress.test.ts:99-116` in a second domain).
- */
+/** Both directions of the allowlist, over plain sets so the rule is provable without a build. */
 export function diffUtilities(
   emitted: Iterable<string>,
   declared: ReadonlySet<string>,
@@ -333,22 +247,14 @@ export function diffUtilities(
   };
 }
 
-/* --------------------------------------------------------- blame and the message --- */
-
 const BLAME_SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
 const BINARY_EXTENSION = /\.(woff2?|ttf|otf|png|jpe?g|gif|webp|ico)$/i;
 
 /**
  * Every file Tailwind could have read: all of `ui/` minus vendored code, build
- * output and binaries.
- *
- * `__tests__` is deliberately INCLUDED even though the declared scan skips it
- * and Tailwind now skips it too. Tailwind's scan base is `ui/` while the
- * declared scan is `ui/src`, so `ui/index.html`, `ui/vite.config.ts`,
- * `ui/tsconfig.json` and `ui/package-lock.json` are all inside what the compiler
- * reads and outside what this guard calls declared. A phantom can still be born
- * in a file the declared scan never opens, and a blame grep restricted to
- * production sources would answer "unknown source" for it.
+ * output and binaries. `__tests__` is deliberately included even though the
+ * declared scan skips it — Tailwind's scan base is `ui/`, not `ui/src`, so a
+ * phantom can be born in a file the declared scan never opens.
  */
 export function blameCorpus(): string[] {
   const found: string[] = [];
@@ -376,14 +282,9 @@ function corpus(): { path: string; lines: string[] }[] {
 
 /**
  * Every `path:line  <trimmed line>` in `ui/` that could have handed this word to
- * Tailwind as a candidate. A dumb, total grep — the guard file is not filtered
- * here, so this function's own unit tests stay honest.
- *
- * The leading `:` in the lookbehind is the one deviation from
- * `retokenized.test.ts:134`'s boundary, and it is a measured improvement:
- * without it `ring-accent` also blames the two legitimate variant-prefixed uses
- * in `tabs.tsx`, which are a different emitted class. `font-display: block`
- * (space after the colon) stays visible.
+ * Tailwind. A total grep — the guard file is not filtered here, so this
+ * function's own unit tests stay honest. The `:` in the lookbehind keeps
+ * variant-prefixed uses out of a bare word's blame.
  */
 export function blamePhantom(word: string): string[] {
   const pattern = new RegExp(`(?<![\\w:-])${escapeRegExp(word)}(?![\\w-])`);
@@ -401,18 +302,11 @@ const SUFFIXED_FORMS_NOTE =
   '`grows` all compile to nothing. Widening the prose is the fix; deleting the word is not.';
 
 /**
- * The failure message the phantom assertion reports. A pure function so it can
- * be tested directly, and it MUST be what `expect` is given — a correct
- * `blamePhantom` that nothing calls ships the "unknown source" trap this guard
- * exists to prevent.
- *
- * Self-blame: once this file exists, every `{ utility: 'x', … }` entry is itself
- * a line matching the blame regex (the lookbehind admits the preceding quote,
- * the lookahead the following one). Since Step 0 put this file outside
- * Tailwind's scan, no line in it can be the CAUSE of an emitted rule, so for an
- * ALLOWLISTED utility every hit here is noise and is dropped. For a utility that
- * is not allowlisted the hits stay: that is exactly the case AC4 is about —
- * blame has to be able to reach into `__tests__` and say so.
+ * The failure message the phantom assertion reports, and what `expect` is
+ * actually given. Each allowlist entry above is itself a line the blame regex
+ * matches, so for an allowlisted utility the guard-file hits are noise and are
+ * dropped here — not by narrowing the regex, which would also stop blame
+ * reaching `__tests__` for a utility that is not allowlisted.
  */
 export function formatPhantomFailure(
   phantoms: readonly { utility: string; hits: readonly string[] }[],
@@ -436,17 +330,10 @@ export function formatPhantomFailure(
   return out.join('\n');
 }
 
-/* ------------------------------------------------------------------- suites --- */
-
 describe('the built stylesheet ships no utility that source never declares', () => {
   it('the __tests__ exclusion in globals.css is live', async () => {
-    /*
-     * Item 0, and the assertion that makes every other one honest. A mistyped
-     * `@source not` path is a SILENT no-op — exit 0, no warning, zero-class diff
-     * — so a wrong path is indistinguishable from a working one by build output
-     * alone. This file names the canary and nothing else in `ui/` does, so the
-     * rule can only appear if Tailwind is still reading `__tests__`.
-     */
+    // A mistyped `@source not` path is a silent no-op — exit 0, no warning, no
+    // class diff — so this canary is the only thing that catches it.
     const emitted = emittedUtilityClasses(await builtCss());
     expect(
       [...emitted],
@@ -464,14 +351,11 @@ describe('the built stylesheet ships no utility that source never declares', () 
       KNOWN_UNREFERENCED_UTILITIES.map((entry) => entry.utility),
     );
 
-    // The message is `formatPhantomFailure`, not a literal — see item 7 below.
     expect(
       unexpected,
       formatPhantomFailure(unexpected.map((utility) => ({ utility, hits: blamePhantom(utility) }))),
     ).toEqual([]);
 
-    // The reverse direction, live only because Step 0 stopped this file feeding
-    // the compiler: an exemption nothing needs has stopped being reviewed.
     expect(
       stale,
       'allowlist entries the build no longer emits (or that source now declares) — delete them',
@@ -479,10 +363,7 @@ describe('the built stylesheet ships no utility that source never declares', () 
   });
 
   it('the emitted-set walker survives the escape shapes that break a naive parser', async () => {
-    /*
-     * Real controls only because of Step 0: before it, a control literal in this
-     * file minted its own rule and the assertion could never go red.
-     */
+    // Honest controls only because the scan exclusion keeps these literals out.
     const emitted = emittedUtilityClasses(await builtCss());
     for (const shape of [
       'bg-surface',
@@ -579,12 +460,7 @@ describe('the allowlist is closed in both directions', () => {
   });
 });
 
-/*
- * A token written ONLY in this file, and nowhere else in `ui/`. It is the proof
- * that blame reaches into `__tests__`: a phantom's prose source frequently lives
- * in a test file or a docstring, and a blame grep restricted to production
- * sources would report "unknown source" for the leak it just caught.
- */
+/* Written only in this file: proof that blame reaches into `__tests__`. */
 const BLAME_FIXTURE_TOKEN = 'zz-blame-reaches-tests';
 
 describe('blame finds the prose that produced a utility', () => {
@@ -608,8 +484,7 @@ describe('blame finds the prose that produced a utility', () => {
     ).toHaveLength(1);
     expect(external[0] ?? '').toMatch(/^src\/components\/ui\/tabs\.tsx:23 {2}/);
 
-    // Guard-file hits are dropped first, for the same reason as above: this
-    // file's own assertions name both the bare rule and its suffixed form.
+    // Guard-file hits dropped first: this file names both forms.
     const shrink = blamePhantom('shrink').filter((hit) => !hit.startsWith(`${GUARD_FILE}:`));
     expect(shrink.some((hit) => hit.startsWith('src/lib/tree-nav.ts:111  '))).toBe(true);
     for (const hit of shrink) {
@@ -620,12 +495,6 @@ describe('blame finds the prose that produced a utility', () => {
   });
 
   it('the failure message is what the assertion actually reports', () => {
-    /*
-     * AC4's other half. Items above exercise `blamePhantom` in isolation and
-     * cannot see whether anything calls it; this one pins the message builder,
-     * and the phantom assertion above passes exactly this string to `expect`
-     * (mirroring `no-egress.test.ts:107-110`).
-     */
     const synthetic = formatPhantomFailure([
       { utility: BLAME_FIXTURE_TOKEN, hits: blamePhantom(BLAME_FIXTURE_TOKEN) },
     ]);
@@ -645,12 +514,7 @@ describe('blame finds the prose that produced a utility', () => {
 
 describe('the scans are not vacuous', () => {
   it('every scan saw a real number of things', async () => {
-    /*
-     * The standing rule (`retokenized.test.ts:263-269`): without these, an
-     * extractor that regressed to returning almost nothing would go green while
-     * checking nothing at all. Measured today: 186 emitted, 1401 declared, 36
-     * production sources, 82 files in the blame corpus.
-     */
+    // Floors: without them an extractor that regressed to returning almost nothing would go green.
     expect(emittedUtilityClasses(await builtCss()).size, 'emitted set').toBeGreaterThan(120);
     expect(declaredTokens().size, 'declared set').toBeGreaterThan(600);
     expect(productionSourceFiles().length, 'production sources walked').toBeGreaterThan(25);
