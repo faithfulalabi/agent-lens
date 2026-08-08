@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { request } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,38 +9,10 @@ import {
   bootTestServer,
   cleanupDir,
   makeTestEnvelope,
+  rawRequest,
   TOKEN_HEADER,
   type TestServer,
 } from './helpers.js';
-
-/**
- * Raw HTTP request that can set a custom Host header — `fetch` forbids Host as a
- * header name, so the host guard can only be exercised via `node:http`.
- *
- * `agent: false` keeps teardown quick: `serveStatic` streams its response, and a
- * client holding the socket open afterwards delays `server.close()` by seconds
- * on the `/assets/*` rows.
- */
-function rawRequest(
-  port: number,
-  path: string,
-  headers: Record<string, string>,
-  method = 'GET',
-  body?: string,
-): Promise<{ status: number }> {
-  return new Promise((resolve, reject) => {
-    const req = request(
-      { host: '127.0.0.1', port, path, method, headers, agent: false },
-      (res) => {
-        res.resume();
-        res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
-      },
-    );
-    req.on('error', reject);
-    if (body !== undefined) req.write(body);
-    req.end();
-  });
-}
 
 let server: TestServer | undefined;
 

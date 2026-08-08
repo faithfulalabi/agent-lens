@@ -61,6 +61,17 @@ export interface StartOptions {
    * one-scan-then-stop.
    */
   tailIntervalMs?: number;
+  /**
+   * Forwarded verbatim to the tailer: `'backfill'` reads a never-before-seen
+   * transcript from offset 0 instead of recording EOF. Defaults to `'eof'` —
+   * production must not ingest every historical transcript on the machine.
+   */
+  firstSight?: 'eof' | 'backfill';
+  /**
+   * Forwarded verbatim to the tailer: restrict discovery to these project slugs.
+   * Unset means the whole transcript root.
+   */
+  projects?: readonly string[];
   /** Called with each tail pass's result — observability hook (and test seam). */
   onTail?: (result: TailResult) => void;
 }
@@ -135,6 +146,8 @@ function runTailPass(
     // supplied, so the tailer would only ever run for tests that observe it.
     const result = tailOnce(db, broadcaster, {
       transcriptRoot: options.transcriptRoot,
+      firstSight: options.firstSight,
+      projects: options.projects,
       deltas,
     });
     options.onTail?.(result);
