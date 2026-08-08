@@ -10,7 +10,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
@@ -21,6 +20,7 @@ import {
   jsonLines,
   makeSandbox,
   SLUG,
+  snapshotTree,
   sourcePath,
   writeSource,
   type Sandbox,
@@ -44,33 +44,6 @@ afterEach(() => {
   }
   sandbox = undefined;
 });
-
-interface Entry {
-  size: bigint;
-  mtimeNs: bigint;
-  ino: bigint;
-  mode: bigint;
-}
-
-/** `mtimeNs` because float `mtimeMs` hides a same-millisecond in-place write. */
-function snapshotTree(
-  root: string,
-  prefix = '',
-  out = new Map<string, Entry>(),
-): Map<string, Entry> {
-  for (const dirent of readdirSync(root, { withFileTypes: true })) {
-    const rel = prefix === '' ? dirent.name : `${prefix}/${dirent.name}`;
-    const stat = statSync(join(root, dirent.name), { bigint: true });
-    out.set(rel, {
-      size: stat.size,
-      mtimeNs: stat.mtimeNs,
-      ino: stat.ino,
-      mode: stat.mode,
-    });
-    if (dirent.isDirectory()) snapshotTree(join(root, dirent.name), rel, out);
-  }
-  return out;
-}
 
 /** Dirs 0500, files 0400, bottom-up. */
 function lockDown(dir: string): void {

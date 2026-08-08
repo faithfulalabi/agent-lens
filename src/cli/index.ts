@@ -33,8 +33,8 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'doctor',
-    summary: 'Diagnose the local setup',
-    run: () => import('./commands/doctor.js').then((m) => m.doctor()),
+    summary: 'Report archive coverage, integrity and retention',
+    run: (args) => import('./commands/doctor.js').then((m) => m.doctor(args)),
   },
   {
     name: 'import',
