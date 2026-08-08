@@ -1,21 +1,8 @@
-// Task 1.1 AC2/AC3/AC4 as a property: whatever sequence of appends, partial
-// appends, truncations, in-place rewrites and simulated crashes a source goes
-// through, the archive converges — it is always a byte-exact prefix of SOME
-// state that source has actually been in, it never shrinks, it never contains a
-// hole the source did not have, and it never writes the same byte twice.
-//
-// ## Why a prefix of "some historical state" and not of the current one
-//
-// Divergence deliberately keeps the OLD bytes: a rewritten source leaves the
-// archive holding generation 1 while the source is on generation 2. Asserting a
-// prefix of the CURRENT source would therefore force the archive to overwrite
-// itself, which is exactly the destruction rule 3 exists to forbid.
-//
-// ## Determinism
-//
-// Fixed `SEED` and a measured `NUM_RUNS`, per `tailer.property.test.ts:43,50`: a
-// property that fails on Tuesday and passes on Wednesday is worse than no
-// property.
+// AC2/AC3/AC4 as a property: under any sequence of appends, truncations,
+// rewrites and crashes, the archive stays a byte-exact prefix of some state the
+// source has been in, never shrinks, never gains a hole, and never writes a byte
+// twice. Of *some historical* state, not the current one: divergence keeps the
+// old bytes.
 
 import { afterAll, describe, expect, it } from 'vitest';
 import fc from 'fast-check';
@@ -24,14 +11,9 @@ import { join } from 'node:path';
 import { archiveOnce } from '../mirror.js';
 import { cleanup, makeSandbox, SLUG, writeSource, type Sandbox } from './fixtures.js';
 
-/** Fixed seed: the failing counterexample must be reproducible on any machine. */
+/** Fixed seed: a failing counterexample must be reproducible on any machine. */
 const SEED = 20260807;
 
-/**
- * Measured, not guessed. At 40 runs this file costs ~1.3 s while driving a few
- * hundred file mutations through the real pass — inside the repo's per-file
- * budget, with the same fixed seed making the coverage stable.
- */
 const NUM_RUNS = 40;
 
 const REL = `${SLUG}/sess-prop.jsonl`;
@@ -63,13 +45,8 @@ const mutationArb: fc.Arbitrary<Mutation> = fc.oneof(
 );
 
 /**
- * A pass is generated as an OPTIONAL SUFFIX of each mutation rather than as a
- * seventh op. Drawing `pass` uniformly from one `oneof` made the interesting
- * interleavings — the ones where a pass archives generation 1, the source is then
- * rewritten AND extended, and a second pass would splice generation 2 onto a
- * generation 1 prefix — vanishingly rare: with divergence detection deleted
- * outright the property still went green. Pinning a pass to ~half of all
- * mutations makes that sequence routine, and the mutant now dies.
+ * A pass is an optional suffix of each mutation, not a seventh op: drawn from one
+ * `oneof`, deleting divergence detection still left the property green.
  */
 const stepArb = fc.record({ mutation: mutationArb, passAfter: fc.boolean() });
 
@@ -83,8 +60,7 @@ describe('archive convergence under an arbitrary op script (Test 22)', () => {
         const archived = join(s.archiveRoot, REL);
 
         let lineNo = 0;
-        // Every state the source has ever been in, so "prefix of some
-        // generation" is checkable rather than asserted.
+        // Every state the source has ever been in.
         const history: Buffer[] = [];
         let archiveSize = 0;
         let totalCopied = 0;
@@ -95,8 +71,7 @@ describe('archive convergence under an arbitrary op script (Test 22)', () => {
         remember();
 
         const runPass = () => {
-          // Invariant W is asserted inside the copy loop and THROWS on a hole, so
-          // simply completing the pass is part of the property.
+          // Invariant W throws inside the copy loop, so completing is the assertion.
           const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
           expect(result.errors).toEqual([]);
           const file = result.files.find((f) => f.source_path === source);
@@ -113,11 +88,10 @@ describe('archive convergence under an arbitrary op script (Test 22)', () => {
           expect(bytes.length).toBeGreaterThanOrEqual(archiveSize);
           archiveSize = bytes.length;
 
-          // No byte is ever written twice: the archive is exactly as long as the
-          // total the passes reported copying.
+          // No byte written twice.
           expect(bytes.length).toBe(totalCopied);
 
-          // A byte-exact prefix of SOME state the source has been in.
+          // A byte-exact prefix of some state the source has been in.
           const isPrefixOfSome = history.some(
             (state) =>
               state.length >= bytes.length && state.subarray(0, bytes.length).equals(bytes),

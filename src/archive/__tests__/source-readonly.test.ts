@@ -1,13 +1,5 @@
-// Tests 19 and 20 — the two guards that matter most.
-//
-// 19: `~/.claude/projects` is NEVER written to. Structurally the module only ever
-// opens a source `'r'` and funnels every write through one containment-checked
-// function, but structure is not evidence, so this asserts it.
-//
-// 20: `agent-lens archive` must not load `node:sqlite`, transitively, in the
-// process CRON ACTUALLY RUNS. A grep of `src/archive/**` cannot see one hop away,
-// which is how a `tailer.ts` import (value-importing `src/db/index.ts`, whose
-// line 1 is `import { DatabaseSync } from 'node:sqlite'`) survived review.
+// Two guards: 19, that the transcript root is never written to; and 20, that the
+// binary cron runs never loads `node:sqlite`, transitively.
 
 import { afterEach, describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -60,14 +52,7 @@ interface Entry {
   mode: bigint;
 }
 
-/**
- * `{relpath -> {size, mtimeNs, ino, mode}}` for every entry under `root`.
- *
- * `mtimeNs`, not `mtimeMs`: the latter is float milliseconds
- * (`1786150022452.6375`) and a same-millisecond, same-size in-place write is
- * invisible to it. `atime` is excluded on purpose — we open sources for reading,
- * which is the whole point.
- */
+/** `mtimeNs` because float `mtimeMs` hides a same-millisecond in-place write. */
 function snapshotTree(
   root: string,
   prefix = '',
@@ -160,8 +145,7 @@ describe('the archive never writes to ~/.claude/projects (Test 19)', () => {
     const body = jsonLines(8);
     writeSource(s, SESSION, body);
     writeSource(s, META, '{"model":"claude"}');
-    // `chmodSync(root, 0o500)` alone protects NOTHING — every in-scope file is
-    // 2-5 levels deeper, and an append to `<root>/a/b/x.jsonl` still succeeds.
+    // Locking only `root` protects nothing: in-scope files are levels deeper.
     lockDown(s.sourceRoot);
 
     const before = snapshotTree(s.sourceRoot);
@@ -175,8 +159,8 @@ describe('the archive never writes to ~/.claude/projects (Test 19)', () => {
   });
 
   it('an accidental write into the locked-down source tree really would throw', () => {
-    // The positive control for the test above: without this, "the pass succeeded"
-    // could just mean the chmod protected nothing.
+    // Positive control: otherwise "the pass succeeded" could mean the chmod
+    // protected nothing.
     const s = sb();
     writeSource(s, SESSION, jsonLines(2));
     lockDown(s.sourceRoot);
@@ -190,7 +174,7 @@ describe('the archive never writes to ~/.claude/projects (Test 19)', () => {
 
 // --- Test 20: the import graph -------------------------------------------
 
-/** Write the module probe. Runs in EVERY node process the binary spawns. */
+/** The probe runs in every node process the binary spawns. */
 function writeProbe(dir: string): string {
   const path = join(dir, 'module-probe.mjs');
   writeFileSync(
@@ -238,12 +222,8 @@ function probedRun(
 
 describe('agent-lens archive never loads node:sqlite (Test 20)', () => {
   it('(a) the SPAWNED BINARY — what cron actually runs — loads no sqlite module', async () => {
-    // Deliberately not an in-process import of `src/archive/index.ts`: cron runs
-    // the binary, whose entry is `src/cli/index.ts`. With eager command imports
-    // that entry loaded 253 native modules including `Internal Binding sqlite`,
-    // so a guard on the archive module would be green while the real thing was
-    // dirty. A child process is required anyway — `process.moduleLoadList` is
-    // process-global and vitest workers share one.
+    // Probes the binary, not `src/archive/index.ts`: a guard on the archive
+    // module alone stays green while the real entry point is dirty.
     const s = sb();
     writeSource(s, SESSION, jsonLines(2));
     const probe = writeProbe(s.root);
@@ -258,8 +238,7 @@ describe('agent-lens archive never loads node:sqlite (Test 20)', () => {
 
     expect(status).toBe(0);
     expect(modules.length).toBeGreaterThan(0);
-    // Non-vacuity: at least one probed process must actually have run the archive
-    // code, which is the only thing here that pulls in node:crypto.
+    // Non-vacuity: node:crypto is the marker that archive code really ran.
     expect(modules.some((list) => list.some((m) => /crypto/i.test(m)))).toBe(true);
     for (const list of modules) {
       expect(list.filter((m) => /sqlite/i.test(m))).toEqual([]);
@@ -309,7 +288,7 @@ describe('agent-lens archive never loads node:sqlite (Test 20)', () => {
   });
 });
 
-/** Follow relative import/export specifiers from `entry`, resolving `.js` -> `.ts`. */
+/** Follow relative specifiers from `entry`, resolving `.js` -> `.ts`. */
 function transitiveRelativeImports(entry: string, seen = new Set<string>()): Set<string> {
   if (seen.has(entry) || !existsSync(entry)) return seen;
   seen.add(entry);

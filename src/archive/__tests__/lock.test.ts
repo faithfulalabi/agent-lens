@@ -1,5 +1,4 @@
-// Tests 10 and 11 — the lock is a CORRECTNESS PRECONDITION, so this file is
-// where the "two passes cannot interleave chunks" claim is actually proved.
+// Tests 10 and 11 — where the "two passes cannot interleave chunks" claim is proved.
 
 import { afterEach, describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -45,8 +44,8 @@ function writeLock(s: Sandbox, record: unknown): string {
 
 describe('lock reclaim policy — ordered rows, liveness outranks age (Test 11)', () => {
   it('row 1: an EPERM holder is ALIVE and owned by another user -> HELD, never stolen', () => {
-    // pid 1 is launchd: root-owned and alive, so `process.kill(1, 0)` throws
-    // EPERM. The naive `try { kill } catch { stale }` shape reclaims it.
+    // pid 1 is root-owned and alive, so `kill(1, 0)` throws EPERM; a naive
+    // `try { kill } catch { stale }` would reclaim it.
     const s = sb();
     writeLock(s, { pid: 1, started_at: Date.now(), hostname: hostname() });
 
@@ -57,10 +56,7 @@ describe('lock reclaim policy — ordered rows, liveness outranks age (Test 11)'
   });
 
   it('row 2: a live same-host holder is HELD regardless of age', () => {
-    // The row the previous design got backwards: `age > MAX_LOCK_AGE_MS ->
-    // reclaim unconditionally` sat BELOW "alive -> held" and by its plain wording
-    // overrode it, so a provably live holder lost its lock mid-copy the moment a
-    // cold start crossed an hour.
+    // Age must never override liveness, or a long cold start loses its lock mid-copy.
     const s = sb();
     const now = Date.now();
     writeLock(s, {
@@ -143,9 +139,8 @@ describe('guarded release (Test 11)', () => {
   });
 
   it('release-after-reclaim does NOT delete the successor lock', () => {
-    // A naive `unlinkSync` on exit deletes its successor's lock: A is reclaimed
-    // from, B starts copying, A then exits and unlinks — reopening the exact
-    // concurrent-chunk window Invariant W exists to close.
+    // An unconditional `unlinkSync` on exit deletes a successor's lock: A is
+    // reclaimed from, B starts copying, A exits and unlinks B's lock.
     const s = sb();
     const pidA = 111111;
     const pidB = 222222;
@@ -220,8 +215,8 @@ describe('a held lock copies zero bytes and stays observable', () => {
   });
 
   it('the real binary exits 0 against a genuinely live same-host holder (Test 10a)', async () => {
-    // Deterministic counterpart to the race below: the holder is a real live
-    // process on this host, so row 2 fires with no timing assumption at all.
+    // Deterministic counterpart to the race below: a real live holder, so row 2
+    // fires with no timing assumption.
     const s = sb();
     writeSource(s, `${SLUG}/sess-1.jsonl`, '{"a":1}\n');
     const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)']);
@@ -243,18 +238,10 @@ describe('a held lock copies zero bytes and stays observable', () => {
 
 describe('two concurrent passes (Test 10)', () => {
   it('converge to the single-pass result with no NUL hole, however they interleave', async () => {
-    // WHY THIS DOES NOT ASSERT "exactly one reported held". Whether the two
-    // children actually overlap depends on their boot skew versus the copy
-    // duration, and under full-suite load they can serialize completely — this
-    // assertion was observed flaking to `['acquired','acquired']` for exactly
-    // that reason. "The second pass sees a held lock" is a real requirement, so
-    // it is asserted DETERMINISTICALLY against the real binary in Test 10a above,
-    // against a live holder that cannot finish early. What belongs here is the
-    // property that must hold under EVERY interleaving, including the corrupting
-    // ones: the archive still ends up a byte-exact copy with no sparse hole.
+    // Do not add an "exactly one reported held" assertion here: the children can
+    // serialize under load, which flakes. Test 10a pins that deterministically.
     const s = sb();
-    // Big enough that the copy spans many 1 MiB chunks — that chunk window is
-    // where two passes could interleave and leave a hole.
+    // Big enough to span many 1 MiB chunks, where two passes could interleave.
     const line = `{"pad":"${'y'.repeat(4000)}"}\n`;
     const body = line.repeat(1000); // ~4 MB per file
     for (let i = 0; i < 12; i++) writeSource(s, `${SLUG}/sess-${i}.jsonl`, body);
@@ -279,9 +266,7 @@ describe('two concurrent passes (Test 10)', () => {
       const source = readFileSync(sourcePath(s, rel));
       const archived = readFileSync(archivePath(s, rel));
       expect(archived.equals(source), rel).toBe(true);
-      // The direct assertion against the demonstrated sparse-hole failure: a
-      // positional write past EOF fills the gap with NULs that `size` reports as
-      // real content.
+      // The sparse-hole signature: NULs that `size` reports as real content.
       expect(archived.includes(Buffer.alloc(64, 0)), rel).toBe(false);
     }
   }, 60000);

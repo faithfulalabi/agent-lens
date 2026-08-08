@@ -1,8 +1,5 @@
 // Public surface of the archive. Nothing here may reach `src/db/**`,
-// `src/server/**` or `src/capture/**` — transitively, not just textually — so
-// `agent-lens archive` can run on a cron before the rest of the product exists.
-// `__tests__/source-readonly.test.ts` enforces that at both the static and the
-// runtime level.
+// `src/server/**` or `src/capture/**`, transitively included.
 
 export { archiveOnce, createMirrorContext, decideCopyEnd, mirrorFile } from './mirror.js';
 export type {

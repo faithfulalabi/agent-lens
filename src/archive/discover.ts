@@ -1,56 +1,31 @@
-// Discovery: a UNION of two recursive walks — the source tree and the archive
-// tree — keyed on the mapped relative path.
-//
-// WHY THE ARCHIVE WALK IS NOT OPTIONAL. Discovery keyed only on the source tree
-// can never produce `source_state='expired'`: a file whose source is gone is
-// never enumerated, so `statSync(sourcePath)` is never called on it and the
-// `absent => expired` branch only fires on the same-pass readdir->stat race. A
-// file that expires *between* two passes would be silently forgotten forever,
-// and task 1.2's seal trigger ("seal only when the source disappears") would
-// almost never fire.
-//
-// WHY THE `.zst` STRIP IS NOT OPTIONAL EITHER. `spec/data-model-v2.md:580-584`
-// fixes sealed names as `<id>.jsonl.zst` / `<id>.txt.zst`. Without stripping the
-// suffix before keying, a sealed file drops out of the union entirely: the
-// durable `expired` trigger stops re-firing for it and — far worse — if the
-// source ever reappears (backup restore, reused slug, re-imaged machine) the
-// union reads "source yes / archive no" and we write a fresh `<name>.jsonl` from
-// byte 0 beside the existing `<name>.jsonl.zst`, double-generating the same
-// logical file in the system of record. This module never reads, writes or
-// decompresses a `.zst`; it only refuses to be blind to one.
-//
-// NOT a port of `tailer.ts`'s `scanTranscriptRoot`, which is depth EXACTLY one
-// and deliberately skips `subagents/` and `tool-results/` to avoid double-
-// *ingesting* sidechain lines. That reasoning is about ingestion and inverts for
-// archival: those files expire too, and 25 of them live one level deeper still
-// (`<session>/subagents/workflows/wf_*/agent-*.jsonl`), which any fixed-depth
-// walk silently misses.
+// A union of two recursive walks, source and archive, keyed on the mapped
+// relative path. Both walks are needed: keyed on the source alone, a file whose
+// source is already gone is never enumerated, making `expired` unreachable. The
+// `.zst` strip is needed too, or a sealed file drops out of the union and a
+// reappearing source is written fresh from byte 0 beside its sealed copy.
 
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { relativeUnder } from './paths.js';
 
-/** Directories under a session that hold expiring sidecars, walked recursively. */
 const SESSION_SUBDIRS = ['subagents', 'tool-results'] as const;
 
-/** The four kinds that expire. `<slug>/memory/*.md` and `sessions-index.json` are not among them. */
+/** The kinds that expire — `<slug>/memory/*.md` and `sessions-index.json` do not. */
 const ALLOWED_SUFFIXES = ['.jsonl', '.meta.json', '.txt'] as const;
 
-/** The sealed-file suffix owned by task 1.2. Stripped before keying, never read. */
 const SEALED_SUFFIX = '.zst';
 
 /** One logical file, as seen by either walk or both. */
 export interface DiscoveredEntry {
-  /** The key: the path relative to whichever root, identical on both sides. */
+  /** The key: relative to whichever root, identical on both sides. */
   relPath: string;
   sourcePath: string;
-  /** The LOGICAL archive path. When `sealed`, the file on disk is this + `.zst`. */
+  /** Logical: when `sealed`, the file on disk is this + `.zst`. */
   archivePath: string;
   presence: 'both' | 'source-only' | 'archive-only';
   sealed: boolean;
 }
 
-/** Directory entries of one kind, or `[]` when the directory is unreadable. */
 function readDirSafe(dir: string, wantDirs: boolean): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -61,12 +36,11 @@ function readDirSafe(dir: string, wantDirs: boolean): string[] {
   }
 }
 
-/** True when the (already `.zst`-stripped) name is one of the four kinds. */
+/** Expects an already `.zst`-stripped name. */
 function isAllowed(name: string): boolean {
   return ALLOWED_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
-/** Every allowlisted file under `dir`, at any depth, as absolute paths. */
 function walkRecursive(dir: string, stripSealed: boolean, out: string[]): void {
   for (const name of readDirSafe(dir, false)) {
     if (isAllowed(stripSealed ? stripSealedSuffix(name).name : name)) {
@@ -78,7 +52,6 @@ function walkRecursive(dir: string, stripSealed: boolean, out: string[]): void {
   }
 }
 
-/** `agent-x.jsonl.zst` -> `{ name: 'agent-x.jsonl', sealed: true }`. */
 function stripSealedSuffix(name: string): { name: string; sealed: boolean } {
   return name.endsWith(SEALED_SUFFIX)
     ? { name: name.slice(0, -SEALED_SUFFIX.length), sealed: true }
@@ -86,12 +59,8 @@ function stripSealedSuffix(name: string): { name: string; sealed: boolean } {
 }
 
 /**
- * Every in-scope file under one root:
- *   `<slug>/<session>.jsonl`                 (depth exactly one)
- *   `<slug>/<session>/subagents/**`          (recursive)
- *   `<slug>/<session>/tool-results/**`       (recursive)
- * Never throws — an unreadable project must not stop the other eleven from being
- * protected.
+ * Never throws. `<slug>/<session>.jsonl` at depth one, plus the sidecar dirs to
+ * arbitrary depth — some transcripts nest under `subagents/workflows/`.
  */
 function walkRoot(root: string, stripSealed: boolean): string[] {
   const found: string[] = [];
@@ -110,10 +79,7 @@ function walkRoot(root: string, stripSealed: boolean): string[] {
   return found;
 }
 
-/**
- * The union of both walks, keyed on the mapped relative path and sorted for a
- * deterministic pass order.
- */
+/** Sorted, for a deterministic pass order. */
 export function discover(sourceRoot: string, archiveRoot: string): DiscoveredEntry[] {
   const entries = new Map<string, DiscoveredEntry>();
 
@@ -147,10 +113,7 @@ export function discover(sourceRoot: string, archiveRoot: string): DiscoveredEnt
       });
     } else {
       existing.presence = 'both';
-      // Sticky: if BOTH `<name>.jsonl` and `<name>.jsonl.zst` somehow exist, the
-      // readdir order must not decide which one we believe. Treating the pair as
-      // sealed is the non-destructive reading — `mirror.ts` then appends to
-      // neither, and the anomaly surfaces instead of being extended.
+      // Sticky, so readdir order cannot pick between a plain/sealed pair.
       existing.sealed ||= sealed;
     }
   }

@@ -1,39 +1,18 @@
-// The advisory single-pass lock.
-//
-// THIS IS A CORRECTNESS PRECONDITION, NOT DEFENCE IN DEPTH. Do not "optimise" it
-// away as redundant. `mirror.ts` writes positionally (`writeSync(fd, ..., pos)`)
-// rather than with `O_APPEND`, because `O_APPEND` lets the kernel pick the offset
-// and two overlapping cron runs would each append their own delta and duplicate
-// bytes into the system of record. But a positional write PAST EOF creates a
-// sparse NUL hole that `statSync().size` reports as real content:
-//
-//   writeSync(fd,'AAAA',0,4,0); writeSync(fd,'CCCC',0,4,12)
-//   -> size 16, bytes: 41 41 41 41 00*8 43 43 43 43
-//
-// With a chunked copy loop, two concurrent passes can land chunk N+1 before
-// chunk N; a crash in that window leaves an archive whose size and head hash both
-// look fine and which the next pass therefore extends from the wrong offset —
-// permanent silent corruption. `archiveOnce` copies ZERO bytes when it cannot
-// acquire this lock. Invariant W (`mirror.ts`) is the second line of defence and
-// turns a lock bug into a loud throw rather than a hole.
-//
-// Written to be absorbed by task 3.4's general single-instance lock, not
-// duplicated by it.
+// The advisory single-pass lock. Not defence in depth: `mirror.ts` writes
+// positionally, so two concurrent passes can land chunks out of order and leave
+// a sparse NUL hole the next pass then extends from the wrong offset.
 
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname as osHostname } from 'node:os';
 import { dirname } from 'node:path';
 import { ensureDir, resolveLockPath, statSafe } from './paths.js';
 
-/**
- * How long a STALE RECORD is trusted — never how long a running process is
- * allowed to run. See the ordered policy below: liveness outranks age.
- */
+/** How long a stale record is trusted — never how long a live process may run. */
 export const MAX_LOCK_AGE_MS = 60 * 60 * 1000;
 
 export type ReclaimReason = 'esrch' | 'foreign-host' | 'unparseable';
 
-/** Reported in `--json` so a stuck lock is visible to `doctor` instead of swallowed by exit 0. */
+/** Reported in `--json` so a stuck lock is visible instead of swallowed by exit 0. */
 export interface LockState {
   state: 'acquired' | 'held' | 'reclaimed';
   holder_pid?: number;
@@ -43,16 +22,15 @@ export interface LockState {
 
 export interface Lock {
   state: LockState;
-  /** Best-effort, never throws. Deletes the lock file only if it is still ours. */
+  /** Best-effort, never throws. Deletes the file only if it is still ours. */
   release: () => void;
 }
 
-/** Injectable identity + clock, so the five ordered rows are testable without spawning processes. */
+/** Injectable identity + clock, so the reclaim rows are testable. */
 export interface LockIdentity {
   pid?: number;
   hostname?: string;
   now?: number;
-  /** `process.kill(pid, 0)` by default. */
   isAlive?: (pid: number) => 'alive' | 'dead' | 'permission-denied';
 }
 
@@ -67,9 +45,8 @@ function defaultIsAlive(pid: number): 'alive' | 'dead' | 'permission-denied' {
     process.kill(pid, 0);
     return 'alive';
   } catch (error) {
-    // EPERM means the process EXISTS and is owned by another user. Treating it
-    // as dead (the naive `try { kill } catch { stale }` shape) steals a live
-    // holder's lock — verified: `process.kill(1, 0)` throws EPERM for launchd.
+    // EPERM means the process exists under another user; only ESRCH means dead.
+    // Treating EPERM as dead would steal a live holder's lock.
     return (error as NodeJS.ErrnoException).code === 'EPERM' ? 'permission-denied' : 'dead';
   }
 }
@@ -79,9 +56,7 @@ function parseRecord(raw: string): LockRecord | undefined {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return undefined;
     const { pid, started_at, hostname } = parsed as Partial<LockRecord>;
-    // `pid <= 0` is rejected on purpose: `process.kill(0, sig)` and negative pids
-    // signal whole process GROUPS. A corrupt lock file must never be able to
-    // steer a signal, not even signal 0.
+    // Reject `pid <= 0`: those signal whole process groups.
     if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return undefined;
     return {
       pid,
@@ -93,7 +68,7 @@ function parseRecord(raw: string): LockRecord | undefined {
   }
 }
 
-/** Create the lock file exclusively, or report `EEXIST` by returning false. */
+/** Exclusive create, returning false on `EEXIST`. */
 function tryCreate(lockPath: string, record: LockRecord): boolean {
   let fd: number;
   try {
@@ -110,15 +85,7 @@ function tryCreate(lockPath: string, record: LockRecord): boolean {
   return true;
 }
 
-/**
- * Delete the lock file only when it still records `pid`.
- *
- * A naive `unlinkSync` on exit deletes its SUCCESSOR's lock: process A is
- * reclaimed from, B creates its own lock and starts copying, A then exits and
- * unlinks — reopening the exact concurrent-chunk window this lock exists to
- * close. Best-effort by design: a SIGKILLed process releases nothing at all,
- * which is precisely what the reclaim rows below exist to clean up.
- */
+/** Only when it still records `pid`: an unconditional unlink deletes a successor's lock. */
 export function releaseLock(lockPath: string, pid: number): void {
   try {
     const record = parseRecord(readFileSync(lockPath, 'utf8'));
@@ -129,21 +96,13 @@ export function releaseLock(lockPath: string, pid: number): void {
 }
 
 /**
- * Acquire the pass lock.
- *
- * The reclaim rows are ORDERED and MUTUALLY EXCLUSIVE — first match wins, and
- * liveness outranks age:
- *
- *   1. `kill(pid,0)` throws EPERM        -> alive, other user  -> HELD
- *   2. `kill(pid,0)` succeeds && same host -> alive            -> HELD, regardless of age
- *   3. `kill(pid,0)` throws ESRCH        -> dead               -> reclaim 'esrch'
- *   4. recorded hostname differs         -> pid is meaningless -> reclaim 'foreign-host'
- *   5. unparseable / missing pid         -> reclaim, aged against the file's mtime
- *
- * Age is a tiebreaker inside rows 3-5, NEVER an override of rows 1-2. A
- * provably live same-host holder is held forever and surfaces as a stuck lock in
- * the log and in `doctor` — visible and correct — rather than being silently
- * overrun by a second pass mid-copy.
+ * Acquire the pass lock. Rows are ordered, first match wins, and liveness
+ * outranks age — age only breaks ties in rows 3-5:
+ *   1. EPERM                 -> alive under another user -> held
+ *   2. alive && same host    -> held, at any age
+ *   3. ESRCH                 -> dead -> reclaim 'esrch'
+ *   4. hostname differs      -> reclaim 'foreign-host'
+ *   5. unparseable pid       -> reclaim, aged against the file's mtime
  */
 export function acquireLock(dataDir: string, identity: LockIdentity = {}): Lock {
   const pid = identity.pid ?? process.pid;
@@ -197,10 +156,7 @@ export function acquireLock(dataDir: string, identity: LockIdentity = {}): Lock 
   return reclaim(lockPath, mine, 'foreign-host', record.pid, age); // row 4
 }
 
-/**
- * Unlink then ONE retry of `wx`. If the retry also `EEXIST`s another pass won the
- * race — report held and do not loop.
- */
+/** Unlink then one retry of `wx`. A second `EEXIST` means another pass won the race. */
 function reclaim(
   lockPath: string,
   mine: LockRecord,

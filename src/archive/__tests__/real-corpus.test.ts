@@ -1,18 +1,7 @@
-// Test 23 — the real corpus, opt-in and flake-free.
-//
-// SKIPPED BY DEFAULT. Every other test in this directory synthesizes its
-// fixtures in a temp dir and never reads the developer's real
-// `~/.claude/projects`; this is the single deliberate exception, gated on
-// `AGENT_LENS_REAL_CORPUS=1`. It never writes to the corpus — only into a temp
-// archive root.
-//
-// BYTE-IDENTITY IS NOT ASSERTABLE HERE, and that is the whole design of this
-// test rather than a concession. The developer's own transcripts are appended to
-// WHILE THE TEST RUNS — ten files under one slug changed within ten minutes of
-// this being written, and the in-scope file count drifted 376 -> 384 across three
-// measurements taken a day apart. So the assertion is a byte-exact PREFIX for
-// every live file, upgraded to full identity only for the files whose
-// `{size, mtimeNs}` is provably unchanged across a re-stat after the pass.
+// Test 23 — the real corpus, skipped unless `AGENT_LENS_REAL_CORPUS=1`. Full
+// byte-identity is not assertable, since the corpus is appended to while the
+// test runs: the assertion is a byte-exact prefix, upgraded to identity only
+// where `{size, mtimeNs}` is unchanged across a re-stat.
 
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
@@ -85,13 +74,11 @@ describe('real corpus (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
             identical++;
           }
         }
-        // A live corpus still leaves the overwhelming majority of files quiescent;
-        // if none were, the prefix assertions above would be the only real ones.
+        // Non-vacuity: otherwise only the weaker prefix assertions ever run.
         expect(identical).toBeGreaterThan(0);
 
-        // (d) Zero source mutations attributable to us. A live append grows a file
-        // and moves its mtime, which we cannot forbid — but nothing we do could
-        // ever change an inode or a mode, or make a source SHRINK.
+        // (d) No source mutation attributable to us. A live append moves size and
+        // mtime, but nothing we do changes an inode or mode, or shrinks a source.
         for (const [path, start] of before) {
           const after = statOf(path);
           if (after === undefined) continue; // expired mid-pass: legitimate

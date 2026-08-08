@@ -1,9 +1,5 @@
-// The acceptance criteria.
-//
-// Fixtures are SYNTHESIZED in temp dirs. Nothing here reads the developer's real
-// `~/.claude/projects`. Every byte comparison is done in Node rather than by
-// shelling out to `diff`, because the fixture slug is dash-prefixed exactly like
-// the real corpus and `diff`/`ls`/`rsync` all parse that as a flag.
+// The acceptance criteria. Fixtures are synthesized in temp dirs; nothing here
+// reads a real transcript root.
 
 import { afterEach, describe, it, expect } from 'vitest';
 import {
@@ -52,7 +48,7 @@ function pass(extra: { verify?: boolean } = {}) {
   return archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot, ...extra });
 }
 
-/** Drive one file with an injected pre-read stat, so `settled === false` without a race. */
+/** Inject a pre-read stat, forcing `settled === false` without a race. */
 function passUnsettled(rel: string) {
   const s = sb();
   const sourceRoot = canonicalizeTranscriptPath(s.sourceRoot);
@@ -67,8 +63,7 @@ function passUnsettled(rel: string) {
     statFile: (path) => {
       const real = statSync(path, { bigint: true });
       if (call++ > 0) return real;
-      // The pre-read stat reports a DIFFERENT mtimeNs, so the post-read re-stat
-      // cannot match it: exactly the shape of "a writer landed across my window".
+      // A different pre-read mtimeNs means the re-stat cannot match.
       const doctored = Object.create(real) as BigIntStats;
       Object.defineProperty(doctored, 'mtimeNs', { value: real.mtimeNs + 1n });
       return doctored;
@@ -105,7 +100,7 @@ describe('AC1 — all four kinds mirror byte-identically', () => {
   });
 
   it('finds sidecars nested under subagents/workflows/** (Test 2)', () => {
-    // Goes red on any fixed-depth walk. 25 real files live at this depth today.
+    // Goes red on any fixed-depth walk.
     const s = sb();
     writeSource(s, SESSION, jsonLines(1));
     writeSource(s, NESTED_JSONL, jsonLines(1, 7));
@@ -129,10 +124,8 @@ describe('AC1 — all four kinds mirror byte-identically', () => {
   });
 
   it('archives a zero-newline meta.json IN FULL on the first pass (Test 7)', () => {
-    // The regression test for the measured 150/150 finding: every real
-    // `agent-*.meta.json` ends in `}` and contains no newline at all. Red under
-    // universal newline truncation (0 bytes forever), and red under a quiesce
-    // window that costs a mandatory extra pass.
+    // These end in `}` with no trailing newline, so universal newline truncation
+    // would archive 0 bytes of them forever.
     const s = sb();
     const body = '{"model":"claude-opus","usage":{"in":1,"out":2}}';
     writeSource(s, SUB_META, body);
@@ -171,8 +164,8 @@ describe('AC2 — appends copy only up to the last complete newline', () => {
   });
 
   it('a SETTLED partial trailing line is archived verbatim, then completed exactly once (Test 5)', () => {
-    // The torn-.jsonl rescue: under universal newline truncation this line is
-    // never copied, the source then expires, and the bytes are gone forever.
+    // Under universal newline truncation this line is never copied, the source
+    // then expires, and the bytes are gone.
     const s = sb();
     const complete = jsonLines(5);
     writeSource(s, SESSION, `${complete}{"partial":`);
@@ -212,8 +205,7 @@ describe('AC3 — size comes from statSync, with no persisted counter', () => {
   });
 
   it('a crash mid-append converges to a byte-identical mirror with no torn line (Test 9)', () => {
-    // Under Invariant W a crash IS a shorter prefix, which is exactly what
-    // truncating the archive to a mid-line offset models.
+    // Truncating the archive to a mid-line offset models a crash.
     const s = sb();
     const body = jsonLines(10);
     writeSource(s, SESSION, body);
@@ -241,8 +233,7 @@ describe('AC3 — size comes from statSync, with no persisted counter', () => {
     // The lock is released on the normal path, so it should not even be present.
     expect(readdirSync(s.dataDir).sort()).toEqual(['archive', 'logs']);
 
-    // And the pass is a pure function of the two trees: deleting the log changes
-    // no decision.
+    // The pass is a pure function of the two trees: deleting the log changes nothing.
     const before = readBytes(archivePath(s, SESSION));
     const again = pass();
     expect(again.bytesCopied).toBe(0);
@@ -250,8 +241,7 @@ describe('AC3 — size comes from statSync, with no persisted counter', () => {
   });
 
   it('creates NO archive entry for a zero-byte copy, then creates it once settled (Test 25)', () => {
-    // A 0-byte archive file would join the archive-walk keyspace, survive the
-    // source's expiry, and hand task 1.2 an empty file to seal as the truth.
+    // A 0-byte archive file would outlive its source as the archived truth.
     const s = sb();
     const body = '{"model":"claude","no_newline_anywhere":true}';
     writeSource(s, SUB_META, body);
@@ -307,9 +297,8 @@ describe('AC4 — divergence never destroys', () => {
   });
 
   it('seam rewrite: the 181-of-182 case a head check cannot see (Test 15)', () => {
-    // archiveSize 10240 -> head window [0,4096), seam window [6144,10240).
-    // The rewrite is pinned INSIDE the seam window: "anywhere after 4096" would
-    // land in the blind band and the test would go red for the wrong reason.
+    // archiveSize 10240 -> head [0,4096), seam [6144,10240). Pin the rewrite
+    // inside the seam window, or it lands in the blind band.
     const s = sb();
     const body = Buffer.alloc(10240, 0x61);
     writeSource(s, TOOL_TXT, body);
@@ -329,8 +318,8 @@ describe('AC4 — divergence never destroys', () => {
   });
 
   it('the blind band between the head and seam windows is undetected, by design (Test 15b)', () => {
-    // Pins the measured 1.05% coverage as a DOCUMENTED limitation rather than an
-    // accident. Goes red the day someone moves either window without updating §5.
+    // Pins the blind band as a known limitation, so moving either probe window
+    // is a deliberate change.
     const s = sb();
     const body = Buffer.alloc(10240, 0x61);
     writeSource(s, TOOL_TXT, body);
@@ -423,8 +412,7 @@ describe('the divergence log (Test 18)', () => {
     const lines = readFileSync(join(s.dataDir, 'logs', 'archive.jsonl'), 'utf8')
       .split('\n')
       .filter(Boolean);
-    // One line for the copying pass, one for the diverging pass. TWO files
-    // diverged in that second pass and it still wrote exactly one line.
+    // One line per pass, not per file: two files diverged in the second pass.
     expect(lines).toHaveLength(2);
     const record = JSON.parse(lines[1]!) as {
       diverged: { source_path: string; reason: string }[];
@@ -500,17 +488,14 @@ describe('--verify catches what the per-pass probe cannot (Test 24)', () => {
     const plain = pass();
     const verified = pass({ verify: true });
 
-    // A quiet pass reads only the 4 KB head + 4 KB seam probes (x2 for source
-    // head reporting), never the 2 MB body.
+    // A quiet pass reads only the head and seam probes, never the whole body.
     expect(plain.bytesRead).toBeLessThan(64 * 1024);
     expect(verified.bytesRead).toBeGreaterThanOrEqual(body.length);
   });
 });
 
 describe('path helpers agree with the originals they will outlive (Test 21)', () => {
-  // Guards the deliberate copies in `paths.ts` against interim drift while both
-  // spellings exist. DELETE THIS TEST at plan 002 §4.5, together with
-  // `capture/tailer.ts` and `capture/spool.ts`.
+  // Guards the copies in `paths.ts` against drift. Delete with `capture/tailer.ts`.
   it('resolveTranscriptRoot, canonicalizeTranscriptPath and resolveDataDir match', async () => {
     const tailer = await import('../../capture/tailer.js');
     const spool = await import('../../capture/spool.js');
@@ -544,7 +529,7 @@ describe('path helpers agree with the originals they will outlive (Test 21)', ()
   });
 });
 
-/** Expire a source file, standing in for what Claude Code does after ~41 days. */
+/** Expire a source file, standing in for the harness's own retention sweep. */
 function rmSourceTree(s: Sandbox, rel: string): void {
   rmSync(sourcePath(s, rel));
 }

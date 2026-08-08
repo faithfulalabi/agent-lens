@@ -1,12 +1,6 @@
-// Shared fixture plumbing for the archive tests.
-//
-// Fixtures are SYNTHESIZED in temp dirs. Nothing here reads the developer's real
-// `~/.claude/projects` — `real-corpus.test.ts` is the single opt-in exception.
-//
-// The slug is dash-prefixed on purpose: 12 of 12 real project dirs begin with `-`
-// (`-Users-faithful-Desktop-agent-lens`), which breaks `ls`, `diff` and every
-// other tool that parses a leading dash as a flag. Every comparison in these
-// tests is therefore done in Node, never by shelling out.
+// Shared fixture plumbing; everything is synthesized in temp dirs. The slug is
+// dash-prefixed to match real project dirs, which is why comparisons are done in
+// Node: `ls`/`diff` parse a leading dash as a flag.
 
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +28,6 @@ export function cleanup(sandbox: Sandbox): void {
   rmSync(sandbox.root, { recursive: true, force: true });
 }
 
-/** Write a source file at a `sourceRoot`-relative path, creating parents. */
 export function writeSource(sandbox: Sandbox, rel: string, content: string | Buffer): string {
   const path = join(sandbox.sourceRoot, rel);
   mkdirSync(dirname(path), { recursive: true });
@@ -42,7 +35,6 @@ export function writeSource(sandbox: Sandbox, rel: string, content: string | Buf
   return path;
 }
 
-/** Write a file directly into the archive tree (to stand in for what 1.2 produces). */
 export function writeArchive(sandbox: Sandbox, rel: string, content: string | Buffer): string {
   const path = join(sandbox.archiveRoot, rel);
   mkdirSync(dirname(path), { recursive: true });
@@ -58,7 +50,7 @@ export function archivePath(sandbox: Sandbox, rel: string): string {
   return join(sandbox.archiveRoot, rel);
 }
 
-/** `n` newline-terminated JSON lines, each padded to a predictable width. */
+/** `n` newline-terminated JSON lines, padded to a predictable width. */
 export function jsonLines(n: number, from = 0): string {
   let out = '';
   for (let i = from; i < from + n; i++) out += `{"i":${i},"pad":"${'x'.repeat(10)}"}\n`;
@@ -69,7 +61,7 @@ export function readBytes(path: string): Buffer {
   return readFileSync(path);
 }
 
-/** Byte-for-byte equality, in Node — never `diff`, which chokes on the dash-prefixed slug. */
+/** Byte-for-byte equality, in Node — never `diff` (see the dash-prefixed slug above). */
 export function bytesEqual(a: string, b: string): boolean {
   return readFileSync(a).equals(readFileSync(b));
 }

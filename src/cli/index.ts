@@ -7,24 +7,8 @@ interface Command {
 }
 
 /**
- * Every `run` is a LAZY dynamic import, and that is load-bearing rather than
- * stylistic.
- *
- * With eager top-of-file imports, importing this module loaded 253 native modules
- * including `Internal Binding sqlite` — because `start` pulls in the server and
- * the DB layer. Cron does not run `src/archive/**`; it runs `bin/agent-lens.js
- * archive`, whose entry is this file. So a clean archive module with a dirty
- * entry point still boots `node:sqlite` on every tick, and task 1.1's "depends on
- * nothing" would be false exactly where it needs to be true.
- *
- * Resolving the name from this static table and importing only the matched
- * command's module graph fixes that, and speeds every other command up as a side
- * effect — `hook` fires on the agent's critical path and no longer loads the
- * server and DB modules it never calls.
- *
- * `run`'s declared type already permits `Promise<void>` and `main` already awaits
- * it, so this is a shape change with no call-site churn.
- * `src/archive/__tests__/source-readonly.test.ts` guards it.
+ * Every `run` must stay a lazy dynamic import: eager ones pull `start`'s server
+ * and DB graph, and with it `node:sqlite`, into every invocation.
  */
 export const COMMANDS: Command[] = [
   {

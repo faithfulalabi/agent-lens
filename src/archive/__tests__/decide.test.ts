@@ -1,5 +1,4 @@
-// Test 6 — the pure copy rule. No filesystem, no race, no clock, so the whole
-// 2x2x2 table is pinned independently of I/O.
+// Test 6 — the pure copy rule, pinned independently of any I/O.
 
 import { describe, it, expect } from 'vitest';
 import { decideCopyEnd } from '../mirror.js';
@@ -59,8 +58,8 @@ describe('decideCopyEnd (AC2) — the one copy rule, per state and not per kind'
   }
 
   it('never returns an end before the archive it is extending', () => {
-    // A shrunk source is the divergence path's business, not the copy rule's;
-    // the rule must still refuse to hand back a truncating offset.
+    // A shrunk source is the divergence path's business, but the rule must
+    // still refuse to return a truncating offset.
     expect(
       decideCopyEnd({ archiveSize: 500, sourceSize: 10, lastNewlineOffset: 5, settled: true }),
     ).toBe(500);

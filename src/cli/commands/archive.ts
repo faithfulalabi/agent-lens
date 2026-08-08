@@ -1,20 +1,11 @@
-// `agent-lens archive` — mirror Claude Code transcripts into the durable archive.
-//
-// Safe to invoke every minute: the advisory lock, the 0-byte no-op path and the
-// quiet-pass-writes-no-log-line rule make a repeat pass free. Exit 0 on
-// divergence AND on a held lock (a cron must not page for a normal overlap);
-// non-zero only on fatal I/O. `--verify` is the periodic full-integrity audit and
-// is explicitly NOT for the per-minute cron.
+// `agent-lens archive`. Exits 0 on divergence and on a held lock, since a cron
+// must not page for a normal overlap; non-zero only on fatal I/O.
 
 import { archiveOnce, type ArchiveResult } from '../../archive/index.js';
 
 /**
- * `--flag value` and `--flag=value`, matching `start.ts:4-27`.
- *
- * NOTE: a value beginning with `-` must be accepted. Every one of the 12 real
- * project slugs starts with `-` (`-Users-faithful-Desktop-agent-lens`), so a
- * "looks like a flag" guard would reject legitimate paths. `start.ts`'s
- * `parseHostValue` only rejects `''`, and that is the pattern followed here.
+ * `--flag value` and `--flag=value`. A value beginning with `-` must be
+ * accepted: project slugs are path-derived and start with one.
  */
 export function parseStringFlag(args: string[], name: string): string | undefined {
   const long = `--${name}`;
@@ -35,7 +26,6 @@ export function parseStringFlag(args: string[], name: string): string | undefine
   return undefined;
 }
 
-/** Human-readable pass summary. */
 export function formatSummary(result: ArchiveResult): string {
   const diverged = result.files.filter((f) => f.source_state === 'diverged');
   const expired = result.files.filter((f) => f.source_state === 'expired');
