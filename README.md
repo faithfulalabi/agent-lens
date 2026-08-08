@@ -58,6 +58,7 @@ npm install      # installs root + ui deps
 npm test         # run the Vitest suite
 npm run dev       # boot the collector + Vite UI against your real sessions
 npm run dev:ui    # boot the Vite UI alone (CSS work, no collector)
+npm run render-gate -- --task 0.3  # drive the real UI in Chrome, assert what rendered
 npm run typecheck # TypeScript strict check (src + ui)
 npm run lint      # ESLint
 node ./bin        # print the CLI help

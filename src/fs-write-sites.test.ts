@@ -170,7 +170,27 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'cli/hook.ts#4',
     callee: 'appendFileSync',
-    why: 'the second failure path\'s log append, same <dataDir>/logs target',
+    why: "the second failure path's log append, same <dataDir>/logs target",
+  },
+  {
+    key: 'render-gate/index.ts#1',
+    callee: 'mkdirSync',
+    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, same class as archive/paths.ts#1. Never a transcript root; the gate only READS ~/.claude/projects, through the tailer",
+  },
+  {
+    key: 'render-gate/index.ts#2',
+    callee: 'writeFileSync',
+    why: 'writes one screenshot PNG per shot into the directory from #1; the four names are a closed literal union (ShotName), never derived from any corpus',
+  },
+  {
+    key: 'render-gate/index.ts#3',
+    callee: 'writeFileSync',
+    why: 'writes report.json into the directory from #1; fixed name',
+  },
+  {
+    key: 'render-gate/index.ts#4',
+    callee: 'writeFileSync',
+    why: 'writes the index.html contact sheet into the directory from #1; fixed name',
   },
   {
     key: 'server/config.ts#1',
