@@ -345,6 +345,9 @@ export async function startServer(
         // Tell every open stream WHY it is ending and let it close, before
         // `server.close` waits on connections that would otherwise sit open.
         deltas.shutdown();
+        // Both stream families, not just the delta scopes: the legacy
+        // `/api/stream` is Broadcaster-backed and `deltas` cannot see it.
+        broadcaster.shutdown();
         server.close(() => {
           db.close();
           clearConfig(dataDir);
