@@ -7,9 +7,17 @@ describe('scaffold smoke', () => {
     expect(typeof deriveEventId).toBe('function');
   });
 
-  it('registers the six CLI commands', () => {
+  it('registers the seven CLI commands', () => {
     const names = COMMANDS.map((c) => c.name);
-    expect(names).toEqual(['start', 'hook', 'install', 'uninstall', 'doctor', 'import']);
+    expect(names).toEqual(['start', 'hook', 'install', 'uninstall', 'doctor', 'import', 'archive']);
+  });
+
+  it('registers every command as a lazily-loaded runner', () => {
+    // Not identity with an imported symbol: `run` is now a dynamic-import thunk
+    // so that `agent-lens archive` never loads `node:sqlite` via `start`.
+    for (const cmd of COMMANDS) {
+      expect(typeof cmd.run).toBe('function');
+    }
   });
 
   it('prints help listing all five tracer-bullet commands', () => {
