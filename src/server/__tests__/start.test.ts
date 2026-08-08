@@ -86,9 +86,14 @@ describe('startServer — inactivity sweep lifecycle', () => {
 const SLUG = '-Users-dev-proj';
 
 /** Write a transcript inside a root, creating its project slug directory. */
-function writeTranscript(root: string, session: string, lines: readonly string[]): string {
-  mkdirSync(join(root, SLUG), { recursive: true });
-  const path = join(root, SLUG, `${session}.jsonl`);
+function writeTranscript(
+  root: string,
+  session: string,
+  lines: readonly string[],
+  slug = SLUG,
+): string {
+  mkdirSync(join(root, slug), { recursive: true });
+  const path = join(root, slug, `${session}.jsonl`);
   writeFileSync(path, lines.map((l) => `${l}\n`).join(''));
   return path;
 }
@@ -219,6 +224,40 @@ describe('startServer — boot hermeticity', () => {
       } finally {
         offset.close();
       }
+    } finally {
+      cleanupDir(root);
+    }
+  });
+
+  // Goes RED if `firstSight` / `projects` are threaded by restructuring
+  // `runTailPass`'s `tailOnce(...)` call rather than added to the already-bound
+  // options object: `options.onTail?.(tailOnce(...))` short-circuits its own
+  // argument, so the tailer would only run for tests that observe it.
+  it('forwards firstSight: backfill and projects into the boot catch-up pass', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
+    const lines = Array.from({ length: 12 }, (_, i) => transcriptLine(i));
+    const path = writeTranscript(root, 'sess-stranger', lines);
+    const other = writeTranscript(root, 'sess-elsewhere', lines, '-Users-dev-other');
+    const passes: TailResult[] = [];
+
+    try {
+      server = await bootTestServer({
+        transcriptRoot: root,
+        firstSight: 'backfill',
+        projects: [SLUG],
+        tailIntervalMs: 60_000,
+        onTail: (r) => passes.push(r),
+      });
+      // Backfilled, not first-sighted: read from zero on a file no session named.
+      expect(passes[0]!.files).toHaveLength(1);
+      expect(passes[0]!.files[0]).toMatchObject({
+        reset: 'none',
+        bytesRead: statSync(path).size,
+      });
+      expect(passes[0]!.ingested).toBe(lines.length);
+      // …and the slug filter kept the other project out entirely.
+      expect(passes[0]!.files[0]!.path).not.toBe(other);
+      expect(countRows(server.dataDir, 'SELECT COUNT(*) AS n FROM tailer_offsets')).toBe(1);
     } finally {
       cleanupDir(root);
     }

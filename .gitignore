@@ -41,3 +41,6 @@ ui/dist/
 # wrote during Task 1.5's live run. Asserted by experiments/.../gitignore.test.mjs.
 **/fixtures/raw/
 **/.capture-scratch/
+
+# `npm run dev`'s data dir: a real SQLite DB of the developer's own sessions.
+/.agent-lens-dev/

@@ -27,7 +27,7 @@ import {
   type Stats,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   commitTailerOffset,
@@ -108,6 +108,17 @@ export interface TailOptions {
   maxBytesPerFilePerPass?: number;
   /** Override for {@link MAX_LINE_BYTES} (tests). */
   maxLineBytes?: number;
+  /**
+   * `'eof'` (the default) records EOF for a file no session named and ingests
+   * nothing — otherwise booting parses every transcript on the machine.
+   */
+  firstSight?: 'eof' | 'backfill';
+  /**
+   * Restrict discovery to these `<slug>` directory names. Applied to BOTH
+   * sources: the sessions source is a DB column that can name any path, so
+   * filtering only the scan silently does not filter.
+   */
+  projects?: readonly string[];
   /**
    * Live-tail publisher, forwarded verbatim to `ingestBatch` (Task 6.1a).
    *
@@ -196,9 +207,10 @@ export function tailOnce(
 ): TailResult {
   const root = canonicalizeTranscriptPath(resolveTranscriptRoot(options.transcriptRoot));
   const bounded = options.transcriptRoot !== undefined;
+  const projects = options.projects === undefined ? undefined : new Set(options.projects);
   const result: TailResult = { files: [], ingested: 0, deadLettered: 0 };
 
-  for (const file of discoverTranscripts(db, root, bounded)) {
+  for (const file of discoverTranscripts(db, root, bounded, projects)) {
     let outcome: TailFileResult | undefined;
     try {
       outcome = tailFile(db, broadcaster, file, options);
@@ -238,16 +250,22 @@ function discoverTranscripts(
   db: DatabaseSync,
   root: string,
   bounded: boolean,
+  projects: ReadonlySet<string> | undefined,
 ): DiscoveredFile[] {
   const byPath = new Map<string, DiscoveredFile>();
 
   for (const row of transcriptPathsFromSessions(db)) {
     const path = canonicalizeTranscriptPath(row.transcript_path);
     if (bounded && !isUnder(path, root)) continue;
+    // The filter implies "under the root" too: this column can name any path on
+    // the machine, and a same-named directory elsewhere must not slip through.
+    if (projects !== undefined && !(isUnder(path, root) && projects.has(slugOf(path)))) {
+      continue;
+    }
     byPath.set(path, { path, sessionId: row.session_id, known: true });
   }
 
-  for (const path of scanTranscriptRoot(root)) {
+  for (const path of scanTranscriptRoot(root, projects)) {
     // A sessions-derived entry wins: it carries the real session id and marks
     // the file as one we have a reason to read from the start.
     if (byPath.has(path)) continue;
@@ -266,9 +284,13 @@ function discoverTranscripts(
  * and the sub-agent file, so recursing would double-ingest real events rather
  * than dedupe them (sub-agent merge is Task 4.2's problem, with its own policy).
  */
-function scanTranscriptRoot(root: string): string[] {
+function scanTranscriptRoot(
+  root: string,
+  projects: ReadonlySet<string> | undefined,
+): string[] {
   const found: string[] = [];
   for (const slug of readDirSafe(root, true)) {
+    if (projects !== undefined && !projects.has(slug)) continue;
     for (const name of readDirSafe(join(root, slug), false)) {
       if (!name.endsWith('.jsonl')) continue;
       found.push(canonicalizeTranscriptPath(join(root, slug, name)));
@@ -298,6 +320,11 @@ function sessionIdFromPath(path: string): string {
   return basename(path, '.jsonl');
 }
 
+/** The project slug owning a transcript — its parent directory name. */
+function slugOf(path: string): string {
+  return basename(dirname(path));
+}
+
 // --- One file, one pass ----------------------------------------------------
 
 /**
@@ -324,7 +351,8 @@ function tailFile(
     // otherwise starting the collector ingests every unrelated project's history
     // synchronously before the socket binds. Growth from here forward IS
     // captured, which is the backstop role the directory scan plays.
-    if (stored === undefined && !file.known) {
+    // `firstSight: 'backfill'` opts out and falls through to `decideStart`.
+    if (stored === undefined && !file.known && (options.firstSight ?? 'eof') === 'eof') {
       // `deltas` is inert on an empty slice — `ingestBatch` short-circuits above
       // its staging block — but a field threaded at one of two call sites is a
       // trap for the next author.
@@ -371,7 +399,8 @@ function decideStart(
   fd: number,
   stat: Stats,
 ): { start: number; reset: TailReset } {
-  // A known session with no offset row yet: read it from the beginning.
+  // No offset row yet: read from the beginning. A known session, or any unknown
+  // file under `firstSight: 'backfill'`. `reset: 'none'` — nothing was re-read.
   if (stored === undefined) return { start: 0, reset: 'none' };
 
   const fp = parseFingerprint(stored.file_identity);

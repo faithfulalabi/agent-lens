@@ -9,48 +9,18 @@
 // the scripts are executed in a `vm` sandbox and the result is inspected.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { runInNewContext } from 'node:vm';
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { BOOTSTRAP_MARKER, injectToken } from '../static-ui.js';
-import { bootTestServer, cleanupDir, type TestServer } from './helpers.js';
+import {
+  bootstrapFromHtml,
+  bootTestServer,
+  cleanupDir,
+  urlLiterals,
+  type TestServer,
+} from './helpers.js';
 
 const MARKED_HTML = `<!doctype html>
 <html lang="en"><head>${BOOTSTRAP_MARKER}</head><body><div id="root"></div></body></html>`;
-
-/** The published global, shaped as a browser would see it after parsing `html`. */
-interface Bootstrap {
-  token: string;
-  tokenHeader: string;
-}
-
-/**
- * Run every inline `<script>` in `html` against a stub `window`, then hand back
- * what they defined. This is the closest thing to "what the browser ends up
- * with" that a node test can assert on, and — unlike a source-text match — it
- * cannot be satisfied by a string that merely looks right.
- */
-function bootstrapFromHtml(html: string): Bootstrap | undefined {
-  const window: Record<string, unknown> = {};
-  for (const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
-    const body = match[1] ?? '';
-    if (body.trim() === '') continue;
-    runInNewContext(body, { window });
-  }
-  return window.__AGENT_LENS__ as Bootstrap | undefined;
-}
-
-/**
- * Every string in `html` that a browser could turn into a request target, plus
- * anything that merely looks like one: `src`/`href` values, absolute URLs, and
- * query strings. A token in any of them would leak into referrers and logs.
- */
-function urlLiterals(html: string): string[] {
-  return [
-    ...[...html.matchAll(/\b(?:src|href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)].map((m) => m[1]!),
-    ...[...html.matchAll(/https?:\/\/[^\s"'`<>]+/g)].map((m) => m[0]),
-    ...[...html.matchAll(/\?[^\s"'`<>]*=[^\s"'`<>]*/g)].map((m) => m[0]),
-  ];
-}
 
 let server: TestServer | undefined;
 

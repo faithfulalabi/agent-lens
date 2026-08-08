@@ -16,7 +16,8 @@
     "ui/dist"
   ],
   "scripts": {
-    "dev": "npm --prefix ui run dev",
+    "dev": "tsx src/dev/server.ts",
+    "dev:ui": "npm --prefix ui run dev",
     "test": "vitest run",
     "snapshots:update": "AGENT_LENS_UPDATE_SNAPSHOTS=1 vitest run -u src/capture/__tests__/golden-replay.test.ts",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",

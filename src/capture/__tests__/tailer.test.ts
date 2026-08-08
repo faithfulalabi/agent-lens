@@ -643,6 +643,65 @@ describe('tailOnce — AC4: discovery', () => {
     expect(archiveIds(db)).toHaveLength(2);
   });
 
+  // The inversion of the first-sight test above, which stays untouched as the
+  // proof that the default is preserved.
+  it('backfills a never-before-seen file from zero under firstSight: backfill', () => {
+    const db = freshDb();
+    const root = makeRoot();
+    const path = transcriptPath(root, 'sess-unknown');
+    writeLines(path, Array.from({ length: 20 }, (_, i) => line(i)));
+
+    const result = tail(db, root, { firstSight: 'backfill' });
+    // `reset: 'none'` — nothing was RE-read, and `'first-sight'` keeps meaning
+    // exactly "recorded EOF, ingested nothing".
+    expect(onlyFile(result)).toMatchObject({
+      reset: 'none',
+      bytesRead: sizeOf(path),
+      linesRead: 20,
+      ingested: 20,
+    });
+    expect(archiveIds(db)).toHaveLength(20);
+    expect(offsetFor(db, path)?.committed_offset).toBe(sizeOf(path));
+  });
+
+  it('scopes the directory scan to the named projects', () => {
+    const db = freshDb();
+    const root = makeRoot();
+    const wanted = transcriptPath(root, 'sess-a');
+    writeLines(wanted, [line(1)]);
+    const otherSlug = '-Users-dev-other';
+    mkdirSync(join(root, otherSlug), { recursive: true });
+    const unwanted = join(root, otherSlug, 'sess-b.jsonl');
+    writeLines(unwanted, [line(2)]);
+
+    const result = tail(db, root, { projects: [SLUG], firstSight: 'backfill' });
+    expect(result.files.map((f) => f.path)).toEqual([canonicalizeTranscriptPath(wanted)]);
+    // Zero ROWS, not merely zero ingest: an excluded file must not even be
+    // recorded, or the filter is a "read nothing once" rather than a scope.
+    expect(offsetFor(db, unwanted)).toBeUndefined();
+    expect(offsetRows(db)).toHaveLength(1);
+  });
+
+  it('scopes the sessions source too, not just the scan', () => {
+    // Goes RED if `projects` is applied only to `scanTranscriptRoot`: the
+    // sessions source is a DB column that can name any path on the machine.
+    const db = freshDb();
+    const root = makeRoot();
+    const otherSlug = '-Users-dev-other';
+    mkdirSync(join(root, otherSlug), { recursive: true });
+    const unwanted = join(root, otherSlug, 'sess-b.jsonl');
+    writeLines(unwanted, [line(1), line(2)]);
+    registerSession(db, unwanted, 'sess-b');
+
+    const wanted = transcriptPath(root, 'sess-a');
+    writeLines(wanted, [line(3)]);
+    registerSession(db, wanted, 'sess-a');
+
+    const result = tail(db, root, { projects: [SLUG] });
+    expect(result.files.map((f) => f.path)).toEqual([canonicalizeTranscriptPath(wanted)]);
+    expect(archiveIds(db)).toHaveLength(1);
+  });
+
   it('scans depth one only: no sub-agent files, no non-jsonl siblings', () => {
     const db = freshDb();
     const root = makeRoot();

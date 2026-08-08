@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { runInNewContext } from 'node:vm';
 import { readToken, TOKEN_HEADER } from '../../shared/index.js';
 import { DB_FILE } from '../../db/index.js';
 import type { SweepResult } from '../../capture/inactivity.js';
@@ -34,6 +36,10 @@ export interface BootOptions {
   transcriptRoot?: string;
   /** Tail period in ms; defaults to `0` — a test opts IN to tailing. */
   tailIntervalMs?: number;
+  /** Forwarded to the tailer; `'backfill'` reads unknown files from zero. */
+  firstSight?: 'eof' | 'backfill';
+  /** Forwarded to the tailer; restricts discovery to these slug directories. */
+  projects?: readonly string[];
   onTail?: (result: TailResult) => void;
   /** SSE heartbeat period in ms; defaults to the production 15s. */
   heartbeatMs?: number;
@@ -108,6 +114,8 @@ export async function bootTestServer(
     uiDir,
     transcriptRoot,
     tailIntervalMs: opts.tailIntervalMs ?? 0,
+    firstSight: opts.firstSight,
+    projects: opts.projects,
     onTail: opts.onTail,
     heartbeatMs: opts.heartbeatMs,
   });
@@ -221,6 +229,78 @@ export async function readOneEvent(
     throw new Error(`no "${eventType}" frame within ${timeoutMs}ms`);
   }
   return JSON.parse(match.data) as Record<string, unknown>;
+}
+
+// --- Raw HTTP, and reading the served page ---------------------------------
+// Shared with the dev-server suite, which needs these against a Vite proxy too.
+
+/** Status, headers and body of a raw HTTP response. */
+export interface RawResponse {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+}
+
+/**
+ * Raw HTTP request that can set a custom Host header — `fetch` forbids Host, so
+ * the host guard can only be exercised via `node:http`.
+ */
+export function rawRequest(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+  method = 'GET',
+  body?: string,
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path, method, headers, agent: false },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          text += chunk;
+        });
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }),
+        );
+      },
+    );
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
+
+/** The published global, shaped as a browser would see it after parsing `html`. */
+export interface Bootstrap {
+  token: string;
+  tokenHeader: string;
+}
+
+/**
+ * Run every inline CLASSIC script in `html` against a stub `window` and return
+ * what they defined — a source-text match could be satisfied by a string that
+ * only looks right. Modules are skipped: a `vm` realm has no module loader.
+ */
+export function bootstrapFromHtml(html: string): Bootstrap | undefined {
+  const window: Record<string, unknown> = {};
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    if (/\btype\s*=\s*["']?module\b/i.test(match[1] ?? '')) continue;
+    const body = match[2] ?? '';
+    if (body.trim() === '') continue;
+    runInNewContext(body, { window });
+  }
+  return window.__AGENT_LENS__ as Bootstrap | undefined;
+}
+
+/** Anything in `html` a browser could turn into a request target. */
+export function urlLiterals(html: string): string[] {
+  return [
+    ...[...html.matchAll(/\b(?:src|href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)].map((m) => m[1]!),
+    ...[...html.matchAll(/https?:\/\/[^\s"'`<>]+/g)].map((m) => m[0]),
+    ...[...html.matchAll(/\?[^\s"'`<>]*=[^\s"'`<>]*/g)].map((m) => m[0]),
+  ];
 }
 
 /** A minimal valid hook envelope for ingest tests. */

@@ -28,4 +28,11 @@ describe('repo layout conforms to the tech plan', () => {
   it('has the bin entry', () => {
     expect(existsSync(resolve(root, 'bin', 'agent-lens.js'))).toBe(true);
   });
+
+  // `preview.local.ts` was untracked, so nothing but this stops it being
+  // resurrected — its port-4470 squat reds `port.test.ts`.
+  it('has the dev server, and no leftover preview script', () => {
+    expect(existsSync(resolve(srcDir, 'dev', 'server.ts'))).toBe(true);
+    expect(existsSync(resolve(root, 'preview.local.ts'))).toBe(false);
+  });
 });
