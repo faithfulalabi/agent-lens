@@ -7,6 +7,18 @@
 @import './fonts.css';
 @import './theme.css';
 
+/*
+ * Lifts the test tree out of Tailwind's scan, so the guard in src/__tests__
+ * cannot mint the rules it exempts.
+ *
+ * `../` is load-bearing: patterns resolve against this file's own directory
+ * (ui/src/styles), so the "obvious" src/ form matches nothing and warns about
+ * nothing — a wrong path is a no-op that exits 0, caught only by the guard's
+ * canary. Must stay at top level; nested, it throws. Keep this comment clear
+ * of any word that names a utility — the file is inside the scan it configures.
+ */
+@source not "../**/__tests__/**";
+
 @layer base {
   /* Dark canvas. v1 is dark-only and ships no toggle; `color-scheme` makes the
      browser's own chrome (scrollbars, form controls) match. */
