@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { DatabaseSync } from 'node:sqlite';
 import { deadLetterRaw, getAllEventsOrdered, ingestHealth } from '../db/index.js';
+import { SSE_EVENT } from '../shared/delta.js';
 import { hostGuard, resolveBindHosts } from './middleware/host-guard.js';
 import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
@@ -103,13 +104,27 @@ export function buildApp(deps: AppDeps): Hono {
 
   app.get('/api/stream', (c) =>
     streamSSE(c, async (stream) => {
-      const unsubscribe = broadcaster.subscribe((event) => {
-        void stream.writeSSE({
-          event: 'raw_event',
-          data: JSON.stringify(event),
-          id: String(event.seq),
-        });
-      });
+      // The `end` handler is what lets `startServer`'s `close()` finish: this
+      // route holds the response body open, `deltas.shutdown()` only walks
+      // DeltaPublisher scopes, and `server.close()` waits on any body still
+      // open. Same terminal-frame contract and same vocabulary as the delta
+      // routes (`stream-api.ts:122-128`), so both stream families end alike.
+      const unsubscribe = broadcaster.subscribe(
+        (event) => {
+          void stream.writeSSE({
+            event: 'raw_event',
+            data: JSON.stringify(event),
+            id: String(event.seq),
+          });
+        },
+        async () => {
+          await stream.writeSSE({
+            event: SSE_EVENT.streamEnd,
+            data: JSON.stringify({ reason: 'server_shutdown' }),
+          });
+          await stream.close();
+        },
+      );
       stream.onAbort(unsubscribe);
 
       // Keep the connection open with periodic heartbeats until aborted or

@@ -358,3 +358,73 @@ describe('startServer — tail timer lifecycle', () => {
     expect(tailed).toBe(0);
   });
 });
+
+/**
+ * Task 0.4 / AC2b — the legacy `/api/stream`'s twin of `stream-deltas.test.ts`
+ * Test 11, which pins exactly this for the delta routes and stops at their edge.
+ *
+ * Every other `/api/stream` test cancels the client BEFORE the server closes
+ * (`helpers.ts:213`'s `finally { await reader.cancel() }`, routed through by
+ * four suites; `stream-deltas.test.ts:485-489` opens the legacy stream only to
+ * cancel it). The production sequence is the inverse — the server goes down with
+ * a browser tab still attached — and it had never been exercised, which is why
+ * `handle.close()` hanging forever went unnoticed.
+ */
+describe('startServer — closing with a legacy /api/stream client attached (AC2b)', () => {
+  it('ends the attached body immediately and never waits on it forever', async () => {
+    const booted = await bootTestServer({ sweepIntervalMs: 0 });
+    const res = await fetch(booted.url('/api/stream'), {
+      headers: { [TOKEN_HEADER]: booted.token },
+    });
+    expect(res.status).toBe(200);
+    // Deliberately NOT cancelled before the close. `fetch` having resolved is
+    // proof enough that the subscription exists: hono's `streamSSE` runs the
+    // route callback synchronously before returning the Response, and
+    // `broadcaster.subscribe` is its first statement.
+    const reader = res.body!.getReader();
+
+    try {
+      // Drain in the background so the body's END can be timestamped: that
+      // instant, not the `close()` callback, is the direct evidence that
+      // `broadcaster.shutdown()` ran.
+      const decoder = new TextDecoder();
+      let body = '';
+      let endedAt = 0;
+      const drained = (async () => {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          body += decoder.decode(value, { stream: true });
+        }
+        endedAt = Date.now();
+      })();
+
+      const started = Date.now();
+      const closing = booted.handle.close();
+
+      await drained;
+      // The tight assertion, and the one that inverts cleanly: without
+      // `broadcaster.shutdown()` this body never ends at all. Measured at ~3ms.
+      expect(endedAt - started).toBeLessThan(3000);
+      expect(body).toContain('event: stream_end');
+      expect(body).toContain('{"reason":"server_shutdown"}');
+
+      // And the close itself completes. **Deliberately not < 3000ms**, which
+      // would be a false pin: ending the body makes the connection idle, but
+      // `server.close()` sweeps idle connections only ONCE, at call time
+      // (`httpServerPreClose`), and the drain lands a few ms later. The socket
+      // is then reaped on the server's own `keepAliveTimeout` — measured
+      // `close cb ≈ keepAliveTimeout + ~1s`, so ~6s at the 5s default, and
+      // ~4s here because undici drops the idle socket first. The bound is
+      // server-owned, so a browser cannot extend it; before the drain it was
+      // unbounded and this test timed out instead.
+      await closing;
+      expect(Date.now() - started).toBeLessThan(15_000);
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      cleanupDir(booted.dataDir);
+      cleanupDir(booted.transcriptRoot);
+      cleanupDir(booted.uiDir);
+    }
+  }, 30_000);
+});

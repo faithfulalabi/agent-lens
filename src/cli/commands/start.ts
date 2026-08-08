@@ -54,8 +54,18 @@ function parseHostValue(value: string): string {
 /**
  * `agent-lens start [--port <n>] [--host <h>]` — boot the collector, print the port, and run
  * in the foreground until interrupted. The returned promise resolves only on
- * SIGINT/SIGTERM so the CLI entry keeps the process (and the listening socket)
- * alive rather than exiting the moment boot completes.
+ * SIGINT, SIGTERM or SIGHUP so the CLI entry keeps the process (and the
+ * listening socket) alive rather than exiting the moment boot completes.
+ *
+ * SIGHUP is the one a closed terminal sends, and its Node default action
+ * terminates the process without running any exit handler — leaving the SQLite
+ * WAL live, the tail timer running, and `config.json` naming a port nothing is
+ * listening on.
+ *
+ * **Ordering invariant: the handlers are registered before the readiness line
+ * reaches stdout.** A supervisor that matches that line and signals immediately
+ * would otherwise land in a window where the default action still applies,
+ * stranding the same wreckage an unhandled SIGHUP does.
  */
 export async function start(args: string[] = []): Promise<void> {
   const port = parsePort(args);
@@ -64,13 +74,22 @@ export async function start(args: string[] = []): Promise<void> {
   if (port !== undefined) options.port = port;
   if (host !== undefined) options.host = host;
   const handle = await startServer(options);
-  console.log(`agent-lens listening on http://${host ?? '127.0.0.1'}:${handle.port}`);
 
   await new Promise<void>((resolve) => {
-    const shutdown = () => {
+    // One implementation for all three signals, guarded: a second signal
+    // arriving mid-shutdown would otherwise start a second teardown, and the
+    // second `db.close()` throws ERR_INVALID_STATE where nothing can catch it.
+    let closing = false;
+    const shutdown = (): void => {
+      if (closing) return;
+      closing = true;
       void handle.close().then(resolve);
     };
-    process.once('SIGINT', shutdown);
-    process.once('SIGTERM', shutdown);
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+      process.once(signal, shutdown);
+    }
+    // Announced only now — see the ordering invariant above. The executor runs
+    // synchronously, so this still prints in the same tick as the boot.
+    console.log(`agent-lens listening on http://${host ?? '127.0.0.1'}:${handle.port}`);
   });
 }
