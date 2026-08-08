@@ -1,18 +1,6 @@
 // AC4, behavioural half — the corpus is byte-identical after the tailer has run.
-//
-// The static sibling (`src/fs-write-sites.test.ts`) proves no write-capable
-// `node:fs` call exists in the tailer's module. This proves the stronger, dumber
-// thing: point the tailer at a transcript tree, run it three times with backfill
-// ON — the mode `npm run dev` uses against the developer's own history — and
-// every file is still exactly the bytes it was.
-//
-// Each proof catches what the other misses. A static scan cannot see a write
-// that arrives through a helper, a stream, or a dependency; a behavioural
-// snapshot cannot see a write to a file the fixture happens not to contain.
-//
-// `atime` is deliberately NOT in the snapshot: reading legitimately updates it,
-// so including it would make this test fail for the one behaviour that is
-// allowed.
+// The static sibling is `src/fs-write-sites.test.ts`, which cannot see a write
+// arriving through a helper. `atime` is deliberately NOT in the snapshot.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -77,11 +65,8 @@ function writeTranscript(path: string, lines: readonly string[]): void {
   writeFileSync(path, lines.map((l) => `${l}\n`).join(''));
 }
 
-/**
- * A corpus shaped like the real one: several project slugs, several transcripts
- * per slug, plus the `<session>/subagents/` sidecars the depth-one scan skips —
- * because "never touched" has to cover the files the tailer does not even read.
- */
+// Includes the `<session>/subagents/` sidecars the depth-one scan skips —
+// "never touched" has to cover those too.
 function makeCorpus(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-lens-readonly-'));
   dirs.push(root);
@@ -116,9 +101,8 @@ describe('AC4 (behavioural) — tailing never modifies the corpus', () => {
         firstSight: 'backfill',
       }).ingested;
     }
-    // The tailer really ran: pass 1 backfilled all four top-level transcripts (8
-    // lines each), passes 2 and 3 found nothing new. Without this the assertion
-    // below would hold just as well for a tailer that did nothing at all.
+    // The tailer really ran — otherwise the assertion below would hold just as
+    // well for a tailer that did nothing at all.
     expect(ingested).toBe(32);
 
     expect(snapshot(root)).toEqual(before);

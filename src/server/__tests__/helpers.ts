@@ -232,10 +232,7 @@ export async function readOneEvent(
 }
 
 // --- Raw HTTP, and reading the served page ---------------------------------
-// Extracted for Task 0.2's dev-server suite, which needs all three against a
-// Vite proxy as well as against the collector. House style is extract-don't-copy
-// (see the SSE note above): `auth.test.ts` and `static-bootstrap.test.ts` now
-// import these instead of holding local copies.
+// Shared with the dev-server suite, which needs these against a Vite proxy too.
 
 /** Status, headers and body of a raw HTTP response. */
 export interface RawResponse {
@@ -245,12 +242,8 @@ export interface RawResponse {
 }
 
 /**
- * Raw HTTP request that can set a custom Host header — `fetch` forbids Host as a
- * header name, so the host guard can only be exercised via `node:http`.
- *
- * `agent: false` keeps teardown quick: `serveStatic` streams its response, and a
- * client holding the socket open afterwards delays `server.close()` by seconds
- * on the `/assets/*` rows.
+ * Raw HTTP request that can set a custom Host header — `fetch` forbids Host, so
+ * the host guard can only be exercised via `node:http`.
  */
 export function rawRequest(
   port: number,
@@ -286,16 +279,9 @@ export interface Bootstrap {
 }
 
 /**
- * Run every inline CLASSIC script in `html` against a stub `window`, then hand
- * back what they defined. This is the closest thing to "what the browser ends up
- * with" that a node test can assert on, and — unlike a source-text match — it
- * cannot be satisfied by a string that merely looks right.
- *
- * `type="module"` bodies are skipped because a `vm` realm has no module loader:
- * Vite's dev server injects an inline React-refresh preamble that starts with an
- * `import` statement, and `runInNewContext` can only throw on it. Nothing is
- * lost — the bootstrap `injectToken` writes is a classic script, deliberately,
- * so that it runs before any module does.
+ * Run every inline CLASSIC script in `html` against a stub `window` and return
+ * what they defined — a source-text match could be satisfied by a string that
+ * only looks right. Modules are skipped: a `vm` realm has no module loader.
  */
 export function bootstrapFromHtml(html: string): Bootstrap | undefined {
   const window: Record<string, unknown> = {};
@@ -308,11 +294,7 @@ export function bootstrapFromHtml(html: string): Bootstrap | undefined {
   return window.__AGENT_LENS__ as Bootstrap | undefined;
 }
 
-/**
- * Every string in `html` that a browser could turn into a request target, plus
- * anything that merely looks like one: `src`/`href` values, absolute URLs, and
- * query strings. A token in any of them would leak into referrers and logs.
- */
+/** Anything in `html` a browser could turn into a request target. */
 export function urlLiterals(html: string): string[] {
   return [
     ...[...html.matchAll(/\b(?:src|href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)].map((m) => m[1]!),

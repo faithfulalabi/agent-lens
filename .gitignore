@@ -43,6 +43,4 @@ ui/dist/
 **/.capture-scratch/
 
 # `npm run dev`'s data dir: a real SQLite DB of the developer's own sessions.
-# Root-anchored on purpose (a pattern with an interior slash is), per the
-# anchoring lesson directly above.
 /.agent-lens-dev/

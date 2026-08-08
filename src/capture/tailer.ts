@@ -109,29 +109,14 @@ export interface TailOptions {
   /** Override for {@link MAX_LINE_BYTES} (tests). */
   maxLineBytes?: number;
   /**
-   * What to do with a file no session ever named, seen for the first time.
-   *
-   * `'eof'` (the default, and production's behaviour) records EOF and ingests
-   * nothing, so booting the collector does not synchronously parse every
-   * historical transcript on the machine. `'backfill'` reads it from offset 0
-   * instead — which is what a dev/import run wants, and what
-   * `preview.local.ts`'s empty-file-then-rewrite dance used to fake.
-   *
-   * Backfill needs no new read path: `decideStart` already returns
-   * `{ start: 0, reset: 'none' }` for an absent offset row, so this only removes
-   * a guard. A backfilled file therefore reports `reset: 'none'`, and
-   * `'first-sight'` keeps meaning exactly "recorded EOF, ingested nothing".
+   * `'eof'` (the default) records EOF for a file no session named and ingests
+   * nothing — otherwise booting parses every transcript on the machine.
    */
   firstSight?: 'eof' | 'backfill';
   /**
-   * Restrict discovery to these project slugs — the `<slug>` directory names
-   * under `transcriptRoot`, verbatim, with no encoding awareness here.
-   *
-   * Applied to BOTH discovery sources, and a set filter also implies "under the
-   * root", for the reason spelled out on {@link TailOptions.transcriptRoot}: the
-   * sessions source is a DB column that can name any path on the machine, so a
-   * filter applied only to the directory scan is a filter that silently does not
-   * filter. Unset means no filter.
+   * Restrict discovery to these `<slug>` directory names. Applied to BOTH
+   * sources: the sessions source is a DB column that can name any path, so
+   * filtering only the scan silently does not filter.
    */
   projects?: readonly string[];
   /**
@@ -272,9 +257,8 @@ function discoverTranscripts(
   for (const row of transcriptPathsFromSessions(db)) {
     const path = canonicalizeTranscriptPath(row.transcript_path);
     if (bounded && !isUnder(path, root)) continue;
-    // A slug filter implies "under the root" as well: this column can name any
-    // path on the machine, and an unrelated directory that happens to be named
-    // like a slug must not slip through a filter meant to narrow the corpus.
+    // The filter implies "under the root" too: this column can name any path on
+    // the machine, and a same-named directory elsewhere must not slip through.
     if (projects !== undefined && !(isUnder(path, root) && projects.has(slugOf(path)))) {
       continue;
     }
@@ -367,10 +351,7 @@ function tailFile(
     // otherwise starting the collector ingests every unrelated project's history
     // synchronously before the socket binds. Growth from here forward IS
     // captured, which is the backstop role the directory scan plays.
-    //
-    // `firstSight: 'backfill'` opts out and falls through to `decideStart`,
-    // which reads an offset-less file from zero. Unset behaves exactly as this
-    // branch always has.
+    // `firstSight: 'backfill'` opts out and falls through to `decideStart`.
     if (stored === undefined && !file.known && (options.firstSight ?? 'eof') === 'eof') {
       // `deltas` is inert on an empty slice — `ingestBatch` short-circuits above
       // its staging block — but a field threaded at one of two call sites is a
@@ -418,10 +399,8 @@ function decideStart(
   fd: number,
   stat: Stats,
 ): { start: number; reset: TailReset } {
-  // No offset row yet: read it from the beginning. Reached by a KNOWN session,
-  // and — since the guard above is opt-out — by any unknown file under
-  // `firstSight: 'backfill'`. `reset: 'none'` is right for both: nothing was
-  // re-read, this is the file's first and only pass over those bytes.
+  // No offset row yet: read from the beginning. A known session, or any unknown
+  // file under `firstSight: 'backfill'`. `reset: 'none'` — nothing was re-read.
   if (stored === undefined) return { start: 0, reset: 'none' };
 
   const fp = parseFingerprint(stored.file_identity);

@@ -62,15 +62,11 @@ export interface StartOptions {
    */
   tailIntervalMs?: number;
   /**
-   * Forwarded verbatim to the tailer: `'backfill'` reads a never-before-seen
-   * transcript from offset 0 instead of recording EOF. Defaults to `'eof'` —
-   * production must not ingest every historical transcript on the machine.
+   * Forwarded to the tailer. Defaults to `'eof'` — production must not ingest
+   * every historical transcript on the machine.
    */
   firstSight?: 'eof' | 'backfill';
-  /**
-   * Forwarded verbatim to the tailer: restrict discovery to these project slugs.
-   * Unset means the whole transcript root.
-   */
+  /** Forwarded to the tailer; restricts discovery to these project slugs. */
   projects?: readonly string[];
   /** Called with each tail pass's result — observability hook (and test seam). */
   onTail?: (result: TailResult) => void;

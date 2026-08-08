@@ -643,8 +643,8 @@ describe('tailOnce — AC4: discovery', () => {
     expect(archiveIds(db)).toHaveLength(2);
   });
 
-  // Task 0.2 — `firstSight: 'backfill'`. The inversion of the first-sight test
-  // above, which stays untouched as the proof that the default is preserved.
+  // The inversion of the first-sight test above, which stays untouched as the
+  // proof that the default is preserved.
   it('backfills a never-before-seen file from zero under firstSight: backfill', () => {
     const db = freshDb();
     const root = makeRoot();
@@ -652,8 +652,8 @@ describe('tailOnce — AC4: discovery', () => {
     writeLines(path, Array.from({ length: 20 }, (_, i) => line(i)));
 
     const result = tail(db, root, { firstSight: 'backfill' });
-    // `reset: 'none'`, not a widened union member: nothing was RE-read, and
-    // `'first-sight'` keeps meaning exactly "recorded EOF, ingested nothing".
+    // `reset: 'none'` — nothing was RE-read, and `'first-sight'` keeps meaning
+    // exactly "recorded EOF, ingested nothing".
     expect(onlyFile(result)).toMatchObject({
       reset: 'none',
       bytesRead: sizeOf(path),
@@ -677,16 +677,14 @@ describe('tailOnce — AC4: discovery', () => {
     const result = tail(db, root, { projects: [SLUG], firstSight: 'backfill' });
     expect(result.files.map((f) => f.path)).toEqual([canonicalizeTranscriptPath(wanted)]);
     // Zero ROWS, not merely zero ingest: an excluded file must not even be
-    // recorded, or the filter is a "read nothing this once" rather than a scope.
+    // recorded, or the filter is a "read nothing once" rather than a scope.
     expect(offsetFor(db, unwanted)).toBeUndefined();
     expect(offsetRows(db)).toHaveLength(1);
   });
 
   it('scopes the sessions source too, not just the scan', () => {
-    // Goes RED if `projects` is applied only to `scanTranscriptRoot`. The
-    // sessions source is a DB column that can name any path on the machine, so a
-    // half-applied filter is a filter that silently does not filter — the same
-    // hazard the root bound already documents.
+    // Goes RED if `projects` is applied only to `scanTranscriptRoot`: the
+    // sessions source is a DB column that can name any path on the machine.
     const db = freshDb();
     const root = makeRoot();
     const otherSlug = '-Users-dev-other';

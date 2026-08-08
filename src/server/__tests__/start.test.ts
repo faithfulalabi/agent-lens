@@ -229,11 +229,10 @@ describe('startServer — boot hermeticity', () => {
     }
   });
 
-  // Task 0.2 — the inversion of the test above. Goes RED if `firstSight` /
-  // `projects` are threaded by restructuring the `tailOnce(...)` call in
-  // `runTailPass` instead of by adding to the already-bound options object:
-  // `options.onTail?.(tailOnce(...))` short-circuits its own argument, so the
-  // tailer would only run for tests that observe it.
+  // Goes RED if `firstSight` / `projects` are threaded by restructuring
+  // `runTailPass`'s `tailOnce(...)` call rather than added to the already-bound
+  // options object: `options.onTail?.(tailOnce(...))` short-circuits its own
+  // argument, so the tailer would only run for tests that observe it.
   it('forwards firstSight: backfill and projects into the boot catch-up pass', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
     const lines = Array.from({ length: 12 }, (_, i) => transcriptLine(i));
