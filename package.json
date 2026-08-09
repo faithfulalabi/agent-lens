@@ -18,6 +18,7 @@
   "scripts": {
     "dev": "tsx src/dev/server.ts",
     "dev:ui": "npm --prefix ui run dev",
+    "render-gate": "tsx src/render-gate/index.ts",
     "test": "vitest run",
     "snapshots:update": "AGENT_LENS_UPDATE_SNAPSHOTS=1 vitest run -u src/capture/__tests__/golden-replay.test.ts",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",
@@ -37,6 +38,7 @@
     "eslint-config-prettier": "^9.1.0",
     "fast-check": "^3.23.2",
     "globals": "^15.15.0",
+    "playwright-core": "^1.62.1",
     "prettier": "^3.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

@@ -44,3 +44,6 @@ ui/dist/
 
 # `npm run dev`'s data dir: a real SQLite DB of the developer's own sessions.
 /.agent-lens-dev/
+
+# `npm run render-gate`'s output: screenshots of the developer's own sessions.
+/.render-gate/
