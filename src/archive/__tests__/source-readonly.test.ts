@@ -328,7 +328,9 @@ describe('the archive refuses a symlinked leaf (Test 21)', () => {
   });
 });
 
-// --- Test 22: the log leaf and the directory chain (task 1.5) -------------
+// --- Test 26: the log leaf and the directory chain (task 1.5) -------------
+// 26, not 22: `mirror.property.test.ts` already uses 22 for the convergence
+// property, and these numbers name requirements, not files.
 
 const LOG_REL = join('logs', 'archive.jsonl');
 
@@ -340,7 +342,7 @@ function plantLogSymlink(s: Sandbox, target: string): string {
   return link;
 }
 
-describe('the archive refuses a symlinked log leaf and directory component (Test 22)', () => {
+describe('the archive refuses a symlinked log leaf and directory component (Test 26)', () => {
   it('(A1) refuses a log symlink aimed into the transcript root, leaving the victim intact', () => {
     // Pre-fix `appendFileSync` followed the link: the victim grew by one JSONL
     // line and `chmodSync` set its mode to 0600 through the link as well.
@@ -459,6 +461,39 @@ describe('the archive refuses a symlinked log leaf and directory component (Test
 
     expect(result.errors).toEqual([]);
     expect(readFileSync(join(s.archiveRoot, META), 'utf8')).toBe(body);
+  });
+
+  it('(B3) a DANGLING symlinked ancestor writes nothing either — but the kernel refuses it, not the guard', () => {
+    // The honest limit of B1, pinned so the comment on `ensureDirUnder` cannot
+    // drift into claiming more than it delivers. Green before task 1.5 as well —
+    // it characterises a limit rather than proving a fix. `realpathSync` reports ENOENT
+    // for a dangling link and for a component that was never created alike, so
+    // `realpathDeepest` cannot tell them apart and the pre-assert lets this one
+    // through. Nothing is written: recursive `mkdirSync` fails ENOENT on a
+    // dangling component (measured, darwin/Node v26 — the draft approach claimed
+    // EEXIST and a test written to that would have failed).
+    const s = sb();
+    writeSource(s, META, '{"model":"claude"}');
+    const escapeParent = join(s.root, 'escape-parent');
+    mkdirSync(escapeParent, { recursive: true });
+    mkdirSync(s.archiveRoot, { recursive: true });
+    const danglingTarget = join(escapeParent, 'nonexistent');
+    symlinkSync(danglingTarget, join(s.archiveRoot, SLUG));
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    // The property that matters: nothing reached the escape target.
+    expect(existsSync(danglingTarget)).toBe(false);
+    expect(readdirSync(escapeParent)).toEqual([]);
+    expect(result.bytesCopied).toBe(0);
+
+    // …and the refusal is reported, but as the kernel's ENOENT rather than the
+    // guard's containment message. Asserting ENOENT is the point: it records
+    // WHICH layer stopped this, so a future change that moves the refusal into
+    // the guard reds here and gets read rather than silently accepted.
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(/ENOENT/);
+    expect(result.errors[0]?.message).not.toMatch(OUTSIDE);
   });
 
   it('(C1) FIX — an unresolved archiveRoot through the package exports mirrors instead of throwing', () => {

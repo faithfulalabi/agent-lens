@@ -217,11 +217,12 @@ function writeArchiveBytes(params: {
 }): { bytesWritten: number; bytesRead: number } {
   const { archiveRoot, archivePath, archiveExists, sourceFd, from, to, buffer } = params;
   const dir = dirname(archivePath);
-  // Asserts, creates, asserts again — so a PRE-PLANTED symlinked ancestor is
-  // refused before any directory is made through it, which the old
-  // create-then-assert order could not do. See `ensureDirUnder` for what that
-  // does and does not buy: the concurrent-plant window stays open and is not
-  // closable in Node at all.
+  // Asserts, creates, asserts again — so a pre-planted LIVE symlinked ancestor
+  // is refused before any directory is made through it, which the old
+  // create-then-assert order could not do. See `ensureDirUnder` for the two
+  // things it does NOT buy: the concurrent-plant window (not closable in Node at
+  // all) and a dangling ancestor (indistinguishable from an absent one, stopped
+  // by the kernel's ENOENT rather than by the guard).
   ensureDirUnder(dir, archiveRoot);
 
   const fd = refuseSymlinkedLeaf(archivePath, () =>

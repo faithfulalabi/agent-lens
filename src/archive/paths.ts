@@ -120,17 +120,25 @@ export function ensureDir(dir: string): void {
 
 /**
  * `ensureDir` with the containment assert on both sides of it. The pre-assert is
- * the new half: it refuses a symlinked ancestor that was already planted, before
- * any directory is created through it. The post-assert preserves the refusal the
- * mirror already had.
+ * the new half: it refuses a pre-planted LIVE symlinked ancestor — one that
+ * resolves — before any directory is created through it. The post-assert
+ * preserves the refusal the mirror already had.
  *
- * Still check-then-act, and deliberately not claimed otherwise. A link planted
- * BETWEEN the pre-assert and the `mkdirSync` still gets directories created
- * through it and is only stopped at the write by the post-assert. Closing that
- * window needs a directory-fd-relative syscall family — `openat`/`mkdirat` with
- * `O_NOFOLLOW` per component — and Node exposes none: `fs.opendir` yields an
- * iterator, not a resolution base, so every `fs` call re-resolves from a string.
- * It is a permanent limitation of this runtime, not unfinished work.
+ * Two limits, both deliberate and neither rounded up:
+ *
+ * 1. A link planted BETWEEN the pre-assert and the `mkdirSync` still gets
+ *    directories created through it, and is only stopped at the write by the
+ *    post-assert. Closing that needs a directory-fd-relative syscall family —
+ *    `openat`/`mkdirat` with `O_NOFOLLOW` per component — and Node exposes none:
+ *    `fs.opendir` yields an iterator, not a resolution base, so every `fs` call
+ *    re-resolves from a string. A permanent limitation of this runtime.
+ * 2. A DANGLING symlinked ancestor is not refused here either. `realpathSync`
+ *    fails ENOENT on it exactly as it does on a component that was never
+ *    created, so `realpathDeepest` cannot tell the two apart and treats it as a
+ *    missing tail. Nothing is written through it — recursive `mkdirSync` fails
+ *    ENOENT on a dangling component — but the refusal comes from the kernel with
+ *    an unhelpful errno rather than from this guard. Asserted by a test, not
+ *    assumed.
  */
 export function ensureDirUnder(dir: string, archiveRoot: string): void {
   assertUnderArchiveRoot(dir, archiveRoot);
