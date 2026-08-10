@@ -247,6 +247,8 @@ const OPEN_SITES: readonly string[] = [
   "archive/mirror.ts:archiveExists ? 'r+' : 'wx'",
   "archive/mirror.ts:'r'",
   "archive/mirror.ts:'r'",
+  "archive/report.ts:'r'",
+  "archive/report.ts:'r'",
   "capture/tailer.ts:'r'",
 ];
 

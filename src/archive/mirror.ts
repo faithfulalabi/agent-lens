@@ -206,7 +206,7 @@ function writeArchiveBytes(params: {
  * windows is unread until `--verify`. The seam catches a rewrite at the exact
  * offset we are about to extend from.
  */
-function detectDivergence(params: {
+export function detectDivergence(params: {
   sourceFd: number;
   archiveFd: number;
   sourceSize: number;

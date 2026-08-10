@@ -49,6 +49,41 @@ When a source has been rewritten (it shrank, or its head or seam changed), the
 archived bytes are **kept** and the file is marked `diverged` rather than
 overwritten, and the event is recorded in `~/.agent-lens/logs/archive.jsonl`.
 
+### `agent-lens doctor` — what is protected, and what is not
+
+`doctor` reads both trees and reports archive coverage, integrity, total archive
+bytes split hot vs sealed, every diverged file, and Claude Code's own
+`cleanupPeriodDays` retention setting. It **writes nothing** — not the archive,
+not the log, not the lock, and never your `settings.json`. It reports retention;
+it does not repair it.
+
+```bash
+agent-lens doctor --verify
+```
+
+| Flag                     | Meaning                                                                 |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `--json`                 | emit the full report as one JSON line                                   |
+| `--dataDir <dir>`        | override `~/.agent-lens`                                                |
+| `--transcriptRoot <dir>` | override `~/.claude/projects`                                           |
+| `--settingsPath <file>`  | override `~/.claude/settings.json` (also `AGENT_LENS_CLAUDE_SETTINGS`)  |
+| `--verify`               | recompute the full prefix hash — the real audit, not the per-minute one |
+
+Read the integrity line carefully. It prints three counts that sum to the number
+of archived files: **verified**, **diverged** and **unverifiable**. A file is
+unverifiable when nothing exists to check it against — its source has already
+expired, or it is sealed — and there is no stored per-file hash yet (task 1.2).
+Those files are never counted as verified. On a machine that has been off for a
+month, expect the unverifiable count to be the large one: that is the truthful
+answer, not a failure.
+
+Two things `doctor` prints on every run, including a completely clean one:
+
+- **agent-lens can only archive what exists while it runs** — a gap in uptime is
+  a gap in the record, and a 100% coverage ratio is 100% _of the survivors_.
+- **`rm cache.db` loses nothing; `rm -rf ~/.agent-lens/archive` loses data
+  permanently.**
+
 ## Development
 
 Requires Node.js `>=24` (the SQLite layer uses the built-in `node:sqlite`).
