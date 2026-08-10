@@ -21,16 +21,21 @@ export interface ArchiveLogRecord {
   diverged: DivergedLogEntry[];
   newly_expired: string[];
   errors: { path: string; message: string }[];
+  /** Logical archive paths sealed on this pass. */
+  sealed: string[];
 }
 
-/** A pass worth no line: nothing copied, diverged, expired, or failed. */
+/** A pass worth no line: nothing copied, sealed, diverged, expired, or failed. */
 export function isQuiet(record: ArchiveLogRecord): boolean {
   return (
     record.bytes_copied === 0 &&
     record.diverged.length === 0 &&
     record.newly_expired.length === 0 &&
     record.errors.length === 0 &&
-    record.lock.state === 'acquired'
+    record.lock.state === 'acquired' &&
+    // Without this term a pass whose only work was sealing forty files copies
+    // zero bytes, expires nothing new, and is therefore logged as nothing at all.
+    record.sealed.length === 0
   );
 }
 

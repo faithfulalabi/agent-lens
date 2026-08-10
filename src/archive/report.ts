@@ -24,14 +24,13 @@ const SEALED_SUFFIX = '.zst';
 
 /**
  * Why a file cannot be integrity-checked. Both strings say the same thing on
- * purpose: no reference hash is persisted anywhere yet. `ArchiveLogRecord`
- * stores none, `source_head_sha256` never leaves memory, and there is no sealing
- * code — so there is no seal-time check to appeal to either. Never soften these
- * into a claim that something was checked.
+ * purpose: no reference hash is persisted anywhere. `ArchiveLogRecord` stores
+ * none, `source_head_sha256` never leaves memory, and neither does the hash a
+ * seal computes — so there is nothing durable to compare against here either.
+ * Never soften these into a claim that something was checked.
  */
-export const NO_LIVE_SOURCE_REASON = 'no live source — no stored hash until task 1.2';
-export const SEALED_REASON =
-  'sealed — no integrity check available (no stored hash until task 1.2)';
+export const NO_LIVE_SOURCE_REASON = 'no live source — no stored hash exists';
+export const SEALED_REASON = 'sealed — no integrity check available (no stored hash exists)';
 
 export interface CoverageStats {
   /** Source files that exist right now. The denominator is the survivors only. */

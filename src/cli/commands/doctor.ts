@@ -99,7 +99,7 @@ export function formatDoctorReport(report: DoctorReport): string {
   if (integrity.unverifiable.length > 0) {
     lines.push(
       `  unverifiable (${integrity.unverifiable.length}) — NOT checked, and NOT verified.`,
-      '    No stored hash exists for these until task 1.2, so there is nothing to',
+      '    No stored hash exists for these, so there is nothing to',
       '    check them against.',
     );
     lines.push(

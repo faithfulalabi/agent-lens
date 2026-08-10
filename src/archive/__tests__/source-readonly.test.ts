@@ -430,8 +430,12 @@ describe('agent-lens archive never loads node:sqlite (Test 20)', () => {
     expect(forbidden).toEqual([]);
   });
 
-  it('(c) names no write syscall outside paths.ts, mirror.ts and lock.ts', () => {
-    const allowed = new Set(['paths.ts', 'mirror.ts', 'lock.ts']);
+  it('(c) names no write syscall outside paths.ts, mirror.ts, lock.ts and seal.ts', () => {
+    // `seal.ts` joins the allowlist because it names renameSync and unlinkSync —
+    // the temp+rename publish and the removal of the hot file it just compressed.
+    // `read.ts` is deliberately NOT here: the accessor names none of the six, and
+    // allowlisting it would weaken the guard for nothing.
+    const allowed = new Set(['paths.ts', 'mirror.ts', 'lock.ts', 'seal.ts']);
     const pattern = /\b(appendFileSync|writeFileSync|rmSync|renameSync|unlinkSync|mkdirSync)\b/;
     const offenders: string[] = [];
 

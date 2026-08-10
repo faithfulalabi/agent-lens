@@ -15,6 +15,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { archiveOnce, createMirrorContext, mirrorFile } from '../mirror.js';
+import { createArchiveReader } from '../read.js';
 import { discover } from '../discover.js';
 import { resolveDataDir, resolveTranscriptRoot, canonicalizeTranscriptPath } from '../paths.js';
 import {
@@ -25,10 +26,12 @@ import {
   makeSandbox,
   readBytes,
   SLUG,
+  snapshotTree,
   sourcePath,
   writeArchive,
   writeSource,
   type Sandbox,
+  type TreeEntry,
 } from './fixtures.js';
 
 let sandbox: Sandbox | undefined;
@@ -358,17 +361,42 @@ describe('expiry is durable, and sealing does not break it (Test 17)', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(4));
     pass();
-    const archived = readBytes(archivePath(s, SESSION));
+    const logical = archivePath(s, SESSION);
+    const archived = readBytes(logical);
 
     rmSourceTree(s, SESSION);
 
+    const reader = createArchiveReader();
+    const sealedOn: Record<string, string[]> = {};
+    let afterSeal: Map<string, TreeEntry> | undefined;
+
     for (const label of ['second', 'third']) {
       const result = pass();
+
+      // The archive-walk enumeration property, untouched by sealing.
       expect(result.filesSeen, label).toBe(1);
       expect(result.files[0]!.source_state, label).toBe('expired');
-      expect(result.files[0]!.archive_state, label).toBe('hot');
-      expect(readBytes(archivePath(s, SESSION)).equals(archived), label).toBe(true);
+
+      // The one intended behavioural change: `hot` becomes `sealed` from the
+      // pass that compresses onward.
+      expect(result.files[0]!.archive_state, label).toBe('sealed');
+
+      // The archived bytes still resolve at their LOGICAL path — read through
+      // the accessor rather than raw, so this now exercises the decompress and
+      // the frame content-size check that a readFileSync never touched.
+      expect(reader.size(logical), label).toBe(archived.length);
+      expect(reader.read(logical, 0, archived.length).equals(archived), label).toBe(true);
+
+      sealedOn[label] = result.sealed;
+      afterSeal ??= snapshotTree(s.archiveRoot);
     }
+
+    // Durability across passes: the second pass sealed and the third left the
+    // `.zst` alone, inode and mtime included. Without this the test would prove
+    // only that a first seal happened, losing the guarantee it was written for.
+    expect(sealedOn.second).toEqual([logical]);
+    expect(sealedOn.third).toEqual([]);
+    expect(snapshotTree(s.archiveRoot)).toEqual(afterSeal);
   });
 
   it('(b) keys a sealed .zst sibling under its logical name, as archive_state sealed', () => {

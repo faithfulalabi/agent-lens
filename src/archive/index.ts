@@ -7,6 +7,7 @@ export {
   decideCopyEnd,
   detectDivergence,
   mirrorFile,
+  shouldSeal,
 } from './mirror.js';
 export type {
   ArchiveFileState,
@@ -19,6 +20,10 @@ export type {
 } from './mirror.js';
 export { discover } from './discover.js';
 export type { DiscoveredEntry } from './discover.js';
+export { sealArchiveFile } from './seal.js';
+export type { SealResult } from './seal.js';
+export { createArchiveReader } from './read.js';
+export type { ArchiveReader, ArchiveReaderStats } from './read.js';
 export {
   buildDoctorReport,
   resolveClaudeSettingsPath,

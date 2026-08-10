@@ -159,7 +159,7 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     const text = formatDoctorReport(built);
 
     expect(built.integrity.unverifiable[0]!.reason).toBe(
-      'sealed — no integrity check available (no stored hash until task 1.2)',
+      'sealed — no integrity check available (no stored hash exists)',
     );
     expect(text).toContain(SEALED_REASON);
     // No sealing code exists in this repo, so nothing may imply a check happened.
