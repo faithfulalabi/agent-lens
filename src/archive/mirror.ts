@@ -63,7 +63,7 @@ export interface ArchiveFileState {
   archive_state: ArchiveState;
   reason?: DivergenceReason;
   bytes_copied: number;
-  /** Set only on the pass that seals. In memory only; persisted nowhere. */
+  /** Set only on the pass that seals. Also durable, in the `.zst.sha256` sidecar. */
   archive_sha256?: string;
   /** Set only on the pass that seals. An output of the seal, never an input. */
   sealed_at?: string;

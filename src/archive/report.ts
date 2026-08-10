@@ -28,14 +28,26 @@ const CHUNK_BYTES = 1024 * 1024;
 const SEALED_SUFFIX = '.zst';
 
 /**
- * Why a file cannot be integrity-checked. Both strings say the same thing on
- * purpose: no reference hash is persisted anywhere. `ArchiveLogRecord` stores
- * none, `source_head_sha256` never leaves memory, and neither does the hash a
- * seal computes — so there is nothing durable to compare against here either.
+ * Why a file cannot be integrity-checked here. The two strings no longer say
+ * the same thing, because the two populations no longer are the same.
+ *
+ * `NO_LIVE_SOURCE_REASON` stays literally true: it is pushed only after the
+ * sealed branch has already `continue`d, so its files are unsealed, and only a
+ * `.zst` ever acquires a sidecar. `ArchiveLogRecord` stores no hash and
+ * `source_head_sha256` never leaves memory, so for those files nothing durable
+ * exists at all.
+ *
+ * `SEALED_REASON` is different now: the hash a seal computes is persisted in a
+ * `<archivePath>.zst.sha256` sidecar beside the frame. This module reads no
+ * sidecar, and cannot yet tell a file that has one from a file sealed before
+ * they existed — telling those apart is task 1.8's first step. So the string
+ * says what `doctor` DOES, not what is on disk, which is the only wording true
+ * of both populations.
+ *
  * Never soften these into a claim that something was checked.
  */
 export const NO_LIVE_SOURCE_REASON = 'no live source — no stored hash exists';
-export const SEALED_REASON = 'sealed — no integrity check available (no stored hash exists)';
+export const SEALED_REASON = 'sealed — not checked: doctor reads no stored hash yet (task 1.8)';
 
 export interface CoverageStats {
   /** Source files that exist right now. The denominator is the survivors only. */

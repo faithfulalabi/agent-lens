@@ -3,7 +3,7 @@
 // resolve the developer's real `~/.claude/settings.json`.
 
 import { afterEach, describe, it, expect } from 'vitest';
-import { chmodSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -28,6 +28,7 @@ import {
   type Sandbox,
 } from './fixtures.js';
 import { archiveOnce } from '../mirror.js';
+import { sidecarPath } from '../sidecar.js';
 
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
@@ -125,6 +126,70 @@ describe('AC1a — integrity recomputes over every archived file with a live sou
   });
 });
 
+/** A real seal, so the `.zst` on disk carries the sidecar this build publishes. */
+function sealForReal(rel: string): string {
+  const s = sb();
+  writeSource(s, rel, jsonLines(40));
+  archivePass();
+  rmSync(sourcePath(s, rel));
+  archivePass();
+  return `${archivePath(s, rel)}.zst`;
+}
+
+describe('AC3/AC5 — the sidecar is outside the accounting, and the wording stays true', () => {
+  it('counts the frame alone, while an ordinary archived file beside it is still counted', () => {
+    const s = sb();
+    const sealedPath = sealForReal(SESSION);
+    expect(existsSync(sidecarPath(sealedPath))).toBe(true);
+
+    const one = report();
+    expect(one.bytes.sealedFiles).toBe(1);
+    expect(one.bytes.hotFiles).toBe(0);
+    expect(one.integrity.archivedFileCount).toBe(1);
+    // The sidecar's own bytes are absent from every total.
+    expect(one.bytes.totalBytes).toBe(statSync(sealedPath).size);
+    expect(one.bytes.totalBytes).toBeLessThan(
+      statSync(sealedPath).size + statSync(sidecarPath(sealedPath)).size,
+    );
+
+    // Positive control: a second archived file in the SAME directory is seen and
+    // counted, so the exclusion above is the suffix rule and not a broken walk.
+    const other = writeArchive(s, OTHER, jsonLines(4, 200));
+    const two = report();
+    expect(two.integrity.archivedFileCount).toBe(2);
+    expect(two.bytes.totalBytes).toBe(statSync(sealedPath).size + statSync(other).size);
+  });
+
+  it('one report holds a sidecar-bearing seal and a legacy one, under a reason true of both', () => {
+    const s = sb();
+    // Sealed by this build, so a stored hash exists on disk for it…
+    const sealedPath = sealForReal(SESSION);
+    // …and a `.zst` from before sidecars existed, which never gets a backfill.
+    writeArchive(s, `${OTHER}.zst`, Buffer.from('pretend-zstd-bytes'));
+    expect(existsSync(sidecarPath(sealedPath))).toBe(true);
+    expect(existsSync(sidecarPath(`${archivePath(s, OTHER)}.zst`))).toBe(false);
+
+    const built = report({ verify: true });
+    const text = formatDoctorReport(built);
+
+    // One string for both populations, and it is true of each: neither was
+    // checked. A wording that asserted anything about what is ON DISK would be
+    // false for one of these two rows.
+    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([
+      SEALED_REASON,
+      SEALED_REASON,
+    ]);
+    // No behaviour change: same classification, same counts, same bytes read.
+    expect(built.integrity.verified).toEqual([]);
+    expect(built.integrity.diverged).toEqual([]);
+    expect(built.integrity.archivedFileCount).toBe(2);
+    expect(built.integrity.bytesRead).toBe(0);
+    expect(text).toContain('2 files archived = 0 verified + 0 diverged + 2 unverifiable');
+    expect(text).toContain('Nothing here reads a stored hash yet (task 1.8)');
+    expect(text).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);
+  });
+});
+
 describe('AC1b/AC1c — the unverifiable population is counted, named and never called verified', () => {
   it('counts and names both an archive-only file and a sealed one, and the three populations partition', () => {
     const s = sb();
@@ -164,10 +229,12 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     const text = formatDoctorReport(built);
 
     expect(built.integrity.unverifiable[0]!.reason).toBe(
-      'sealed — no integrity check available (no stored hash exists)',
+      'sealed — not checked: doctor reads no stored hash yet (task 1.8)',
     );
     expect(text).toContain(SEALED_REASON);
-    // No sealing code exists in this repo, so nothing may imply a check happened.
+    // A seal now persists its hash, but nothing here reads one, so the report
+    // still may not imply a check happened. Unnarrowed on purpose: every
+    // alternative below is a lie until task 1.8 does the comparison.
     expect(text).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);
   });
 
