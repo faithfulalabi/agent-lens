@@ -6,11 +6,14 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  constants,
   fstatSync,
+  lstatSync,
   openSync,
   readSync,
   writeSync,
   type BigIntStats,
+  type Stats,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { discover, type DiscoveredEntry } from './discover.js';
@@ -26,6 +29,8 @@ import {
   statSafe,
   statSafeBig,
 } from './paths.js';
+
+const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_RDWR, O_WRONLY } = constants;
 
 /** The fixed head/seam probe window. */
 const PROBE_BYTES = 4096;
@@ -156,6 +161,47 @@ function scanDeltaBackward(
   return { lastNewlineOffset, bytesRead };
 }
 
+/** `lstat` shaped like paths.ts:83-89, kept local so paths.ts is untouched. */
+function lstatSafe(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Names the kernel's refusal so it survives `String(error)` in `archiveOnce`.
+ * Both archive-side opens go through here; anything else is rethrown unchanged,
+ * so an unexpected errno degrades to the previous behaviour rather than to
+ * silence.
+ */
+function refuseSymlinkedLeaf<T>(archivePath: string, open: () => T): T {
+  try {
+    return open();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // ELOOP: O_NOFOLLOW refused a symlinked final component.
+    if (code === 'ELOOP') {
+      throw new Error(`refusing to follow a symlinked archive destination: ${archivePath} (ELOOP)`);
+    }
+    // EEXIST is NOT symlink-specific: O_CREAT|O_EXCL returns it for any
+    // pre-existing path. We only reach the create branch when `statSafe` saw
+    // nothing, so a plain file here means one appeared in that window. The
+    // `lstat` runs AFTER the failure and is diagnostic only — the kernel has
+    // already decided; this only picks the truthful sentence.
+    if (code === 'EEXIST') {
+      if (lstatSafe(archivePath)?.isSymbolicLink() === true) {
+        throw new Error(
+          `refusing to follow a symlinked archive destination: ${archivePath} (EEXIST)`,
+        );
+      }
+      throw new Error(`archive destination already exists: ${archivePath} (EEXIST)`);
+    }
+    throw error;
+  }
+}
+
 /**
  * Invariant W: each chunk must land at exactly the current EOF, because a
  * positional write past EOF leaves a sparse NUL hole that `size` counts as real
@@ -176,7 +222,18 @@ function writeArchiveBytes(params: {
   // Realpath the directory, not the file: the file may not exist yet.
   assertUnderArchiveRoot(canonicalizeTranscriptPath(dir), archiveRoot);
 
-  const fd = openSync(archivePath, archiveExists ? 'r+' : 'wx', 0o600);
+  const fd = refuseSymlinkedLeaf(archivePath, () =>
+    // The refusal lives in the open, not in an lstat before it: a leaf symlink
+    // planted between an lstat and the open would defeat a check-then-open guard
+    // (TOCTOU). Scope: FINAL COMPONENT ONLY. The directory chain above is still
+    // check-then-open — assertUnderArchiveRoot at :223, this open at :235 — and
+    // ensureDir at :221 traverses existing symlinked components (task 1.5).
+    // The create branch needs no O_NOFOLLOW: O_CREAT|O_EXCL refuses a final
+    // symlink by POSIX rule, live or dangling, asserted in Test 21 rather than
+    // assumed. 'r+' was exactly O_RDWR; 'wx' also carried O_TRUNC, which is inert
+    // under O_EXCL because nothing can exist to truncate.
+    openSync(archivePath, archiveExists ? O_RDWR | O_NOFOLLOW : O_WRONLY | O_CREAT | O_EXCL, 0o600),
+  );
   try {
     if (!archiveExists) chmodSync(archivePath, 0o600); // umask can mask the create-mode
     let pos = from;
@@ -322,7 +379,13 @@ export function mirrorFile(entry: DiscoveredEntry, ctx: MirrorContext): ArchiveF
     if (entry.sealed) return base;
 
     if (archiveSize > 0 && archiveStat !== undefined) {
-      const archiveFd = openSync(archiveDiskPath, 'r');
+      // Read-only, but O_NOFOLLOW all the same: `archiveStat` came from a
+      // following `statSafe`, so without it a symlinked leaf is read as if it
+      // were the mirror and can fabricate a `diverged` row about a file the
+      // archive never wrote.
+      const archiveFd = refuseSymlinkedLeaf(archiveDiskPath, () =>
+        openSync(archiveDiskPath, O_RDONLY | O_NOFOLLOW),
+      );
       let reason: DivergenceReason | undefined;
       try {
         const detected = detectDivergence({
