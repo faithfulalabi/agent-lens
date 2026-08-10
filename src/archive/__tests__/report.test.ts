@@ -3,7 +3,7 @@
 // resolve the developer's real `~/.claude/settings.json`.
 
 import { afterEach, describe, it, expect } from 'vitest';
-import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
   cleanup,
   jsonLines,
   makeSandbox,
+  plantArchiveSymlink,
   settingsPath,
   SLUG,
   sourcePath,
@@ -31,7 +32,11 @@ import { archiveOnce } from '../mirror.js';
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
 const THIRD = `${SLUG}/sess-3.jsonl`;
+const VICTIM = `${SLUG}/victim.jsonl`;
 const TOOL_TXT = `${SLUG}/sess-1/tool-results/big.txt`;
+
+/** Exactly 16 bytes — the number the pre-fix report attributed to the archive. */
+const VICTIM_BYTES = 'sixteen bytes!!\n';
 
 let sandbox: Sandbox | undefined;
 
@@ -347,6 +352,60 @@ describe('AC2 — coverage, bytes, divergence and retention', () => {
 
     expect(built.retention.state).toBe('unreadable');
     expect(formatDoctorReport(built)).toContain('Claude Code retention: unreadable —');
+  });
+});
+
+describe('a symlinked archive leaf is never counted as a mirror (task 1.5)', () => {
+  /** Task 1.4's repro layout: a live source, a live victim, one leaf symlink. */
+  function plantVictimLink(s: Sandbox): void {
+    writeSource(s, SESSION, jsonLines(4));
+    const victim = writeSource(s, VICTIM, VICTIM_BYTES);
+    plantArchiveSymlink(s, SESSION, victim);
+    expect(statSync(victim).size).toBe(16);
+  }
+
+  it('excludes it from coverage.mirrored and attributes none of its target bytes', () => {
+    // Pre-fix these read `mirrored: 1`, `hotFiles: 1`, `hotBytes: 16` — sixteen
+    // bytes the archive never wrote, belonging to a file inside the transcript
+    // root, because the gate was a following `statSync`.
+    const s = sb();
+    plantVictimLink(s);
+
+    const built = report();
+
+    expect(built.coverage.mirrored).toBe(0);
+    expect(built.coverage.unmirrored).toContain(SESSION);
+    expect(built.bytes.hotFiles).toBe(0);
+    expect(built.bytes.hotBytes).toBe(0);
+    expect(built.bytes.totalBytes).toBe(0);
+    expect(built.integrity.archivedFileCount).toBe(0);
+
+    // …and it is not classified at all. Pre-fix it was `unverifiable` for having
+    // no live source WHILE THE SOURCE WAS ALIVE, because the presence gating and
+    // the stat gating disagreed about what the leaf was.
+    expect(
+      built.integrity.unverifiable,
+      `nothing may be classified here, least of all "${NO_LIVE_SOURCE_REASON}"`,
+    ).toEqual([]);
+  });
+
+  it('positive control — a real 16-byte mirror beside it is still counted', () => {
+    // Without this the fix could have simply stopped counting. `buildDoctorReport`
+    // also runs `assertPopulationsPartition` internally, so it throws rather than
+    // returns if the three integrity lists stop partitioning the archived files.
+    const s = sb();
+    plantVictimLink(s);
+    writeSource(s, OTHER, VICTIM_BYTES);
+    writeArchive(s, OTHER, VICTIM_BYTES);
+
+    const built = report();
+
+    expect(built.coverage.mirrored).toBe(1);
+    expect(built.coverage.unmirrored).toContain(SESSION);
+    expect(built.bytes.hotFiles).toBe(1);
+    expect(built.bytes.hotBytes).toBe(16);
+    expect(built.bytes.totalBytes).toBe(16);
+    expect(built.integrity.verified).toEqual([OTHER]);
   });
 });
 

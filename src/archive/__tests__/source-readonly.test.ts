@@ -9,6 +9,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -20,11 +21,18 @@ import {
 } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { archiveOnce } from '../mirror.js';
+// Through the package's own export surface on purpose: AC3's reachable case is a
+// caller that never realpaths the archive root, which only the exports allow.
+import { createMirrorContext, discover, mirrorFile } from '../index.js';
 import type { ArchiveLogRecord } from '../log.js';
 import {
   cleanup,
+  DECOYS,
+  decoyPath,
   jsonLines,
   makeSandbox,
+  plantArchiveSymlink,
+  plantDirSymlink,
   SLUG,
   snapshotTree,
   snapshotTreeSafe,
@@ -155,35 +163,13 @@ describe('the archive never writes to ~/.claude/projects (Test 19)', () => {
 
 // --- Test 21: the archive never follows a symlinked leaf (task 1.4) ------
 
-const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDWR, O_WRONLY } = constants;
+const { O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDWR, O_WRONLY } = constants;
 
 /** The one message every refusal must produce, whichever errno the kernel used. */
 const REFUSED = /refusing to follow a symlinked archive destination/;
 
-const DECOYS = 'decoys';
-
-/**
- * Plants a symlink where the archive would put `rel`. `discover` cannot see it —
- * `readDirSafe` filters on `isFile()` and a symlink `Dirent` reports `false` — so
- * the entry still arrives from the source walk, which is the whole point.
- */
-function plantArchiveSymlink(s: Sandbox, rel: string, target: string): string {
-  const link = join(s.archiveRoot, rel);
-  mkdirSync(dirname(link), { recursive: true });
-  symlinkSync(target, link);
-  return link;
-}
-
-/**
- * Creates `<dataDir>/decoys` and returns a path inside it — under `<dataDir>` but
- * outside the archive root, so the target is harmless and the dir is snapshottable
- * on its own without the archive log and lock churning underneath it.
- */
-function decoyPath(s: Sandbox, name: string): string {
-  const dir = join(s.dataDir, DECOYS);
-  mkdirSync(dir, { recursive: true });
-  return join(dir, name);
-}
+/** The other refusal: containment, not leaf-following. */
+const OUTSIDE = /refusing to write outside the archive root/;
 
 function readArchiveLog(s: Sandbox): ArchiveLogRecord[] {
   const path = join(s.dataDir, 'logs', 'archive.jsonl');
@@ -330,6 +316,221 @@ describe('the archive refuses a symlinked leaf (Test 21)', () => {
     // The r+ branch is the one that needed changing, and O_NOFOLLOW is what changed it.
     expect(() => openSync(liveLink, O_RDWR | O_NOFOLLOW)).toThrow(/ELOOP/);
     closeSync(openSync(liveLink, O_RDWR)); // negative control: nothing ambient refuses
+
+    // The log append (paths.ts, task 1.5) is the same rule with O_APPEND added.
+    // O_CREAT without O_EXCL does NOT rescue a dangling link from O_NOFOLLOW, so
+    // both forms are asserted rather than one assumed from the other.
+    const APPEND = O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW;
+    expect(() => openSync(liveLink, APPEND, 0o600)).toThrow(/ELOOP/);
+    expect(() => openSync(danglingLink, APPEND, 0o600)).toThrow(/ELOOP/);
+    // Negative control: without O_NOFOLLOW the very same open follows the link.
+    closeSync(openSync(liveLink, O_WRONLY | O_CREAT | O_APPEND, 0o600));
+  });
+});
+
+// --- Test 22: the log leaf and the directory chain (task 1.5) -------------
+
+const LOG_REL = join('logs', 'archive.jsonl');
+
+/** Plants a symlink at `<dataDir>/logs/archive.jsonl`, the archive's own log leaf. */
+function plantLogSymlink(s: Sandbox, target: string): string {
+  const link = join(s.dataDir, LOG_REL);
+  mkdirSync(dirname(link), { recursive: true });
+  symlinkSync(target, link);
+  return link;
+}
+
+describe('the archive refuses a symlinked log leaf and directory component (Test 22)', () => {
+  it('(A1) refuses a log symlink aimed into the transcript root, leaving the victim intact', () => {
+    // Pre-fix `appendFileSync` followed the link: the victim grew by one JSONL
+    // line and `chmodSync` set its mode to 0600 through the link as well.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(6));
+    const victim = writeSource(s, VICTIM, jsonLines(2, 900));
+    plantLogSymlink(s, victim);
+
+    const victimBytes = readFileSync(victim);
+    const before = snapshotTree(s.sourceRoot);
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    // Non-quiet, so the pass genuinely reached the log write. Without this the
+    // victim being untouched could just mean nothing was ever logged.
+    expect(result.bytesCopied).toBeGreaterThan(0);
+
+    expect(readFileSync(victim)).toEqual(victimBytes);
+    const after = snapshotTree(s.sourceRoot);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [rel, entry] of before) expect(after.get(rel), rel).toEqual(entry);
+  });
+
+  it('(A2) refuses a log symlink aimed at a harmless decoy under <dataDir>', () => {
+    // The rule is "do not follow a final symlink", not "do not follow one that
+    // lands somewhere I recognise".
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(6));
+    const decoy = decoyPath(s, 'log-decoy.bin');
+    writeFileSync(decoy, 'DECOY\n');
+    plantLogSymlink(s, decoy);
+
+    const before = snapshotTreeSafe(join(s.dataDir, DECOYS));
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+    const after = snapshotTreeSafe(join(s.dataDir, DECOYS));
+
+    expect(readFileSync(decoy, 'utf8')).toBe('DECOY\n');
+    expect(after).toEqual(before); // covers ino, mtimeNs, size, mode
+    expect(result.logged).toBe(false);
+  });
+
+  it('(A3) names the log refusal in result.errors, returns rather than throws, and keeps the mirrored bytes', () => {
+    const s = sb();
+    const body = jsonLines(6);
+    writeSource(s, SESSION, body);
+    const decoy = decoyPath(s, 'log-decoy-2.bin');
+    writeFileSync(decoy, '');
+    const link = plantLogSymlink(s, decoy);
+
+    // Limb one, and the pin on the CONTRACT CHANGE: `archiveOnce` returns a
+    // result carrying the log failure. Were it to go back to throwing, this reds.
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    const logErrors = result.errors.filter((e) => e.path === link);
+    expect(logErrors).toHaveLength(1);
+    expect(logErrors[0]?.message).toMatch(REFUSED);
+    expect(logErrors[0]?.message).toContain(link);
+    expect(result.logged).toBe(false);
+
+    // Limb two, the non-vacuity half: a hijacked event log must not cost the pass
+    // the bytes it already mirrored. Satisfying limb one by aborting the pass is
+    // precisely the outcome this limb exists to forbid.
+    expect(readFileSync(join(s.archiveRoot, SESSION), 'utf8')).toBe(body);
+    expect(result.bytesCopied).toBe(body.length);
+  });
+
+  it('(A4) positive control — with no symlink the log is a regular 0600 file holding the record', () => {
+    // Without this, "no bytes reached the victim" could mean the log stopped
+    // working altogether.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(6));
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.errors).toEqual([]);
+    expect(result.logged).toBe(true);
+    const stat = lstatSync(join(s.dataDir, LOG_REL));
+    expect(stat.isSymbolicLink()).toBe(false);
+    expect(stat.isFile()).toBe(true);
+    expect(stat.mode & 0o777).toBe(0o600);
+    const records = readArchiveLog(s);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.bytes_copied).toBeGreaterThan(0);
+  });
+
+  it('(B1) refuses a PRE-PLANTED symlinked directory component, creating nothing through it', () => {
+    // The assertion that distinguishes pre- from post-fix is the ESCAPE TARGET's
+    // own tree, not the message: pre-fix `ensureDir` ran before the containment
+    // assert, so `sess-1/subagents` was created through the link and only then
+    // was the write refused — the same refusal appears either way.
+    //
+    // "Pre-planted" is the whole claim. A link planted between the pre-assert and
+    // the mkdir is NOT covered and cannot be — Node has no `mkdirat`.
+    const s = sb();
+    writeSource(s, META, '{"model":"claude"}');
+    const escape = join(s.root, 'escape');
+    plantDirSymlink(s, SLUG, escape);
+
+    const before = snapshotTreeSafe(escape);
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+    const after = snapshotTreeSafe(escape);
+
+    expect(after).toEqual(before);
+    expect(after.size).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(OUTSIDE);
+    expect(result.bytesCopied).toBe(0);
+  });
+
+  it('(B2) positive control — a real directory in the same place mirrors normally', () => {
+    const s = sb();
+    const body = '{"model":"claude"}';
+    writeSource(s, META, body);
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(join(s.archiveRoot, META), 'utf8')).toBe(body);
+  });
+
+  it('(C1) FIX — an unresolved archiveRoot through the package exports mirrors instead of throwing', () => {
+    // The one reachable form of the containment inconsistency, and the only limb
+    // of AC3 that reds pre-fix. `archiveOnce` canonicalizes the root before the
+    // assert ever sees it, so it already succeeds against this layout; a caller
+    // reaching createMirrorContext/mirrorFile through the package's own exports
+    // gets no such help and got `refusing to write outside the archive root`.
+    const s = sb();
+    const body = jsonLines(4);
+    writeSource(s, SESSION, body);
+    const volume = join(s.root, 'archive-volume');
+    mkdirSync(volume, { recursive: true });
+    mkdirSync(s.dataDir, { recursive: true });
+    symlinkSync(volume, s.archiveRoot);
+
+    // Never realpathed — exactly what an external caller has in hand.
+    const unresolvedRoot = s.archiveRoot;
+    const entries = discover(s.sourceRoot, unresolvedRoot);
+    expect(entries).toHaveLength(1);
+
+    const state = mirrorFile(entries[0]!, createMirrorContext({ archiveRoot: unresolvedRoot }));
+
+    expect(state.bytes_copied).toBe(body.length);
+    expect(readFileSync(join(volume, SESSION), 'utf8')).toBe(body);
+  });
+
+  it('(C2) PIN, prospective and green before task 1.5 — AGENT_LENS_DIR at a symlinked archive root still mirrors', () => {
+    // This is NOT evidence of a fix and must never be read as one: it passed
+    // unmodified before this task. It exists so that the directory-chain refusal
+    // above cannot be bought by refusing symlinked ROOTS too, which would break
+    // relocating a "keep everything forever" archive onto another volume.
+    const s = sb();
+    const body = jsonLines(4);
+    writeSource(s, SESSION, body);
+    const volume = join(s.root, 'archive-volume');
+    mkdirSync(volume, { recursive: true });
+    mkdirSync(s.dataDir, { recursive: true });
+    symlinkSync(volume, s.archiveRoot);
+
+    const previous = process.env.AGENT_LENS_DIR;
+    process.env.AGENT_LENS_DIR = s.dataDir;
+    let result;
+    try {
+      result = archiveOnce({ transcriptRoot: s.sourceRoot });
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_LENS_DIR;
+      else process.env.AGENT_LENS_DIR = previous;
+    }
+
+    expect(result.errors).toEqual([]);
+    expect(result.archiveRoot).toBe(volume);
+    expect(readFileSync(join(volume, SESSION), 'utf8')).toBe(body);
+  });
+
+  it('(C3) PIN, also green before task 1.5 — an interior symlink that stays INSIDE the real root is allowed', () => {
+    // The third clause of the rule the guard now states in one place: the root
+    // may be a link, an interior link may not escape the real root (B1), and one
+    // that stays inside it is fine. This clause is what stops B1's refusal from
+    // over-refusing; like C2 its value is entirely prospective.
+    const s = sb();
+    const body = '{"model":"claude"}';
+    writeSource(s, META, body);
+    const inside = join(s.archiveRoot, 'relocated');
+    plantDirSymlink(s, SLUG, inside);
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(join(inside, 'sess-1', 'subagents', 'agent-a.meta.json'), 'utf8')).toBe(
+      body,
+    );
   });
 });
 

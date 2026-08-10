@@ -8,26 +8,22 @@ import {
   closeSync,
   constants,
   fstatSync,
-  lstatSync,
   openSync,
   readSync,
   writeSync,
   type BigIntStats,
-  type Stats,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { discover, type DiscoveredEntry } from './discover.js';
 import { acquireLock, type LockIdentity, type LockState } from './lock.js';
 import { appendArchiveLog, type ArchiveLogRecord, type DivergedLogEntry } from './log.js';
-// `seal.ts` imports `refuseSymlinkedLeaf` back from here. The cycle is safe and
-// deliberate: both bindings are hoisted function declarations, used only at call
-// time, so neither module reads the other during evaluation. The alternative was
-// a second errno mapper, which is the thing task 1.4 exists to prevent.
 import { sealArchiveFile } from './seal.js';
 import {
-  assertUnderArchiveRoot,
   canonicalizeTranscriptPath,
   ensureDir,
+  ensureDirUnder,
+  refuseSymlinkedLeaf,
+  resolveArchiveLogPath,
   resolveArchiveRoot,
   resolveDataDir,
   resolveTranscriptRoot,
@@ -205,47 +201,6 @@ function scanDeltaBackward(
   return { lastNewlineOffset, bytesRead };
 }
 
-/** `lstat` shaped like paths.ts:83-89, kept local so paths.ts is untouched. */
-function lstatSafe(path: string): Stats | undefined {
-  try {
-    return lstatSync(path);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Names the kernel's refusal so it survives `String(error)` in `archiveOnce`.
- * Both archive-side opens go through here; anything else is rethrown unchanged,
- * so an unexpected errno degrades to the previous behaviour rather than to
- * silence.
- */
-export function refuseSymlinkedLeaf<T>(archivePath: string, open: () => T): T {
-  try {
-    return open();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // ELOOP: O_NOFOLLOW refused a symlinked final component.
-    if (code === 'ELOOP') {
-      throw new Error(`refusing to follow a symlinked archive destination: ${archivePath} (ELOOP)`);
-    }
-    // EEXIST is NOT symlink-specific: O_CREAT|O_EXCL returns it for any
-    // pre-existing path. We only reach the create branch when `statSafe` saw
-    // nothing, so a plain file here means one appeared in that window. The
-    // `lstat` runs AFTER the failure and is diagnostic only — the kernel has
-    // already decided; this only picks the truthful sentence.
-    if (code === 'EEXIST') {
-      if (lstatSafe(archivePath)?.isSymbolicLink() === true) {
-        throw new Error(
-          `refusing to follow a symlinked archive destination: ${archivePath} (EEXIST)`,
-        );
-      }
-      throw new Error(`archive destination already exists: ${archivePath} (EEXIST)`);
-    }
-    throw error;
-  }
-}
-
 /**
  * Invariant W: each chunk must land at exactly the current EOF, because a
  * positional write past EOF leaves a sparse NUL hole that `size` counts as real
@@ -262,16 +217,19 @@ function writeArchiveBytes(params: {
 }): { bytesWritten: number; bytesRead: number } {
   const { archiveRoot, archivePath, archiveExists, sourceFd, from, to, buffer } = params;
   const dir = dirname(archivePath);
-  ensureDir(dir);
-  // Realpath the directory, not the file: the file may not exist yet.
-  assertUnderArchiveRoot(canonicalizeTranscriptPath(dir), archiveRoot);
+  // Asserts, creates, asserts again — so a PRE-PLANTED symlinked ancestor is
+  // refused before any directory is made through it, which the old
+  // create-then-assert order could not do. See `ensureDirUnder` for what that
+  // does and does not buy: the concurrent-plant window stays open and is not
+  // closable in Node at all.
+  ensureDirUnder(dir, archiveRoot);
 
   const fd = refuseSymlinkedLeaf(archivePath, () =>
     // The refusal lives in the open, not in an lstat before it: a leaf symlink
     // planted between an lstat and the open would defeat a check-then-open guard
     // (TOCTOU). Scope: FINAL COMPONENT ONLY. The directory chain above is still
-    // check-then-open — assertUnderArchiveRoot at :223, this open at :235 — and
-    // ensureDir at :221 traverses existing symlinked components (task 1.5).
+    // check-then-act — `ensureDirUnder` asserts around the `mkdirSync`, this open
+    // comes after both.
     // The create branch needs no O_NOFOLLOW: O_CREAT|O_EXCL refuses a final
     // symlink by POSIX rule, live or dangling, asserted in Test 21 rather than
     // assumed. 'r+' was exactly O_RDWR; 'wx' also carried O_TRUNC, which is inert
@@ -591,7 +549,20 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
     errors: result.errors,
     sealed: result.sealed,
   };
-  result.logged = appendArchiveLog(dataDir, record);
+  // CONTRACT: `archiveOnce` RETURNS a result carrying a log-write failure rather
+  // than throwing one at a caller that asked for a result. The log leaf can now
+  // refuse — a symlink at <dataDir>/logs/archive.jsonl is not followed — and this
+  // call sits outside the per-entry catch above, so without this the whole pass
+  // would come back as an exception. Same shape as that catch, deliberately: the
+  // archive gains no second failure idiom. `logged` stays false, and the message
+  // is printed by `formatSummary`, so nothing is swallowed. The mirrored bytes
+  // are the system of record and this log explicitly is not (see log.ts), so a
+  // hijacked event log must not cost the pass what it already copied.
+  try {
+    result.logged = appendArchiveLog(dataDir, record);
+  } catch (error) {
+    result.errors.push({ path: resolveArchiveLogPath(dataDir), message: String(error) });
+  }
 
   return result;
 }

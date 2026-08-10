@@ -17,8 +17,11 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
-import { refuseSymlinkedLeaf } from './mirror.js';
-import { assertUnderArchiveRoot, canonicalizeTranscriptPath } from './paths.js';
+import {
+  assertUnderArchiveRoot,
+  canonicalizeTranscriptPath,
+  refuseSymlinkedLeaf,
+} from './paths.js';
 
 const { O_NOFOLLOW, O_RDONLY } = constants;
 

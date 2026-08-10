@@ -4,6 +4,10 @@
 // load-bearing twice over: a reporting command that took the pass lock would
 // make a concurrent cron pass report `held`, and one that created the data dir
 // would leave evidence on a machine that has never archived.
+//
+// One read here is deliberately non-following: the archive-side stat is an
+// `lstat`, so a symlink planted at an archive leaf is reported as unmirrored
+// rather than counted as a mirror whose target's bytes belong to the archive.
 
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -12,6 +16,7 @@ import { discover } from './discover.js';
 import { detectDivergence, type DivergenceReason } from './mirror.js';
 import {
   canonicalizeTranscriptPath,
+  lstatSafe,
   resolveArchiveRoot,
   resolveDataDir,
   resolveTranscriptRoot,
@@ -213,10 +218,14 @@ export function buildDoctorReport(options: DoctorReportOptions = {}): DoctorRepo
 
   for (const entry of discover(sourceRoot, archiveRoot)) {
     const diskPath = archiveDiskPath(entry.archivePath, entry.sealed);
-    const archiveStat = statSafe(diskPath);
-    // A 0-byte archive file is not a mirror: `mirrorFile` creates lazily so that
-    // an empty file never outlives its source as the archived truth.
-    const archiveSize = archiveStat?.size ?? 0;
+    // `lstatSafe`, never a following `statSafe`: a path-based `statSync` resolves
+    // a symlinked leaf, so a link planted in the archive was reported as a mirror
+    // and its TARGET's bytes — which may sit inside the transcript root — were
+    // attributed to the archive. Only a regular file is archived bytes.
+    const archiveStat = lstatSafe(diskPath);
+    // A 0-byte archive file is not a mirror either: `mirrorFile` creates lazily
+    // so that an empty file never outlives its source as the archived truth.
+    const archiveSize = archiveStat?.isFile() === true ? archiveStat.size : 0;
     const archived = archiveSize > 0;
 
     if (entry.presence === 'archive-only') {
