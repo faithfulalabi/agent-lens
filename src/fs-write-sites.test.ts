@@ -110,32 +110,37 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/mirror.ts#1',
     callee: 'openSync',
-    why: 'opens <dataDir>/archive/<relPath> for the mirrored bytes. Scope of the guarantee: containment is asserted on the realpath of the PARENT DIRECTORY only (mirror.ts:176-177); the leaf is not resolved and openSync carries no O_NOFOLLOW, so a leaf symlink under <dataDir>/archive is followed. Filed as task 1.4; not fixed here',
+    why: 'opens <dataDir>/archive/<relPath> for the mirrored bytes, with O_NOFOLLOW on the r+ branch and O_CREAT|O_EXCL on the create branch, so the kernel itself refuses a symlinked LEAF (task 1.4). Scope of the guarantee: FINAL COMPONENT ONLY. The directory chain is still check-then-open — assertUnderArchiveRoot on the realpath of the parent dir at mirror.ts:223, this open at :235 — and ensureDir at :221 traverses existing symlinked components (task 1.5)',
   },
   {
     key: 'archive/mirror.ts#2',
     callee: 'chmodSync',
-    why: 'forces 0600 on that same archive path (umask can mask the create-mode); reached only via the !archiveExists branch. Same partial scope as #1 — parent dir realpathed, leaf not (task 1.4)',
+    why: 'forces 0600 on that same archive path (umask can mask the create-mode); reached only via the !archiveExists branch, i.e. only after O_CREAT|O_EXCL proved we created the file. Path-based, so it re-resolves the leaf after we already hold the fd: the residual race can mis-chmod a victim to 0600 but cannot alter content (fchmodSync considered and declined, task 1.4). Same directory-chain scope as #1 (task 1.5)',
   },
   {
     key: 'archive/mirror.ts#3',
     callee: 'writeSync',
-    why: "writes the mirrored bytes positionally to the fd from #1; inherits #1's scope exactly, including the unresolved leaf (task 1.4)",
+    why: "writes the mirrored bytes positionally to the fd from #1; inherits #1's scope exactly, including the unresolved directory chain (task 1.5)",
+  },
+  {
+    key: 'archive/mirror.ts#4',
+    callee: 'openSync',
+    why: 'opens the existing archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to feed detectDivergence; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — its documented safe direction to be wrong in (see the `record` comment in this file). O_NOFOLLOW is here so a symlinked leaf cannot fabricate a `diverged` row about a file the archive never wrote. Directory chain unguarded as in #1 (task 1.5)',
   },
   {
     key: 'archive/paths.ts#1',
     callee: 'mkdirSync',
-    why: 'ensureDir: creates a directory that is lexically under <dataDir> at all four callers (lock.ts:114, paths.ts:78, mirror.ts:175, mirror.ts:387). Lexical only: recursive mkdir traverses existing symlinked components, and at mirror.ts:175 it runs before the assert at :177 — see task 1.4',
+    why: 'ensureDir: creates a directory that is lexically under <dataDir> at all four callers (lock.ts:114, paths.ts:78, mirror.ts:221, mirror.ts:450). Lexical only: recursive mkdir traverses existing symlinked components, and at mirror.ts:221 it runs before the assert at :223 — see task 1.5',
   },
   {
     key: 'archive/paths.ts#2',
     callee: 'appendFileSync',
-    why: "appends one JSONL line to <dataDir>/logs/archive.jsonl (paths.ts:44-46) for the archive's own event log; fixed name, single caller (log.ts:41). Flag 'a' follows a leaf symlink at that path — same unresolved-leaf class as task 1.4",
+    why: "appends one JSONL line to <dataDir>/logs/archive.jsonl (paths.ts:44-46) for the archive's own event log; fixed name, single caller (log.ts:41). Flag 'a' follows a leaf symlink at that path — the class task 1.4 closed for the archive leaf but not for this one (task 1.5)",
   },
   {
     key: 'archive/paths.ts#3',
     callee: 'chmodSync',
-    why: 'forces 0600 on that same log path; follows a leaf symlink there for the same reason as #2 (task 1.4)',
+    why: 'forces 0600 on that same log path; follows a leaf symlink there for the same reason as #2 (task 1.5)',
   },
   {
     key: 'capture/replay.ts#1',
@@ -240,12 +245,15 @@ const WRITE_SITES: readonly ManifestEntry[] = [
 ];
 
 // Exhaustive, like WRITE_SITES. Every writing row here is also a WRITE_SITES row
-// (archive/lock.ts#1, archive/mirror.ts#1) and reviewed there; the read-only rows
-// are listed only so `openSync` cannot silently leave the scan.
+// (archive/lock.ts#1, archive/mirror.ts#1, archive/mirror.ts#4) and reviewed
+// there; the read-only rows are listed only so `openSync` cannot silently leave
+// the scan. The two numeric rows are the archive-side opens task 1.4 gave
+// O_NOFOLLOW: they carry no string literal, so isReadOnlyFlags rejects both and
+// they land in `writes` too — including #4, which only reads.
 const OPEN_SITES: readonly string[] = [
   "archive/lock.ts:'wx'",
-  "archive/mirror.ts:archiveExists ? 'r+' : 'wx'",
-  "archive/mirror.ts:'r'",
+  'archive/mirror.ts:archiveExists ? O_RDWR | O_NOFOLLOW : O_WRONLY | O_CREAT | O_EXCL',
+  'archive/mirror.ts:O_RDONLY | O_NOFOLLOW',
   "archive/mirror.ts:'r'",
   "archive/report.ts:'r'",
   "archive/report.ts:'r'",
@@ -479,18 +487,23 @@ describe('the guard reds when the property it protects is broken', () => {
   it('every partial-guarantee entry still cites the task that closes the gap', () => {
     // The mechanical half of AC1: honesty is not checkable, the citation is.
     // Without this, a later edit could strip a caveat while the gap is still open.
+    // Re-pointed 1.4 -> 1.5, not narrowed: task 1.4 closed the LEAF hole only, so
+    // every one of these still has a live gap — the directory chain for the
+    // mirror rows, the log leaf for the paths rows. paths.ts#1 joins the array
+    // because it already cited a task in its `why` but was never asserted on.
     const partial = [
       'archive/mirror.ts#1',
       'archive/mirror.ts#2',
       'archive/mirror.ts#3',
+      'archive/paths.ts#1',
       'archive/paths.ts#2',
       'archive/paths.ts#3',
     ];
     for (const key of partial) {
       const entry = WRITE_SITES.find((e) => e.key === key);
       expect(entry, `${key} is missing from WRITE_SITES`).toBeDefined();
-      expect(entry?.why, `${key} must name the limit of its guarantee and cite task 1.4`).toMatch(
-        /task 1\.4/,
+      expect(entry?.why, `${key} must name the limit of its guarantee and cite task 1.5`).toMatch(
+        /task 1\.5/,
       );
     }
   });
