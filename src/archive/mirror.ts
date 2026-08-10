@@ -19,6 +19,11 @@ import { dirname } from 'node:path';
 import { discover, type DiscoveredEntry } from './discover.js';
 import { acquireLock, type LockIdentity, type LockState } from './lock.js';
 import { appendArchiveLog, type ArchiveLogRecord, type DivergedLogEntry } from './log.js';
+// `seal.ts` imports `refuseSymlinkedLeaf` back from here. The cycle is safe and
+// deliberate: both bindings are hoisted function declarations, used only at call
+// time, so neither module reads the other during evaluation. The alternative was
+// a second errno mapper, which is the thing task 1.4 exists to prevent.
+import { sealArchiveFile } from './seal.js';
 import {
   assertUnderArchiveRoot,
   canonicalizeTranscriptPath,
@@ -53,10 +58,19 @@ export interface ArchiveFileState {
   source_head_len: number;
   source_state: SourceState;
   archive_path: string;
+  /**
+   * Compressed size on disk once `archive_state` is `sealed`, so this field
+   * means the same thing on every pass. Deliberately NOT the logical length —
+   * that is what `ArchiveReader.size()` returns.
+   */
   archive_size: number;
   archive_state: ArchiveState;
   reason?: DivergenceReason;
   bytes_copied: number;
+  /** Set only on the pass that seals. In memory only; persisted nowhere. */
+  archive_sha256?: string;
+  /** Set only on the pass that seals. An output of the seal, never an input. */
+  sealed_at?: string;
 }
 
 export interface ArchiveResult {
@@ -69,6 +83,12 @@ export interface ArchiveResult {
   sourceRoot: string;
   archiveRoot: string;
   logged: boolean;
+  /**
+   * Logical archive paths sealed on THIS pass. Not derivable from
+   * `files.filter(f => f.archive_state === 'sealed')`, which also holds every
+   * file sealed on an earlier pass — and `isQuiet` needs the difference.
+   */
+  sealed: string[];
 }
 
 export interface ArchiveOptions {
@@ -96,6 +116,29 @@ export function decideCopyEnd(input: {
   return lastNewlineOffset === undefined ? archiveSize : lastNewlineOffset + 1;
 }
 
+/**
+ * Whether this pass compresses the archived file. The source is gone, therefore
+ * the file can never grow again, therefore it can be sealed — that is the whole
+ * rule and there is no second trigger.
+ *
+ * The signature is the guarantee: three inputs, none of them a clock, so there
+ * is no parameter through which an elapsed-time value could reach the decision.
+ *
+ * `alreadySealed` is load-bearing rather than a nicety. Every source-less entry
+ * now flows through here, including a `.zst` planted with no source at all —
+ * the mirror's own "never append to a sealed archive" guard sits after the
+ * source open and is unreachable when there is no source. What actually holds
+ * those cases is this term, fed by `discover`'s sticky `sealed` merge.
+ */
+export function shouldSeal(input: {
+  sourceState: SourceState;
+  alreadySealed: boolean;
+  archiveSize: number;
+}): boolean {
+  const { sourceState, alreadySealed, archiveSize } = input;
+  return sourceState === 'expired' && !alreadySealed && archiveSize > 0;
+}
+
 /** Reads short only at EOF. */
 function readInto(fd: number, buf: Buffer, position: number, length: number): number {
   let read = 0;
@@ -107,7 +150,8 @@ function readInto(fd: number, buf: Buffer, position: number, length: number): nu
   return read;
 }
 
-function readRange(fd: number, position: number, length: number): Buffer {
+/** Exported for `read.ts`: the hot half of the accessor must clamp identically. */
+export function readRange(fd: number, position: number, length: number): Buffer {
   if (length <= 0) return Buffer.alloc(0);
   const buf = Buffer.allocUnsafe(length);
   const read = readInto(fd, buf, position, length);
@@ -176,7 +220,7 @@ function lstatSafe(path: string): Stats | undefined {
  * so an unexpected errno degrades to the previous behaviour rather than to
  * silence.
  */
-function refuseSymlinkedLeaf<T>(archivePath: string, open: () => T): T {
+export function refuseSymlinkedLeaf<T>(archivePath: string, open: () => T): T {
   try {
     return open();
   } catch (error) {
@@ -308,6 +352,8 @@ export interface MirrorContext {
   /** Injected so a test can force `settled === false` without racing a real writer. */
   statFile: (path: string) => BigIntStats | undefined;
   bytesRead: number;
+  /** Logical archive paths sealed during this pass, in visit order. */
+  sealed: string[];
 }
 
 export function createMirrorContext(params: {
@@ -321,6 +367,40 @@ export function createMirrorContext(params: {
     buffer: Buffer.allocUnsafe(CHUNK_BYTES),
     statFile: params.statFile ?? statSafeBig,
     bytesRead: 0,
+    sealed: [],
+  };
+}
+
+/**
+ * The expired return, taken by both paths that discover a missing source. The
+ * seal is wired here rather than at a single later point because the second
+ * path returns straight out of the failed source open.
+ */
+function expire(
+  entry: DiscoveredEntry,
+  base: ArchiveFileState,
+  ctx: MirrorContext,
+): ArchiveFileState {
+  const expired: ArchiveFileState = { ...base, source_state: 'expired' };
+  if (
+    !shouldSeal({
+      sourceState: 'expired',
+      alreadySealed: entry.sealed,
+      archiveSize: base.archive_size,
+    })
+  ) {
+    return expired;
+  }
+  const sealed = sealArchiveFile(base.archive_path, ctx.archiveRoot);
+  ctx.sealed.push(base.archive_path);
+  return {
+    ...expired,
+    // Both together, or `archive_size` would report the pre-seal hot size while
+    // `archive_state` already read `sealed` — on exactly one pass per file.
+    archive_size: sealed.sealed_size,
+    archive_state: 'sealed',
+    archive_sha256: sealed.archive_sha256,
+    sealed_at: sealed.sealed_at,
   };
 }
 
@@ -347,7 +427,7 @@ export function mirrorFile(entry: DiscoveredEntry, ctx: MirrorContext): ArchiveF
 
   const s0 = ctx.statFile(entry.sourcePath);
   if (s0 === undefined || !s0.isFile()) {
-    return { ...base, source_state: 'expired' };
+    return expire(entry, base, ctx);
   }
 
   const sourceSize = Number(s0.size);
@@ -361,7 +441,7 @@ export function mirrorFile(entry: DiscoveredEntry, ctx: MirrorContext): ArchiveF
   } catch (error) {
     // Expiry is normal here, so the stat->open race is not a pass error.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { ...base, source_state: 'expired' };
+      return expire(entry, base, ctx);
     }
     throw error;
   }
@@ -461,6 +541,7 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
     sourceRoot,
     archiveRoot,
     logged: false,
+    sealed: [],
   };
 
   const diverged: DivergedLogEntry[] = [];
@@ -494,6 +575,7 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
         }
       }
       result.bytesRead = ctx.bytesRead;
+      result.sealed = ctx.sealed;
     }
   } finally {
     lock.release();
@@ -507,6 +589,7 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
     diverged,
     newly_expired: newlyExpired,
     errors: result.errors,
+    sealed: result.sealed,
   };
   result.logged = appendArchiveLog(dataDir, record);
 

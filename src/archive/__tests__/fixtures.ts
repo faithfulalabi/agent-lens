@@ -67,6 +67,26 @@ export function jsonLines(n: number, from = 0): string {
   return out;
 }
 
+/**
+ * `n` transcript-shaped JSON lines. Unlike `jsonLines` the content varies per
+ * line, so a compression ratio measured over it is not an artifact of repeats.
+ */
+export function transcriptLines(n: number): string {
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    out += `${JSON.stringify({
+      type: i % 3 === 0 ? 'user' : 'assistant',
+      uuid: `0000${i}-aaaa-bbbb-cccc-${String(i).padStart(12, '0')}`,
+      timestamp: `2026-08-0${(i % 9) + 1}T12:${String(i % 60).padStart(2, '0')}:00.000Z`,
+      message: {
+        role: i % 3 === 0 ? 'user' : 'assistant',
+        content: `line ${i}: the archive keeps everything forever, which is why sealing exists at all.`,
+      },
+    })}\n`;
+  }
+  return out;
+}
+
 export function readBytes(path: string): Buffer {
   return readFileSync(path);
 }

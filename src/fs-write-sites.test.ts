@@ -27,6 +27,8 @@ const WRITE_CALLEES = new Set([
   'cp',
   'cpSync',
   'createWriteStream',
+  'fchmod',
+  'fchmodSync',
   'ftruncate',
   'ftruncateSync',
   'futimes',
@@ -126,6 +128,36 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     key: 'archive/mirror.ts#4',
     callee: 'openSync',
     why: 'opens the existing archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to feed detectDivergence; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — its documented safe direction to be wrong in (see the `record` comment in this file). O_NOFOLLOW is here so a symlinked leaf cannot fabricate a `diverged` row about a file the archive never wrote. Directory chain unguarded as in #1 (task 1.5)',
+  },
+  {
+    key: 'archive/seal.ts#1',
+    callee: 'openSync',
+    why: 'opens the HOT archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to hash and compress it; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — the same documented safe direction as archive/mirror.ts#4. O_NOFOLLOW is load-bearing here rather than decorative: without it a symlinked leaf under the archive root would be read THROUGH the link, so a live transcript would be compressed into the archive and the link unlinked by #6. Directory chain unguarded as in archive/mirror.ts#1 (task 1.5)',
+  },
+  {
+    key: 'archive/seal.ts#2',
+    callee: 'openSync',
+    why: "creates <archivePath>.zst.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. The path is the archive path from #1 plus a fixed suffix, and assertUnderArchiveRoot has already run on the realpath of its parent directory (seal.ts, before this open). The `.tmp.<pid>` suffix is what keeps a crashed temp out of discover's union. Directory chain unguarded as in archive/mirror.ts#1 (task 1.5)",
+  },
+  {
+    key: 'archive/seal.ts#3',
+    callee: 'fchmodSync',
+    why: 'forces 0600 on the temp file from #2 (umask can mask the create-mode). fd-based, so unlike archive/mirror.ts#2 it re-resolves no path at all and has no residual leaf race',
+  },
+  {
+    key: 'archive/seal.ts#4',
+    callee: 'writeSync',
+    why: "writes the compressed frame positionally to the fd from #2; no path of its own, and inherits #2's scope",
+  },
+  {
+    key: 'archive/seal.ts#5',
+    callee: 'renameSync',
+    why: 'atomically moves the temp file from #2 onto <archivePath>.zst, both under the archive root asserted before #2. rename(2) acts on the link itself, never a symlink target. Ordered before #6 so no instant exists at which only a partial frame is present',
+  },
+  {
+    key: 'archive/seal.ts#6',
+    callee: 'unlinkSync',
+    why: 'removes the hot archive file from #1, only after #5 published a frame already round-trip verified byte-identical to it. unlink(2) removes the link itself, never a symlink target — and #1 refused to follow one in the first place',
   },
   {
     key: 'archive/paths.ts#1',
@@ -245,18 +277,25 @@ const WRITE_SITES: readonly ManifestEntry[] = [
 ];
 
 // Exhaustive, like WRITE_SITES. Every writing row here is also a WRITE_SITES row
-// (archive/lock.ts#1, archive/mirror.ts#1, archive/mirror.ts#4) and reviewed
-// there; the read-only rows are listed only so `openSync` cannot silently leave
-// the scan. The two numeric rows are the archive-side opens task 1.4 gave
-// O_NOFOLLOW: they carry no string literal, so isReadOnlyFlags rejects both and
-// they land in `writes` too — including #4, which only reads.
+// (archive/lock.ts#1, archive/mirror.ts#1, archive/mirror.ts#4, archive/seal.ts#1,
+// archive/seal.ts#2) and reviewed there; the read-only rows are listed only so
+// `openSync` cannot silently leave the scan. The three numeric rows are the
+// archive-side opens given O_NOFOLLOW: they carry no string literal, so
+// isReadOnlyFlags rejects all three and they land in `writes` too — including
+// archive/mirror.ts#4 and archive/seal.ts#1, which only read.
 const OPEN_SITES: readonly string[] = [
   "archive/lock.ts:'wx'",
   'archive/mirror.ts:archiveExists ? O_RDWR | O_NOFOLLOW : O_WRONLY | O_CREAT | O_EXCL',
   'archive/mirror.ts:O_RDONLY | O_NOFOLLOW',
   "archive/mirror.ts:'r'",
+  // The accessor reads only, and both of its opens carry a plain 'r' literal so
+  // that the ENOENT fallback from hot to sealed stays a two-outcome dispatch.
+  "archive/read.ts:'r'",
+  "archive/read.ts:'r'",
   "archive/report.ts:'r'",
   "archive/report.ts:'r'",
+  'archive/seal.ts:O_RDONLY | O_NOFOLLOW',
+  "archive/seal.ts:'wx'",
   "capture/tailer.ts:'r'",
 ];
 
@@ -429,6 +468,19 @@ describe('AC4 (static) — every write-capable fs call in src/ is reviewed', () 
       expect(byKey.get(entry.key)?.callee, `${entry.key} changed callee`).toBe(entry.callee);
       expect(entry.why.length, `${entry.key} needs a justification`).toBeGreaterThan(0);
     }
+  });
+
+  it('the fd-based mode changer is registered, so a seal-time chmod cannot hide', () => {
+    // Without `fchmodSync` in WRITE_CALLEES the seal's 0600 would be invisible to
+    // this manifest, which is worse than a red. Its async sibling is registered
+    // for the same reason `futimes` is: so it cannot arrive unnoticed later.
+    for (const name of ['fchmod', 'fchmodSync']) {
+      expect(WRITE_CALLEES.has(name), `${name} must stay in WRITE_CALLEES`).toBe(true);
+    }
+    expect(WRITE_SITES.find((e) => e.key === 'archive/seal.ts#3')?.callee).toBe('fchmodSync');
+    expect(writeKeysOf(undefined, 'archive/seal.ts')).toContain('archive/seal.ts#3');
+    // Inert for the async form: nothing under src/ calls it.
+    expect(scanAll().writes.filter((s) => s.callee === 'fchmod')).toEqual([]);
   });
 
   it('the tailer writes nothing, and its only openSync is read-only', () => {
