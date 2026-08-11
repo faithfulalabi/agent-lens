@@ -92,7 +92,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/lock.ts#1',
     callee: 'openSync',
-    why: 'opens <dataDir>/archive.lock (resolveLockPath, paths.ts:48-50), a fixed name never derived from the transcript corpus; no containment assert is applied to this path',
+    why: 'opens <dataDir>/archive.lock (resolveLockPath, paths.ts:85-87), a fixed name never derived from the transcript corpus. acquireLock asserts the lock path resolves under <dataDir> before this open, so a pre-planted symlink escaping the data dir is refused. What that assert closes is a READ, not a write: this open is `wx`, which never writes through a link, but readFileSync/statSafe below it followed one and let the victim decide the lock verdict',
   },
   {
     key: 'archive/lock.ts#2',
@@ -112,37 +112,37 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/mirror.ts#1',
     callee: 'openSync',
-    why: 'opens <dataDir>/archive/<relPath> for the mirrored bytes, with O_NOFOLLOW on the r+ branch and O_CREAT|O_EXCL on the create branch, so the kernel itself refuses a symlinked LEAF. Scope of the guarantee: FINAL COMPONENT ONLY. The directory chain above it is check-then-act: ensureDirUnder (writeArchiveBytes in mirror.ts) asserts containment before AND after its mkdir, which refuses a pre-planted LIVE symlinked ancestor. It does not refuse one planted between the assert and the mkdir, nor a DANGLING one (realpathSync reports ENOENT for a dangling link and for an absent component alike, so the guard cannot tell them apart — the kernel stops that case instead, with its own ENOENT). What is left is narrowed by task 1.7; the concurrent-plant window itself is PERMANENT, because closing it needs openat/mkdirat against a dirfd and Node exposes no such API at all',
+    why: 'opens <dataDir>/archive/<relPath> for the mirrored bytes, with O_NOFOLLOW on the r+ branch and O_CREAT|O_EXCL on the create branch, so the kernel itself refuses a symlinked LEAF. Scope of the guarantee: FINAL COMPONENT ONLY. The directory chain above it is check-then-act: ensureDirUnder (writeArchiveBytes in mirror.ts) asserts containment before AND after its mkdir, which refuses a pre-planted LIVE symlinked ancestor. It does not refuse one planted between the assert and the mkdir, nor a DANGLING one (realpathSync reports ENOENT for a dangling link and for an absent component alike, so the guard cannot tell them apart — the kernel stops that case instead, with its own ENOENT). What is left is the concurrent-plant window itself, and it is PERMANENT: closing it needs openat/mkdirat against a dirfd and Node exposes no such API at all',
   },
   {
     key: 'archive/mirror.ts#2',
-    callee: 'chmodSync',
-    why: 'forces 0600 on that same archive path (umask can mask the create-mode); reached only via the !archiveExists branch, i.e. only after O_CREAT|O_EXCL proved we created the file. Path-based, so it re-resolves the leaf after we already hold the fd: the residual race can mis-chmod a victim to 0600 but cannot alter content. fchmodSync closes it, and archive/paths.ts#3 now uses exactly that for the log write, so the two are inconsistent — task 1.7 owns making them agree. Same directory-chain scope as #1, permanent half included',
+    callee: 'fchmodSync',
+    why: 'forces 0600 on the fd from #1 (umask can mask the create-mode); reached only via the !archiveExists branch, i.e. only after O_CREAT|O_EXCL proved we created the file. fd-based like archive/seal.ts#3 and archive/paths.ts#3, so it re-resolves nothing and has no residual leaf race. Same directory-chain scope as #1, PERMANENT half included',
   },
   {
     key: 'archive/mirror.ts#3',
     callee: 'writeSync',
-    why: "writes the mirrored bytes positionally to the fd from #1; inherits #1's scope exactly, including the directory-chain residual task 1.7 narrows and the concurrent-plant window nothing can close",
+    why: "writes the mirrored bytes positionally to the fd from #1; inherits #1's scope exactly, including the directory chain the containment asserts narrow and the concurrent-plant window nothing can close — PERMANENTLY, since that needs openat/mkdirat against a dirfd and Node has neither",
   },
   {
     key: 'archive/mirror.ts#4',
     callee: 'openSync',
-    why: 'opens the existing archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to feed detectDivergence; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — its documented safe direction to be wrong in (see the `record` comment in this file). O_NOFOLLOW is here so a symlinked leaf cannot fabricate a `diverged` row about a file the archive never wrote. Directory chain as in #1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant',
+    why: 'opens the existing archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to feed detectDivergence; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — its documented safe direction to be wrong in (see the `record` comment in this file). O_NOFOLLOW is here so a symlinked leaf cannot fabricate a `diverged` row about a file the archive never wrote. Directory chain as in #1: narrowed by ensureDirUnder and by the <dataDir>-level asserts in archiveOnce, PERMANENTLY open to a concurrent plant because Node exposes no openat/mkdirat against a dirfd',
   },
   {
     key: 'archive/seal.ts#1',
     callee: 'openSync',
-    why: 'opens the HOT archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to hash and compress it; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — the same documented safe direction as archive/mirror.ts#4. O_NOFOLLOW is load-bearing here rather than decorative: without it a symlinked leaf under the archive root would be read THROUGH the link, so a live transcript would be compressed into the archive and the link unlinked by #10. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant',
+    why: 'opens the HOT archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to hash and compress it; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — the same documented safe direction as archive/mirror.ts#4. O_NOFOLLOW is load-bearing here rather than decorative: without it a symlinked leaf under the archive root would be read THROUGH the link, so a live transcript would be compressed into the archive and the link unlinked by #10. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder and by the <dataDir>-level asserts in archiveOnce, PERMANENTLY open to a concurrent plant because Node exposes no openat/mkdirat against a dirfd',
   },
   {
     key: 'archive/seal.ts#2',
     callee: 'openSync',
-    why: "creates <archivePath>.zst.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. The path is the archive path from #1 plus a fixed suffix, and assertUnderArchiveRoot has already run on its parent directory (sealArchiveFile, before this open). The `.tmp.<pid>` suffix is what keeps a crashed temp out of discover's union. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant",
+    why: "creates <archivePath>.zst.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. The path is the archive path from #1 plus a fixed suffix, and assertUnderArchiveRoot has already run on its parent directory (sealArchiveFile, before this open). The `.tmp.<pid>` suffix is what keeps a crashed temp out of discover's union. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder and by the <dataDir>-level asserts in archiveOnce, PERMANENTLY open to a concurrent plant because Node exposes no openat/mkdirat against a dirfd",
   },
   {
     key: 'archive/seal.ts#3',
     callee: 'fchmodSync',
-    why: 'forces 0600 on the temp file from #2 (umask can mask the create-mode). fd-based, so unlike archive/mirror.ts#2 it re-resolves no path at all and has no residual leaf race',
+    why: 'forces 0600 on the temp file from #2 (umask can mask the create-mode). fd-based, like archive/mirror.ts#2 and archive/paths.ts#3, so it re-resolves no path at all and has no residual leaf race',
   },
   {
     key: 'archive/seal.ts#4',
@@ -152,7 +152,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/seal.ts#5',
     callee: 'openSync',
-    why: "creates <archivePath>.zst.sha256.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. Same directory as #2, covered by the same assertUnderArchiveRoot call, and the same `.tmp.<pid>` trick that keeps a crashed temp out of discover's union. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant",
+    why: "creates <archivePath>.zst.sha256.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. Same directory as #2, covered by the same assertUnderArchiveRoot call, and the same `.tmp.<pid>` trick that keeps a crashed temp out of discover's union. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder and by the <dataDir>-level asserts in archiveOnce, PERMANENTLY open to a concurrent plant because Node exposes no openat/mkdirat against a dirfd",
   },
   {
     key: 'archive/seal.ts#6',
@@ -182,7 +182,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/paths.ts#1',
     callee: 'mkdirSync',
-    why: 'ensureDir: creates a directory lexically under <dataDir>. ONE caller reaches it through ensureDirUnder, which asserts containment before and after this mkdir and so refuses a pre-planted LIVE symlinked ancestor (writeArchiveBytes in mirror.ts); a dangling one is stopped by the ENOENT from this mkdir instead, not by the guard. THREE callers still call ensureDir bare and stay lexical only, because none of their targets is under an archive root to be checked against: acquireLock (lock.ts, <dataDir>), appendOwnedLine below (<dataDir>/logs), and archiveOnce (mirror.ts), which CREATES <dataDir>/archive and so has no root yet. Recursive mkdir traverses existing symlinked components at all three — measured through a symlinked <dataDir>, not assumed. Those three are narrowed by task 1.7; the concurrent-plant window is PERMANENT, since closing it needs mkdirat against a dirfd and Node exposes none',
+    why: 'ensureDir: creates a directory lexically under <dataDir>. EVERY caller now reaches it with a containment assert on both sides of this mkdir, so a pre-planted LIVE symlinked ancestor is refused before a directory is made through it: writeArchiveBytes and appendOwnedLine through ensureDirUnder (anchored at the archive root and at <dataDir>), acquireLock through ensureDirUnder plus a lock-path assert, and archiveOnce — which CREATES <dataDir>/archive and so has no root of its own to sit under — through the transcript-root asserts it wraps this call in. A dangling ancestor is stopped by the ENOENT from this mkdir instead, not by any guard. Recursive mkdir does traverse existing symlinked components — measured through a symlinked <dataDir>, not assumed — so those asserts are the whole of the narrowing; the window between assert and mkdir is PERMANENT, since closing it needs mkdirat against a dirfd and Node exposes none',
   },
   {
     key: 'archive/paths.ts#2',
@@ -192,7 +192,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/paths.ts#3',
     callee: 'fchmodSync',
-    why: 'forces 0600 on the fd from #2 (umask can mask the create-mode). fd-based like archive/seal.ts#3, so it re-resolves no path at all and — unlike archive/mirror.ts#2 — has no residual leaf race',
+    why: 'forces 0600 on the fd from #2 (umask can mask the create-mode). fd-based like archive/seal.ts#3 and archive/mirror.ts#2, so it re-resolves no path at all and has no residual leaf race',
   },
   {
     key: 'archive/paths.ts#4',
@@ -237,7 +237,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'render-gate/index.ts#1',
     callee: 'mkdirSync',
-    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, the same class as archive/paths.ts#1's three bare-ensureDir callers rather than the one guarded by ensureDirUnder. Never a transcript root; the gate only READS ~/.claude/projects, through the tailer",
+    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root; the gate only READS ~/.claude/projects, through the tailer",
   },
   {
     key: 'render-gate/index.ts#2',
@@ -582,43 +582,88 @@ describe('the guard reds when the property it protects is broken', () => {
     expect(openRowsOf(swapped)).not.toEqual([...OPEN_SITES].sort());
   });
 
-  it('every partial-guarantee entry cites the OPEN follow-up, and none cites a closed task', () => {
+  it('no entry cites a task at all — every follow-up the manifest named has shipped', () => {
     // The mechanical half of AC1: honesty is not checkable, the citation is.
-    // Without this, a later edit could strip a caveat while the gap is still open
+    // Without this, a later edit could strip a caveat while its gap is still open
     // — or leave one naming a task that shipped, which is the same rot pointing
     // the other way. Both directions come from `toEqual` on the derived map: a
     // key that grows a citation must appear, one that loses its caveat must go.
-    expect(Object.fromEntries(taskCitations())).toEqual({
-      'archive/mirror.ts#1': ['1.7'],
-      'archive/mirror.ts#2': ['1.7'],
-      'archive/mirror.ts#3': ['1.7'],
-      'archive/mirror.ts#4': ['1.7'],
-      'archive/paths.ts#1': ['1.7'],
-      'archive/seal.ts#1': ['1.7'],
-      'archive/seal.ts#2': ['1.7'],
-      'archive/seal.ts#5': ['1.7'],
-    });
-
-    // A citation is worth something only while the task is open, so the set of
-    // tasks named anywhere in the manifest is exactly the one open follow-up.
-    // Task 1.5 closed the log leaf; nothing may still name it, and the two rows
-    // it closed (archive/paths.ts#2, #3) carry no caveat to cite for.
-    expect([...new Set([...taskCitations().values()].flat())].sort()).toEqual(['1.7']);
+    //
+    // Empty is now the correct value, and it is not the same as "unpoliced": the
+    // eight rows that named task 1.7 all still carry their directory-chain
+    // caveat, asserted positively below. What changed is that the caveat names a
+    // PERMANENT limit of the runtime instead of work someone could still do.
+    expect(Object.fromEntries(taskCitations())).toEqual({});
+    expect([...new Set([...taskCitations().values()].flat())].sort()).toEqual([]);
   });
 
-  it('a stripped caveat drops its key out of the derived citation set', () => {
-    // Proves the assertion above reds rather than assuming it. The mutation lands
-    // on archive/seal.ts#1 on purpose: it is one of the three keys the previous
-    // hand-maintained array left unpoliced, so this is the exact hole being closed.
-    const stripped = WRITE_SITES.map((entry) =>
-      entry.key === 'archive/seal.ts#1'
-        ? { ...entry, why: entry.why.replace(/task 1\.7/g, 'nothing in particular') }
-        : entry,
+  it('every chain caveat survived losing its citation, and still says PERMANENT', () => {
+    // The positive limb, and the reason the empty map above is not vacuous: a
+    // `why` stripped of BOTH its citation and its caveat would satisfy that
+    // assertion perfectly. These are the eight keys that cited task 1.7 — the
+    // four directory-chain rows plus the four opens that inherit their scope.
+    const CHAIN_ROWS = [
+      'archive/mirror.ts#1',
+      'archive/mirror.ts#2',
+      'archive/mirror.ts#3',
+      'archive/mirror.ts#4',
+      'archive/paths.ts#1',
+      'archive/seal.ts#1',
+      'archive/seal.ts#2',
+      'archive/seal.ts#5',
+    ];
+
+    for (const key of CHAIN_ROWS) {
+      const entry = WRITE_SITES.find((e) => e.key === key);
+      expect(entry, `${key} left the manifest`).toBeDefined();
+      expect(entry?.why, `${key} dropped its permanent-limitation caveat`).toMatch(
+        /PERMANENT|openat|mkdirat|dirfd/,
+      );
+    }
+  });
+
+  it('the derived citation set tracks a why both gaining and losing a task', () => {
+    // Proves the assertion above reds rather than assuming it, through the same
+    // shared helper. It cannot be the old one-way `not.toEqual` control any more:
+    // with no real citation left that compares {} with {} and fails on arrival, so
+    // both directions are exercised explicitly instead. The mutation lands on
+    // archive/seal.ts#1 on purpose — it was one of the three keys the previous
+    // hand-maintained array left unpoliced, the exact hole `taskCitations` closed.
+    const CITED = ' Revisited by task 9.9.';
+    const cited = WRITE_SITES.map((entry) =>
+      entry.key === 'archive/seal.ts#1' ? { ...entry, why: entry.why + CITED } : entry,
     );
 
-    const mutated = taskCitations(stripped);
-    expect(mutated.has('archive/seal.ts#1')).toBe(false);
-    expect(Object.fromEntries(mutated)).not.toEqual(Object.fromEntries(taskCitations()));
+    // Gained: asserted on the key's CONTENT, not merely on inequality.
+    const gained = taskCitations(cited);
+    expect(Object.fromEntries(gained)).toEqual({ 'archive/seal.ts#1': ['9.9'] });
+    expect(Object.fromEntries(gained)).not.toEqual(Object.fromEntries(taskCitations()));
+
+    // Dropped: strip it back off and the key leaves the derived set again.
+    const stripped = cited.map((entry) => ({ ...entry, why: entry.why.replace(CITED, '') }));
+    const dropped = taskCitations(stripped);
+    expect(dropped.has('archive/seal.ts#1')).toBe(false);
+    expect(Object.fromEntries(dropped)).toEqual({});
+  });
+
+  it('the create-branch mode change reads as fd-based in every why that mentions it', () => {
+    // AC1's static half and AC2, asserted here rather than in Test 27 because
+    // WRITE_SITES is in scope here. The callee assertion is what the `it` above at
+    // "each reviewed site is still the call the review looked at" turns into a
+    // red if mirror.ts:241 is reverted to a path-based chmodSync.
+    const mirror2 = WRITE_SITES.find((e) => e.key === 'archive/mirror.ts#2');
+    expect(mirror2?.callee).toBe('fchmodSync');
+    // `\b` matters: it must NOT match the `fchmodSync` this row now names.
+    expect(mirror2?.why).not.toMatch(/\bchmodSync|considered and declined|path-based/);
+
+    // The two rows that contrasted themselves with #2 must stop describing a
+    // difference that has stopped existing. (The "considered and declined" half
+    // of AC2 was already removed by task 1.5, so that limb is a PIN, not a fix.)
+    for (const key of ['archive/seal.ts#3', 'archive/paths.ts#3']) {
+      expect(WRITE_SITES.find((e) => e.key === key)?.why, key).not.toMatch(
+        /unlike archive\/mirror\.ts#2/,
+      );
+    }
   });
 });
 
