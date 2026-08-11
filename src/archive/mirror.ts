@@ -69,13 +69,29 @@ export interface ArchiveFileState {
   sealed_at?: string;
 }
 
+/**
+ * Which side of the pass the failing syscall was on, and the discriminator the
+ * CLI's exit contract keys on — that contract is stated once, at
+ * `src/cli/commands/archive.ts:1`, and never restated here. `archive` is the
+ * fail-safe default. Published: `origin` reaches any consumer of
+ * `archive --json`, and via the log record every future line of
+ * `logs/archive.jsonl`, where historical lines predate it.
+ */
+export type ArchiveErrorOrigin = 'source' | 'archive' | 'log';
+
+export interface ArchiveError {
+  path: string;
+  message: string;
+  origin: ArchiveErrorOrigin;
+}
+
 export interface ArchiveResult {
   files: ArchiveFileState[];
   filesSeen: number;
   bytesCopied: number;
   bytesRead: number;
   lock: LockState;
-  errors: { path: string; message: string }[];
+  errors: ArchiveError[];
   sourceRoot: string;
   archiveRoot: string;
   logged: boolean;
@@ -530,7 +546,20 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
           }
         } catch (error) {
           // One unreadable file must not stop the rest of the pass.
-          result.errors.push({ path: entry.sourcePath, message: String(error) });
+          //
+          // The pass's SINGLE classification point. An errno naming the source
+          // path is a source-side failure — a transcript this pass could not
+          // read, which is a coverage gap rather than a damaged archive.
+          // Everything else reached here from the archive write path, including
+          // the kernel's ENOENT out of `mkdirSync` inside `ensureDir` on a
+          // dangling symlinked ancestor, which passes through no containment
+          // guard at all and so cannot be recognised by its error class.
+          // Defaulting to `archive` is the fail-safe direction: a failure a
+          // later change routes through here is treated as the more serious
+          // class until someone classifies it deliberately.
+          const origin: ArchiveErrorOrigin =
+            (error as NodeJS.ErrnoException).path === entry.sourcePath ? 'source' : 'archive';
+          result.errors.push({ path: entry.sourcePath, message: String(error), origin });
         }
       }
       result.bytesRead = ctx.bytesRead;
@@ -558,11 +587,16 @@ export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
   // archive gains no second failure idiom. `logged` stays false, and the message
   // is printed by `formatSummary`, so nothing is swallowed. The mirrored bytes
   // are the system of record and this log explicitly is not (see log.ts), so a
-  // hijacked event log must not cost the pass what it already copied.
+  // hijacked event log must not cost the pass what it already copied. The `log`
+  // tag carries that reasoning to the CLI (`src/cli/commands/archive.ts:1`).
   try {
     result.logged = appendArchiveLog(dataDir, record);
   } catch (error) {
-    result.errors.push({ path: resolveArchiveLogPath(dataDir), message: String(error) });
+    result.errors.push({
+      path: resolveArchiveLogPath(dataDir),
+      message: String(error),
+      origin: 'log',
+    });
   }
 
   return result;

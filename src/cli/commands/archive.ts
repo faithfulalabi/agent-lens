@@ -1,7 +1,41 @@
-// `agent-lens archive`. Exits 0 on divergence and on a held lock, since a cron
-// must not page for a normal overlap; non-zero only on fatal I/O.
+// `agent-lens archive`, and the single authoritative statement of this binary's
+// exit codes. Three, and only three:
+//
+//   0  a pass ran and the archive write path held. Divergence, a held lock and a
+//      source the archiver cannot read are all 0 — a cron must not page for a
+//      normal overlap, nor nightly forever for a coverage gap, which is
+//      `doctor`'s report to make. A permanently red cron is a muted one, and
+//      muting it would mute the hijack signal below with it.
+//   1  the command did not complete: unknown command, unknown flag, crash. No
+//      pass ran, so nothing at all is being said about the archive.
+//   3  a pass ran and reported at least one ARCHIVE-side error — something on the
+//      path that holds the bytes failed. For a keep-everything-forever store
+//      that is the failure worth waking someone for. `ArchiveError.origin`
+//      (`archive/mirror.ts`) is the discriminator; it is classified once, at the
+//      per-entry catch, and never re-derived from a message.
+//
+// 2 is RESERVED protocol-wide and must never be emitted by any subcommand: exit
+// 2 from a Claude Code hook blocks the session, which `src/cli/hook.ts:3` makes
+// an invariant of the whole binary.
 
 import { archiveOnce, type ArchiveResult } from '../../archive/index.js';
+
+/** A pass ran and nothing on the archive write path failed. */
+export const EXIT_OK = 0;
+/**
+ * The command did not complete. Produced by `main`'s unknown-command path, not
+ * here; named here because this file states the namespace those codes live in.
+ */
+export const EXIT_INCOMPLETE = 1;
+/** A pass ran and at least one error came off the archive write path. */
+export const EXIT_ARCHIVE_ERRORS = 3;
+
+/**
+ * The rule, in one expression, so no `if` about exit codes exists anywhere else.
+ */
+export function exitCodeFor(result: ArchiveResult): number {
+  return result.errors.some((e) => e.origin === 'archive') ? EXIT_ARCHIVE_ERRORS : EXIT_OK;
+}
 
 /**
  * `--flag value` and `--flag=value`. A value beginning with `-` must be
@@ -29,11 +63,17 @@ export function parseStringFlag(args: string[], name: string): string | undefine
 export function formatSummary(result: ArchiveResult): string {
   const diverged = result.files.filter((f) => f.source_state === 'diverged');
   const expired = result.files.filter((f) => f.source_state === 'expired');
-  const lines = [
+  const leader =
     result.lock.state === 'held'
-      ? `agent-lens archive: another pass holds the lock (pid ${result.lock.holder_pid ?? '?'}) — copied nothing`
-      : `agent-lens archive: ${result.filesSeen} files, ${result.bytesCopied} bytes copied`,
-  ];
+      ? `another pass holds the lock (pid ${result.lock.holder_pid ?? '?'}) — copied nothing`
+      : `${result.filesSeen} files, ${result.bytesCopied} bytes copied`;
+  // The error count belongs in the LEADER, not only in the detail lines below:
+  // a source- or log-side failure exits 0 and `doctor` still reports a fully
+  // green archive, so this line is the only channel carrying that signal to a
+  // human. Without it `head -1` of a hijacked run reads as a clean pass.
+  const count = result.errors.length;
+  const errorSuffix = count === 0 ? '' : `, ${count} error${count === 1 ? '' : 's'}`;
+  const lines = [`agent-lens archive: ${leader}${errorSuffix}`];
   if (result.lock.state === 'reclaimed') {
     lines.push(`  reclaimed a stale lock (${result.lock.reclaim_reason})`);
   }
@@ -48,7 +88,7 @@ export function formatSummary(result: ArchiveResult): string {
   return lines.join('\n');
 }
 
-export async function archive(args: string[] = []): Promise<void> {
+export async function archive(args: string[] = []): Promise<number> {
   const result = archiveOnce({
     dataDir: parseStringFlag(args, 'dataDir'),
     transcriptRoot: parseStringFlag(args, 'transcriptRoot'),
@@ -60,4 +100,6 @@ export async function archive(args: string[] = []): Promise<void> {
   } else {
     console.log(formatSummary(result));
   }
+
+  return exitCodeFor(result);
 }
