@@ -1,17 +1,24 @@
 // The read-only half of the archive: everything `agent-lens doctor` reports.
 // This module performs no write syscall. It opens with 'r' only, reads
-// `settings.json` with `readFileSync`, and never creates a directory. That is
-// load-bearing twice over: a reporting command that took the pass lock would
-// make a concurrent cron pass report `held`, and one that created the data dir
-// would leave evidence on a machine that has never archived.
+// `settings.json`, a sealed frame and that frame's sidecar with `readFileSync`,
+// and never creates a directory. That is load-bearing twice over: a reporting
+// command that took the pass lock would make a concurrent cron pass report
+// `held`, and one that created the data dir would leave evidence on a machine
+// that has never archived.
 //
-// One read here is deliberately non-following: the archive-side stat is an
+// Two stats here are deliberately non-following. The archive-side one is an
 // `lstat`, so a symlink planted at an archive leaf is reported as unmirrored
 // rather than counted as a mirror whose target's bytes belong to the archive.
+// The sidecar gets the same treatment before it is opened, because `readSidecar`
+// is a bare path-based read with no bound: a FIFO planted at that name would
+// block a plain `doctor` indefinitely, on the one command meant to be safe to
+// run from a cron.
 
+import { createHash } from 'node:crypto';
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import { discover } from './discover.js';
 import { detectDivergence, type DivergenceReason } from './mirror.js';
 import {
@@ -22,14 +29,17 @@ import {
   resolveTranscriptRoot,
   statSafe,
 } from './paths.js';
+import { DEFAULT_MAX_BYTES, declaredContentSize } from './read.js';
+import { readSidecar, sidecarPath } from './sidecar.js';
 
 const CHUNK_BYTES = 1024 * 1024;
 
 const SEALED_SUFFIX = '.zst';
 
 /**
- * Why a file cannot be integrity-checked here. The two strings no longer say
- * the same thing, because the two populations no longer are the same.
+ * Why a file was not integrity-checked here. Three populations, three different
+ * truths, and none of them may be softened into a claim that something was
+ * checked.
  *
  * `NO_LIVE_SOURCE_REASON` stays literally true: it is pushed only after the
  * sealed branch has already `continue`d, so its files are unsealed, and only a
@@ -37,17 +47,31 @@ const SEALED_SUFFIX = '.zst';
  * `source_head_sha256` never leaves memory, so for those files nothing durable
  * exists at all.
  *
- * `SEALED_REASON` is different now: the hash a seal computes is persisted in a
- * `<archivePath>.zst.sha256` sidecar beside the frame. This module reads no
- * sidecar, and cannot yet tell a file that has one from a file sealed before
- * they existed — telling those apart is task 1.8's first step. So the string
- * says what `doctor` DOES, not what is on disk, which is the only wording true
- * of both populations.
+ * `SEALED_LEGACY_REASON` is a `.zst` with no usable record beside it: absent,
+ * unparseable, of a version this build does not know, or not a regular file.
+ * Its pre-seal bytes are gone, so there is nothing honest to backfill and it
+ * stays unverifiable forever — never `verified`, and never decompressed.
  *
- * Never soften these into a claim that something was checked.
+ * `SEALED_UNCHECKED_REASON` is the cost boundary made visible. The record is
+ * there and its O(1) limbs already ran; only the re-hash is deferred, because
+ * that one is an O(file-size) read the default path must not do.
  */
 export const NO_LIVE_SOURCE_REASON = 'no live source — no stored hash exists';
-export const SEALED_REASON = 'sealed — not checked: doctor reads no stored hash yet (task 1.8)';
+export const SEALED_LEGACY_REASON =
+  'sealed — no stored hash on disk: sealed before sidecars existed, and there is nothing honest to backfill';
+export const SEALED_UNCHECKED_REASON =
+  'sealed — stored hash present but not read: pass --verify to re-hash the archived bytes';
+
+/**
+ * How a sealed file failed against its own stored record. Deliberately NOT
+ * added to `DivergenceReason` in `mirror.ts`: `detectDivergence` compares an
+ * archive against a live source and can never return one of these.
+ *
+ * All four render verbatim in `doctor`'s output, so each one has a test that
+ * produces it.
+ */
+export type SealedDivergenceReason =
+  'sealed-attribution' | 'sealed-size' | 'sealed-frame' | 'sealed-hash';
 
 export interface CoverageStats {
   /** Source files that exist right now. The denominator is the survivors only. */
@@ -76,27 +100,39 @@ export interface UnverifiableFile {
 
 export interface DivergedFile {
   relPath: string;
-  sourcePath: string;
+  /**
+   * The live source the archived prefix was compared against. Absent on a
+   * sealed row: that population has no source left, which is why it is checked
+   * against a stored hash at all, and there is no honest value to put here.
+   */
+  sourcePath?: string;
   archivePath: string;
-  reason: DivergenceReason;
+  reason: DivergenceReason | SealedDivergenceReason;
 }
 
 export interface IntegrityResults {
   /** True when the full-prefix hash limb ran, i.e. `--verify` was passed. */
   verify: boolean;
-  /** Source bytes read by the check, so the `--verify` boundary is observable. */
+  /**
+   * Content bytes this pass actually read: the source prefix a live compare
+   * consumed, plus everything a sealed frame decompressed to under `--verify`.
+   * Not total I/O — a sidecar is ~150 bytes and is not counted. What the number
+   * defends is the boundary itself: no O(file-size) read on the default path.
+   */
   bytesRead: number;
   /** Every file with archived bytes on disk — the denominator the three lists sum to. */
   archivedFileCount: number;
   verified: string[];
   /**
-   * Prefix mismatches: exactly the population a pass labels
-   * `source_state='diverged'`. The check cannot tell "the source was rewritten"
-   * from "the archived bytes were corrupted" — both readings fit, and the report
-   * says so rather than picking one.
+   * The archived bytes no longer match their reference. For a file with a live
+   * source the reference is that source, and the check cannot tell "the source
+   * was rewritten" from "the archived bytes were corrupted" — both readings fit,
+   * and the report says so rather than picking one. For a sealed file the
+   * reference is the hash the seal recorded, no source survives, and only the
+   * one reading is left.
    */
   diverged: DivergedFile[];
-  /** Files with no reference hash to check against. Named, never counted as verified. */
+  /** Files this pass did not check, each saying why. Named, never counted as verified. */
   unverifiable: UnverifiableFile[];
 }
 
@@ -201,6 +237,158 @@ function compareToSource(params: {
   }
 }
 
+function sha256(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+type SealedVerdict =
+  | { state: 'verified' }
+  | { state: 'diverged'; reason: SealedDivergenceReason }
+  | { state: 'unverifiable'; reason: string };
+
+/**
+ * The decompressed frame, or a refusal — returned rather than thrown, because
+ * `maxOutputLength` alone raises an errno-less `RangeError` that the classifier
+ * below would have to pattern-match back out of a message. `loadSealed` in
+ * `read.ts` keeps its throw; this is a second, separate reader.
+ */
+type SealedFrame =
+  { state: 'loaded'; buf: Buffer; declared: number } | { state: 'over-bound'; declared: number };
+
+/**
+ * Reads `diskPath` DIRECTLY, never through `createArchiveReader`. That accessor
+ * takes a LOGICAL path and dispatches hot-first, so in the crash-window state —
+ * hot file and `.zst` both present, source gone — it serves the hot file's bytes
+ * and the frame is never opened. A garbage `.zst` would then be reported
+ * `verified` on the strength of a file the sidecar does not describe, and the
+ * populations partition would not notice: the count is right, only the label
+ * lies. An `existsSync` guard is not a fix either; it still hands a logical path
+ * to a component entitled to reinterpret it.
+ */
+function loadSealedFrame(diskPath: string): SealedFrame {
+  const frame = readFileSync(diskPath);
+  // Header first, so an over-large frame is refused before any allocation and a
+  // non-frame fails with our message rather than the codec's.
+  const declared = declaredContentSize(frame, diskPath);
+  if (declared > DEFAULT_MAX_BYTES) return { state: 'over-bound', declared };
+  const buf = zstdDecompressSync(frame, { maxOutputLength: DEFAULT_MAX_BYTES });
+  return { state: 'loaded', buf, declared };
+}
+
+/**
+ * Classify by EXCLUSION, never by an allowlist of codec errors. A failure that
+ * carries a bare errno is an I/O failure — the file could not be read, which
+ * says nothing about its contents — and anything else is the frame refusing to
+ * be what the record says it is. The codec's own codes cannot be enumerated —
+ * `seal.test.ts` documents why, by SEARCHING for a corruption zstd fails to
+ * catch rather than naming one — and `declaredContentSize` throws plain
+ * `Error`s carrying no code at all.
+ *
+ * The ground for calling a format error a divergence, stated once: the sidecar
+ * records what was published here; these bytes are not it.
+ */
+function classifySealedThrow(error: unknown): SealedVerdict {
+  const code = (error as NodeJS.ErrnoException).code;
+  // Bare errnos only. Node's own `ERR_*` codes carry underscores and fall to the
+  // divergence side, which is where `ERR_BUFFER_TOO_LARGE` belongs: with the
+  // pre-allocation bound above already passed, `maxOutputLength` can only fire
+  // when the header under-declares what the frame actually holds.
+  if (typeof code === 'string' && /^E[A-Z0-9]+$/.test(code)) {
+    return {
+      state: 'unverifiable',
+      reason: `unreadable — ${String((error as Error).message ?? error)}`,
+    };
+  }
+  return { state: 'diverged', reason: 'sealed-frame' };
+}
+
+/**
+ * The sealed ladder. Every rung before the last is O(1) and runs on the default
+ * path; only the re-hash waits for `--verify`.
+ *
+ * `bytesRead` is returned on every branch below the decompressor, not only on
+ * the verified one. A sealed file that decompresses megabytes and then diverges
+ * really did read those bytes, and a counter that only moved on success would
+ * make the cost boundary green because it is dead rather than because the path
+ * is cheap.
+ */
+function checkSealed(params: {
+  diskPath: string;
+  logicalName: string;
+  archiveSize: number;
+  verify: boolean;
+}): { verdict: SealedVerdict; bytesRead: number } {
+  const legacy: { verdict: SealedVerdict; bytesRead: number } = {
+    verdict: { state: 'unverifiable', reason: SEALED_LEGACY_REASON },
+    bytesRead: 0,
+  };
+
+  // Rung 1 — a usable record beside the frame, or nothing to check against.
+  // The `lstat` is the gate, not a formality: `readSidecar` reads by path with
+  // no bound, so a FIFO or a symlink to one planted at this name would hang the
+  // default path. Non-regular reads as legacy, exactly like absent.
+  const sidecar = sidecarPath(params.diskPath);
+  if (lstatSafe(sidecar)?.isFile() !== true) return legacy;
+  const record = readSidecar(sidecar);
+  // `readSidecar` collapses absent, unreadable, truncated, malformed and
+  // unknown-version to `undefined` and never throws, so this one check covers
+  // every way a record can fail to be one.
+  if (record === undefined) return legacy;
+
+  // Rung 2 — attribution. `record.file` is the LOGICAL basename the seal wrote
+  // (`sess-1.jsonl`), never the sealed one (`sess-1.jsonl.zst`).
+  if (record.file !== params.logicalName) {
+    return { verdict: { state: 'diverged', reason: 'sealed-attribution' }, bytesRead: 0 };
+  }
+
+  // Rung 3 — the O(1) size limb, free from the stat already taken. It fires
+  // before the decompressor for every plain truncation, because truncating a
+  // `.zst` changes the size on disk.
+  if (record.sealed_size !== params.archiveSize) {
+    return { verdict: { state: 'diverged', reason: 'sealed-size' }, bytesRead: 0 };
+  }
+
+  // Rung 4 — the boundary. Re-hashing is the only O(file-size) limb, so the
+  // default path stops here and says which of the two sealed cases it is in.
+  if (!params.verify) {
+    return {
+      verdict: { state: 'unverifiable', reason: SEALED_UNCHECKED_REASON },
+      bytesRead: 0,
+    };
+  }
+
+  let frame: SealedFrame;
+  try {
+    frame = loadSealedFrame(params.diskPath);
+  } catch (error) {
+    return { verdict: classifySealedThrow(error), bytesRead: 0 };
+  }
+  if (frame.state === 'over-bound') {
+    return {
+      verdict: {
+        state: 'unverifiable',
+        reason: `unreadable — ${params.diskPath} declares ${frame.declared} bytes, over the ${DEFAULT_MAX_BYTES}-byte bound`,
+      },
+      bytesRead: 0,
+    };
+  }
+
+  const bytesRead = frame.buf.length;
+
+  // The frame's own header, which a truncated frame contradicts without ever
+  // throwing — see `declaredContentSize`.
+  if (frame.buf.length !== frame.declared) {
+    return { verdict: { state: 'diverged', reason: 'sealed-frame' }, bytesRead };
+  }
+  // The only limb that catches a whole-frame substitution: a validly compressed,
+  // correctly checksummed frame of the same length holding different content
+  // passes every structural check above and fails only here.
+  if (sha256(frame.buf) !== record.sha256) {
+    return { verdict: { state: 'diverged', reason: 'sealed-hash' }, bytesRead };
+  }
+  return { verdict: { state: 'verified' }, bytesRead };
+}
+
 /** One read-only pass over both trees. Never throws for an expected condition. */
 export function buildDoctorReport(options: DoctorReportOptions = {}): DoctorReport {
   const dataDir = resolveDataDir(options.dataDir);
@@ -261,14 +449,36 @@ export function buildDoctorReport(options: DoctorReportOptions = {}): DoctorRepo
 
     integrity.archivedFileCount += 1;
 
-    // Sealed first: the bytes on disk are compressed, so even a live source is
-    // no reference for them until a stored hash exists.
+    // Sealed first, and never against the source: the bytes on disk are
+    // compressed, so a live source is no reference for them. The stored hash is,
+    // and it is the only check in the system that can catch a whole-frame
+    // substitution — the frame checksum and the declared content size both
+    // compare a frame against itself.
     if (entry.sealed) {
-      integrity.unverifiable.push({
-        relPath: entry.relPath,
-        archivePath: diskPath,
-        reason: SEALED_REASON,
+      const sealed = checkSealed({
+        diskPath,
+        logicalName: basename(entry.archivePath),
+        archiveSize,
+        verify,
       });
+      integrity.bytesRead += sealed.bytesRead;
+      if (sealed.verdict.state === 'verified') {
+        integrity.verified.push(entry.relPath);
+      } else if (sealed.verdict.state === 'diverged') {
+        // No `sourcePath`: there is no source, and inventing one here is how a
+        // report starts describing a file that does not exist.
+        integrity.diverged.push({
+          relPath: entry.relPath,
+          archivePath: diskPath,
+          reason: sealed.verdict.reason,
+        });
+      } else {
+        integrity.unverifiable.push({
+          relPath: entry.relPath,
+          archivePath: diskPath,
+          reason: sealed.verdict.reason,
+        });
+      }
       continue;
     }
 

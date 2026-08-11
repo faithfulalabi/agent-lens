@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Through the public barrel, the way anything outside `src/archive/` reaches it.
-import { archiveOnce, buildDoctorReport, SEALED_REASON } from '../../archive/index.js';
+import { archiveOnce, buildDoctorReport, SEALED_LEGACY_REASON } from '../../archive/index.js';
 import {
   COVERAGE_GAP_STATEMENT,
   doctor,
@@ -21,11 +21,13 @@ import {
   jsonLines,
   makeSandbox,
   settingsPath,
+  sha256Hex,
   SLUG,
   snapshotTreeSafe,
   sourcePath,
   writeArchive,
   writeSettings,
+  writeSidecar,
   writeSource,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
@@ -218,11 +220,38 @@ describe('the rendered report and --json carry the same facts', () => {
     expect(json.integrity.archivedFileCount).toBe(2);
     expect(json.integrity.verified).toEqual([SESSION]);
     expect(json.integrity.unverifiable).toEqual([
-      { relPath: OTHER, archivePath: `${archivePath(s, OTHER)}.zst`, reason: SEALED_REASON },
+      { relPath: OTHER, archivePath: `${archivePath(s, OTHER)}.zst`, reason: SEALED_LEGACY_REASON },
     ]);
     expect(json.retention).toEqual({ state: 'set', days: 45 });
     // The same object the text formatter renders, so the two cannot drift.
-    expect(formatDoctorReport(json)).toContain(SEALED_REASON);
+    expect(formatDoctorReport(json)).toContain(SEALED_LEGACY_REASON);
+  });
+
+  it('gives a sealed diverged row exactly the keys it can honestly fill', async () => {
+    const s = sb();
+    const body = jsonLines(20);
+    // A frame that is not what its record describes, and no source anywhere.
+    writeArchive(s, `${OTHER}.zst`, Buffer.from('pretend-zstd-bytes'));
+    writeSidecar(s, OTHER, {
+      file: 'sess-2.jsonl',
+      sha256: sha256Hex(body),
+      hot_size: body.length,
+      sealed_size: 18,
+    });
+
+    const json = JSON.parse(await runDoctor(argsFor(s, ['--verify', '--json']))) as ReturnType<
+      typeof buildDoctorReport
+    >;
+    const row = json.integrity.diverged[0] as unknown as Record<string, unknown>;
+
+    expect(row).toEqual({
+      relPath: OTHER,
+      archivePath: `${archivePath(s, OTHER)}.zst`,
+      reason: 'sealed-frame',
+    });
+    // The KEY SET, not merely the values: a sealed row has no live source, so
+    // `sourcePath` must be absent rather than empty, null or invented.
+    expect(Object.keys(row).sort()).toEqual(['archivePath', 'reason', 'relPath']);
   });
 
   it('--json emits one parseable line and no prose', async () => {

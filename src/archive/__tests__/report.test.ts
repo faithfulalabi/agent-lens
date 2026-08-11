@@ -3,27 +3,47 @@
 // resolve the developer's real `~/.claude/settings.json`.
 
 import { afterEach, describe, it, expect } from 'vitest';
-import { chmodSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import {
   buildDoctorReport,
   NO_LIVE_SOURCE_REASON,
   resolveClaudeSettingsPath,
-  SEALED_REASON,
+  SEALED_LEGACY_REASON,
+  SEALED_UNCHECKED_REASON,
 } from '../report.js';
 import { formatDoctorReport } from '../../cli/commands/doctor.js';
 import {
   archivePath,
   cleanup,
+  compressLikeSeal,
+  decoyPath,
   jsonLines,
   makeSandbox,
+  patchSidecar,
   plantArchiveSymlink,
+  plantCrashWindow,
   settingsPath,
+  sha256Hex,
   SLUG,
+  snapshotTree,
   sourcePath,
+  transcriptLines,
   writeArchive,
   writeSettings,
+  writeSidecar,
   writeSource,
   type Sandbox,
 } from './fixtures.js';
@@ -127,9 +147,9 @@ describe('AC1a — integrity recomputes over every archived file with a live sou
 });
 
 /** A real seal, so the `.zst` on disk carries the sidecar this build publishes. */
-function sealForReal(rel: string): string {
+function sealForReal(rel: string, body: string = jsonLines(40)): string {
   const s = sb();
-  writeSource(s, rel, jsonLines(40));
+  writeSource(s, rel, body);
   archivePass();
   rmSync(sourcePath(s, rel));
   archivePass();
@@ -160,7 +180,7 @@ describe('AC3/AC5 — the sidecar is outside the accounting, and the wording sta
     expect(two.bytes.totalBytes).toBe(statSync(sealedPath).size + statSync(other).size);
   });
 
-  it('one report holds a sidecar-bearing seal and a legacy one, under a reason true of both', () => {
+  it('one report holds a row of each sealed reason, and the two say different things', () => {
     const s = sb();
     // Sealed by this build, so a stored hash exists on disk for it…
     const sealedPath = sealForReal(SESSION);
@@ -169,24 +189,40 @@ describe('AC3/AC5 — the sidecar is outside the accounting, and the wording sta
     expect(existsSync(sidecarPath(sealedPath))).toBe(true);
     expect(existsSync(sidecarPath(`${archivePath(s, OTHER)}.zst`))).toBe(false);
 
-    const built = report({ verify: true });
+    const built = report();
     const text = formatDoctorReport(built);
 
-    // One string for both populations, and it is true of each: neither was
-    // checked. A wording that asserted anything about what is ON DISK would be
-    // false for one of these two rows.
-    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([
-      SEALED_REASON,
-      SEALED_REASON,
-    ]);
-    // No behaviour change: same classification, same counts, same bytes read.
+    // The successor to the single string that had to be true of both. Each row
+    // now says which case it is in, and neither claims a check happened.
+    expect(new Map(built.integrity.unverifiable.map((f) => [f.relPath, f.reason]))).toEqual(
+      new Map([
+        [SESSION, SEALED_UNCHECKED_REASON],
+        [OTHER, SEALED_LEGACY_REASON],
+      ]),
+    );
     expect(built.integrity.verified).toEqual([]);
     expect(built.integrity.diverged).toEqual([]);
     expect(built.integrity.archivedFileCount).toBe(2);
+    // The default path read no content bytes for either.
     expect(built.integrity.bytesRead).toBe(0);
     expect(text).toContain('2 files archived = 0 verified + 0 diverged + 2 unverifiable');
-    expect(text).toContain('Nothing here reads a stored hash yet (task 1.8)');
     expect(text).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);
+  });
+
+  it('under --verify the same pair splits: the one with a record is verified, the legacy one is not', () => {
+    const s = sb();
+    const body = jsonLines(40);
+    sealForReal(SESSION, body);
+    writeArchive(s, `${OTHER}.zst`, Buffer.from('pretend-zstd-bytes'));
+
+    const built = report({ verify: true });
+
+    expect(built.integrity.verified).toEqual([SESSION]);
+    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
+    expect(built.integrity.diverged).toEqual([]);
+    // The decompressed seal, and nothing at all for the legacy `.zst` — which is
+    // the byte-level statement that rung 1 stopped before the decompressor.
+    expect(built.integrity.bytesRead).toBe(body.length);
   });
 });
 
@@ -212,7 +248,7 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
 
     const byPath = new Map(built.integrity.unverifiable.map((f) => [f.relPath, f.reason]));
     expect(byPath.get(OTHER)).toBe(NO_LIVE_SOURCE_REASON);
-    expect(byPath.get(SESSION)).toBe(SEALED_REASON);
+    expect(byPath.get(SESSION)).toBe(SEALED_LEGACY_REASON);
 
     // Named in the rendered text, not merely counted.
     expect(text).toContain(archivePath(s, OTHER));
@@ -221,7 +257,7 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     expect(text).toContain('2 files archived = 0 verified + 0 diverged + 2 unverifiable');
   });
 
-  it('states the sealed reason verbatim and claims no seal-time check', () => {
+  it('states the legacy sealed reason verbatim and claims no seal-time check', () => {
     const s = sb();
     writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));
 
@@ -229,12 +265,13 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     const text = formatDoctorReport(built);
 
     expect(built.integrity.unverifiable[0]!.reason).toBe(
-      'sealed — not checked: doctor reads no stored hash yet (task 1.8)',
+      'sealed — no stored hash on disk: sealed before sidecars existed, and there is nothing honest to backfill',
     );
-    expect(text).toContain(SEALED_REASON);
-    // A seal now persists its hash, but nothing here reads one, so the report
-    // still may not imply a check happened. Unnarrowed on purpose: every
-    // alternative below is a lie until task 1.8 does the comparison.
+    expect(text).toContain(SEALED_LEGACY_REASON);
+    // This file has no record at all, so the report may not imply anything was
+    // compared. The alternatives below stay forbidden whatever the population:
+    // a seal's round-trip check ran once, against bytes since deleted, and is
+    // nothing this command can re-check.
     expect(text).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);
   });
 
@@ -247,7 +284,7 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     const built = report({ verify: true });
 
     expect(built.integrity.verified).toEqual([]);
-    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_REASON]);
+    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
   });
 
   it('an unreadable source is unverifiable, not a crash and not verified', () => {
@@ -291,6 +328,360 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
     expect(integrity.verified).toEqual([SESSION]);
     expect(integrity.diverged.map((f) => f.relPath)).toEqual([THIRD]);
     expect(integrity.unverifiable.map((f) => f.relPath).sort()).toEqual([OTHER, TOOL_TXT].sort());
+  });
+});
+
+describe('AC1/AC2 — a sealed file is checked against the hash the seal recorded', () => {
+  it('verifies a real seal against its own record', () => {
+    sealForReal(SESSION);
+
+    const built = report({ verify: true });
+
+    expect(built.integrity.verified).toEqual([SESSION]);
+    expect(built.integrity.diverged).toEqual([]);
+    expect(built.integrity.unverifiable).toEqual([]);
+  });
+
+  it('defers only the hash on the default path, and names what it deferred', () => {
+    sealForReal(SESSION);
+
+    const built = report();
+
+    expect(built.integrity.verified).toEqual([]);
+    expect(built.integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_UNCHECKED_REASON]);
+    expect(built.integrity.bytesRead).toBe(0);
+    expect(formatDoctorReport(built)).toContain('pass --verify to re-hash the archived bytes');
+  });
+
+  it('an unreadable frame is unverifiable, never diverged', () => {
+    const sealedPath = sealForReal(SESSION);
+    chmodSync(sealedPath, 0o000);
+
+    try {
+      // Positive control: otherwise a chmod that protected nothing would make
+      // the assertions below pass vacuously.
+      expect(() => readFileSync(sealedPath)).toThrow(/EACCES|EPERM/);
+
+      const { integrity } = report({ verify: true });
+
+      // An I/O failure says nothing about the contents, so it may not be called
+      // a divergence — that is the whole point of classifying by exclusion.
+      expect(integrity.diverged).toEqual([]);
+      expect(integrity.verified).toEqual([]);
+      expect(integrity.unverifiable.map((f) => f.relPath)).toEqual([SESSION]);
+      expect(integrity.unverifiable[0]!.reason).toMatch(/^unreadable — /);
+    } finally {
+      chmodSync(sealedPath, 0o600);
+    }
+  });
+
+  it('a record naming a different file diverges: sealed-attribution', () => {
+    sealForReal(SESSION);
+    patchSidecar(sb(), SESSION, { file: 'sess-9.jsonl' });
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-attribution'],
+    ]);
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('attribution compares the LOGICAL basename, so the on-disk name is a mismatch', () => {
+    sealForReal(SESSION);
+    // `sess-1.jsonl.zst` — the name the frame occupies, one suffix away from the
+    // name a seal actually records. Comparing against the wrong one would make
+    // every real seal in the tree look misattributed.
+    patchSidecar(sb(), SESSION, { file: 'sess-1.jsonl.zst' });
+
+    expect(report({ verify: true }).integrity.diverged[0]!.reason).toBe('sealed-attribution');
+  });
+
+  it('a sealed_size disagreeing with the file on disk diverges on the DEFAULT path, reading nothing', () => {
+    sealForReal(SESSION);
+    patchSidecar(sb(), SESSION, { sealed_size: 999_999 });
+
+    const { integrity } = report();
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-size'],
+    ]);
+    expect(integrity.unverifiable).toEqual([]);
+    // The O(1) limbs really are free: a divergence was found without --verify
+    // and without reading a content byte.
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('a plain truncation stops at sealed-size, before the decompressor', () => {
+    // The realistic truncation, with the record left alone. Truncating a `.zst`
+    // changes its size on disk, so rung 3 fires and the frame limb is never
+    // reached — which is why the next test has to defeat rung 3 deliberately.
+    const sealedPath = sealForReal(SESSION);
+    truncateSync(sealedPath, statSync(sealedPath).size - 20);
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-size'],
+    ]);
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('a truncation whose sealed_size was rewritten reaches sealed-frame, and the counter moved', () => {
+    // Deliberately NOT the fixture above. On a small seal the truncated frame
+    // decompresses to nothing at all, so `bytesRead` is 0 whether the counter is
+    // placed before the comparisons or after them, and the placement would ship
+    // untested. Past ~1 MB the two orders give different answers.
+    const sealedPath = sealForReal(SESSION, jsonLines(40_000));
+    truncateSync(sealedPath, statSync(sealedPath).size - 100);
+    patchSidecar(sb(), SESSION, { sealed_size: statSync(sealedPath).size });
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-frame'],
+    ]);
+    // Every byte the decompressor produced is counted whatever the verdict.
+    // Counting only on the verified branch reports 0 here.
+    expect(integrity.bytesRead).toBeGreaterThan(0);
+  });
+
+  it('a byte flip the codec refuses outright is a divergence, not a crash', () => {
+    const sealedPath = sealForReal(SESSION);
+    const frame = readFileSync(sealedPath);
+    const originalSize = frame.length;
+
+    // Search for the flip rather than guessing one: which offsets the codec
+    // refuses is a property of zstd, not of this repo, and the repo already uses
+    // this idiom where that matters.
+    let at = -1;
+    for (let i = 6; i < frame.length - 4 && at === -1; i++) {
+      const probe = Buffer.from(frame);
+      probe[i] = probe[i]! ^ 0xff;
+      try {
+        zstdDecompressSync(probe);
+      } catch {
+        at = i;
+      }
+    }
+    expect(at, 'no single-byte flip makes this frame undecodable').toBeGreaterThan(-1);
+
+    frame[at] = frame[at]! ^ 0xff;
+    writeFileSync(sealedPath, frame);
+    // The length is untouched, so rung 3 passes and the ladder must reach the
+    // frame itself rather than short-circuiting on the size.
+    expect(statSync(sealedPath).size).toBe(originalSize);
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-frame'],
+    ]);
+    expect(integrity.verified).toEqual([]);
+    // It threw before producing anything, so nothing was counted.
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('catches what only a stored hash can: a valid frame of the same length holding other content', () => {
+    const s = sb();
+    const bodyA = jsonLines(40);
+    const frameA = compressLikeSeal(bodyA);
+
+    // Search for a witness rather than assuming one: substituting a character
+    // usually moves the compressed length by a byte, and then rung 3 would fire
+    // first and the hash limb would never run.
+    let bodyB = '';
+    for (let i = 0; i < bodyA.length && bodyB === ''; i++) {
+      const candidate = `${bodyA.slice(0, i)}${bodyA[i] === 'z' ? 'y' : 'z'}${bodyA.slice(i + 1)}`;
+      if (compressLikeSeal(candidate).length === frameA.length) bodyB = candidate;
+    }
+    expect(bodyB, 'no equal-length one-character witness exists').not.toBe('');
+
+    const frameB = compressLikeSeal(bodyB);
+    // Controls: B's frame is perfectly valid, correctly checksummed, and exactly
+    // as long as A's. Every structural check in the system passes on it.
+    expect(zstdDecompressSync(frameB).toString()).toBe(bodyB);
+    expect(frameB.length).toBe(frameA.length);
+
+    writeArchive(s, `${SESSION}.zst`, frameB);
+    writeSidecar(s, SESSION, {
+      file: 'sess-1.jsonl',
+      sha256: sha256Hex(bodyA),
+      hot_size: bodyA.length,
+      sealed_size: frameA.length,
+    });
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-hash'],
+    ]);
+    expect(integrity.verified).toEqual([]);
+    expect(integrity.bytesRead).toBe(bodyB.length);
+  });
+
+  it('renders every sealed reason it can produce, verbatim, beside the path', () => {
+    // The four strings are user-facing: `doctor` prints `${reason}  ${path}`.
+    const s = sb();
+    sealForReal(SESSION);
+    patchSidecar(s, SESSION, { sealed_size: 999_999 });
+
+    const built = report();
+    const text = formatDoctorReport(built);
+
+    expect(text).toContain(`sealed-size  ${archivePath(s, SESSION)}.zst`);
+    expect(text).toContain('compared against the hash the seal recorded');
+    // The live-source paragraph survives: it is still the honest reading for a
+    // diverged file that HAS a source.
+    expect(text).toContain('source was rewritten, or the archived bytes were corrupted');
+    expect(text).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);
+  });
+});
+
+describe('AC3 — a sealed file with no usable record is refused before anything is read', () => {
+  it('never reaches the decompressor, even under --verify', () => {
+    const s = sb();
+    // Not a zstd frame at all: were rung 1 skipped this would throw `not a zstd
+    // frame` and be classified as diverged instead.
+    writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
+    expect(integrity.diverged).toEqual([]);
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('writes nothing while checking one — there is no backfill', () => {
+    const s = sb();
+    writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));
+    const before = snapshotTree(s.archiveRoot);
+
+    report({ verify: true });
+
+    expect(snapshotTree(s.archiveRoot)).toEqual(before);
+    expect(existsSync(sidecarPath(`${archivePath(s, SESSION)}.zst`))).toBe(false);
+  });
+
+  it.each([
+    {
+      label: 'a version this build does not know',
+      text: `${JSON.stringify({
+        v: 99,
+        file: 'sess-1.jsonl',
+        sha256: 'a'.repeat(64),
+        hot_size: 1,
+        sealed_size: 1,
+        sealed_at: '2026-08-11T00:00:00.000Z',
+      })}\n`,
+    },
+    { label: 'a record truncated mid-line', text: '{"v":1,"file":"sess-1.jsonl","sha' },
+  ])('a record that is $label behaves exactly as an absent one', ({ text }) => {
+    const s = sb();
+    sealForReal(SESSION);
+    writeArchive(s, `${SESSION}.zst.sha256`, text);
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
+    expect(integrity.verified).toEqual([]);
+    expect(integrity.bytesRead).toBe(0);
+  });
+
+  it('a symlink planted at the record name is refused, not followed', () => {
+    const s = sb();
+    const sealedPath = sealForReal(SESSION);
+    const record = sidecarPath(sealedPath);
+    // The link points at a PERFECTLY GOOD record for this very frame, so a
+    // ladder that followed it would report `verified`. Refusing to follow is
+    // what makes this the legacy case instead.
+    const elsewhere = decoyPath(s, 'sidecar-target.json');
+    writeFileSync(elsewhere, readFileSync(record));
+    rmSync(record);
+    symlinkSync(elsewhere, record);
+
+    const { integrity } = report({ verify: true });
+
+    expect(integrity.verified).toEqual([]);
+    expect(integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
+  });
+
+  it('a FIFO planted at the record name does not block the default path', () => {
+    const sealedPath = sealForReal(SESSION);
+    const record = sidecarPath(sealedPath);
+    rmSync(record);
+    execFileSync('mkfifo', [record]);
+
+    // `readSidecar` reads by path with no `lstat` and no bound, and a read of a
+    // FIFO with no writer never returns. Without the `isFile()` gate this call
+    // hangs the process — on the command a cron is meant to be able to run. That
+    // it returns at all is the assertion; the classification is the rest.
+    const { integrity } = report();
+
+    expect(integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
+    expect(integrity.verified).toEqual([]);
+  });
+});
+
+describe('AC4 — the crash-window pair is never verified on the hot file’s bytes', () => {
+  it('reports a garbage frame as diverged even though a valid hot file sits beside it', () => {
+    const s = sb();
+    const body = jsonLines(20);
+    plantCrashWindow(s, SESSION, { hot: body, sealed: Buffer.from('pretend-zstd-bytes') });
+
+    const built = report({ verify: true });
+
+    // Both non-vacuity conditions hold. The hot bytes differ from anything this
+    // `.zst` could hold, so `verified` is reachable only by reading the wrong
+    // file; and `sealed_size` equals the garbage's actual length, so rung 3 does
+    // not short-circuit and the ladder really does reach the frame.
+    expect(built.integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
+      [SESSION, 'sealed-frame'],
+    ]);
+    expect(built.integrity.verified).toEqual([]);
+    // `discover` collides both archive-walk hits onto one entry and marks it
+    // `both`, so the pair counts as mirrored rather than archive-only.
+    expect(built.coverage).toMatchObject({ found: 1, mirrored: 1, archiveOnly: 0 });
+  });
+
+  it('positive control — the same pair with a real frame verifies', () => {
+    const s = sb();
+    const body = jsonLines(20);
+    plantCrashWindow(s, SESSION, { hot: body, sealed: compressLikeSeal(body) });
+
+    // Shows the ladder read the frame, rather than skipping sealed files or
+    // reading nothing at all.
+    expect(report({ verify: true }).integrity.verified).toEqual([SESSION]);
+  });
+
+  it('the discriminating control — a garbage HOT file cannot make the frame fail', () => {
+    const s = sb();
+    const body = jsonLines(20);
+    plantCrashWindow(s, SESSION, {
+      hot: 'not the archived bytes, and not a frame either\n',
+      sealed: compressLikeSeal(body),
+      describes: body,
+    });
+
+    const built = report({ verify: true });
+
+    // This one can only pass if the hot file was never opened.
+    expect(built.integrity.verified).toEqual([SESSION]);
+    expect(built.integrity.diverged).toEqual([]);
+  });
+});
+
+describe('AC6 — the cost boundary holds over a SEALED corpus, not just a hot one', () => {
+  it('reads no content bytes by default, and the whole corpus under --verify', () => {
+    // The boundary test above is a hot-only corpus, so it is blind to what a
+    // sealed file costs. This is the sealed half of the same claim, and the
+    // second assertion is what keeps the first from being vacuous.
+    const body = transcriptLines(1200);
+    expect(body.length).toBeGreaterThan(200 * 1024);
+    sealForReal(SESSION, body);
+
+    expect(report().integrity.bytesRead).toBeLessThan(64 * 1024);
+    expect(report({ verify: true }).integrity.bytesRead).toBeGreaterThanOrEqual(body.length);
   });
 });
 

@@ -50,8 +50,8 @@ const ZSTD_PARAMS: Record<number, number> = {
 /**
  * What a seal computes. Every field is returned AND persisted, in the
  * `<archivePath>.zst.sha256` sidecar published beside the frame, so the record
- * that certifies these bytes lives and dies with them. Nothing reads that
- * sidecar yet — `doctor` gains the comparison in task 1.8.
+ * that certifies these bytes lives and dies with them. `doctor` is what reads
+ * the record back, re-hashing the frame against it under `--verify`.
  */
 export interface SealResult {
   /** sha256 over the pre-seal bytes, and the round-trip verify's expectation. */
@@ -129,7 +129,7 @@ export function sealArchiveFile(archivePath: string, archiveRoot: string): SealR
   // backfill for them, since their pre-seal bytes are gone). Crashing between
   // the two renames leaves a sidecar with no `.zst`: inert, invisible to
   // `discover`, and overwritten by the next pass, which re-seals the still
-  // intact hot file. Nothing in this repo reads the record yet; task 1.8 does.
+  // intact hot file. `doctor` is the reader on the other end of this record.
   const sealedPath = `${archivePath}${SEALED_SUFFIX}`;
   const sidecar = sidecarPath(sealedPath);
   const sidecarTemp = `${sidecar}.tmp.${process.pid}`;

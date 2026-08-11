@@ -590,35 +590,65 @@ describe('a seal-only pass is logged, not swallowed as quiet (Test 13)', () => {
 });
 
 describe('the forward-contract reword says less, not more (Test 15)', () => {
-  it('no file under src/ still defers the stored hash to this very task', () => {
-    // Assembled rather than written out, so this scan can cover test files too
-    // without matching itself.
-    const stale = ['until', 'task', '1.2'].join(' ');
+  /**
+   * Assembled rather than written out, so the scan can cover test files too
+   * without matching itself. Each phrase deferred a check to a task that has
+   * since shipped, which is the moment such a phrase turns into a lie — so the
+   * table grows by one row every time one of them lands.
+   */
+  const FORBIDDEN = [['until', 'task', '1.2'].join(' '), ['task', '1.8'].join(' ')];
 
-    const offenders = readdirSync(join(REPO_ROOT, 'src'), { recursive: true, encoding: 'utf8' })
+  /** Every `.ts` under `src/`, `__tests__` included — see the assembly above. */
+  function sourcesUnderSrc(): [string, string][] {
+    return readdirSync(join(REPO_ROOT, 'src'), { recursive: true, encoding: 'utf8' })
       .filter((name) => name.endsWith('.ts'))
-      .filter((name) => readFileSync(join(REPO_ROOT, 'src', name), 'utf8').includes(stale));
+      .map((name) => [name, readFileSync(join(REPO_ROOT, 'src', name), 'utf8')]);
+  }
 
-    expect(offenders).toEqual([]);
+  /** The scan proper, over an arbitrary corpus, so it can be aimed at a planted one. */
+  function offendersIn(corpus: [string, string][], phrase: string): string[] {
+    return corpus.filter(([, text]) => text.includes(phrase)).map(([name]) => name);
+  }
+
+  it.each(FORBIDDEN)('no file under src/ still defers a check to "%s"', (phrase) => {
+    expect(offendersIn(sourcesUnderSrc(), phrase)).toEqual([]);
   });
 
-  it('claims no check anywhere, now that a stored hash is real for some files', () => {
-    // What the reword preserves is the claim that nothing was CHECKED. What it
-    // drops is the assertion that nothing is STORED: a seal now persists its
-    // hash in a `.zst.sha256` sidecar, and `doctor` reads it nowhere. The
-    // sealed string is therefore existence-agnostic — it has to be true both of
-    // a sidecar-bearing file and of one sealed before sidecars existed, and
-    // nothing here can yet tell those apart. `NO_LIVE_SOURCE_REASON` is
-    // untouched because its population is unsealed, so a sidecar cannot exist
-    // for it at all. Naming the round-trip verify in either would be the
-    // tempting "improvement" that makes the doctor lie: that check runs once,
-    // against bytes then deleted, and is nothing doctor can re-check later.
+  it('the scan really covers test files, and really reds on the phrase', () => {
+    // Two ways this scan could pass while proving nothing: by reading a corpus
+    // that excludes the files most likely to carry the phrase, or by having
+    // stopped matching it at all.
+    expect(sourcesUnderSrc().map(([name]) => name)).toContain(
+      join('archive', '__tests__', 'seal.test.ts'),
+    );
+    for (const phrase of FORBIDDEN) {
+      expect(offendersIn([['planted.ts', `// still deferred to ${phrase}`]], phrase)).toEqual([
+        'planted.ts',
+      ]);
+    }
+  });
+
+  it('names the two sealed reasons it now tells apart, and claims no check for either', () => {
+    // What the split preserves is the claim that nothing was CHECKED on the
+    // path being described. What it drops is the one string that had to be true
+    // of both sealed populations at once: `doctor` reads the record now, so it
+    // can say which case a file is in — no usable record on disk, or one this
+    // run did not read. `NO_LIVE_SOURCE_REASON` is untouched because its
+    // population is unsealed, so a record cannot exist for it at all. Naming
+    // the round-trip verify in any of the three would be the tempting
+    // "improvement" that makes the doctor lie: that check runs once, against
+    // bytes then deleted, and is nothing doctor can re-check later.
     const report = readFileSync(join(ARCHIVE_SRC, 'report.ts'), 'utf8');
     const doctor = readFileSync(join(REPO_ROOT, 'src', 'cli', 'commands', 'doctor.ts'), 'utf8');
 
     expect(report).toContain("'no live source — no stored hash exists'");
-    expect(report).toContain("'sealed — not checked: doctor reads no stored hash yet (task 1.8)'");
-    expect(doctor).toContain('Nothing here reads a stored hash yet (task 1.8), so none of');
+    expect(report).toContain(
+      "'sealed — no stored hash on disk: sealed before sidecars existed, and there is nothing honest to backfill'",
+    );
+    expect(report).toContain(
+      "'sealed — stored hash present but not read: pass --verify to re-hash the archived bytes'",
+    );
+    expect(doctor).toContain('compared against the hash the seal recorded');
 
     for (const source of [report, doctor]) {
       expect(source).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);

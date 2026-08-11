@@ -28,7 +28,8 @@ export {
   buildDoctorReport,
   resolveClaudeSettingsPath,
   NO_LIVE_SOURCE_REASON,
-  SEALED_REASON,
+  SEALED_LEGACY_REASON,
+  SEALED_UNCHECKED_REASON,
 } from './report.js';
 export type {
   ArchiveBytes,
@@ -38,6 +39,7 @@ export type {
   DoctorReportOptions,
   IntegrityResults,
   RetentionSetting,
+  SealedDivergenceReason,
   UnverifiableFile,
 } from './report.js';
 export { acquireLock, releaseLock, MAX_LOCK_AGE_MS } from './lock.js';

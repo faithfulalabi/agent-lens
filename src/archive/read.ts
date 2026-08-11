@@ -14,8 +14,15 @@ const ZSTD_MAGIC = 0xfd2fb528;
 
 const DEFAULT_MAX_ENTRIES = 4;
 
-/** 64 MB. Doubles as the decompression bound — see `loadSealed`. */
-const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
+/**
+ * 64 MB. Doubles as the decompression bound — see `loadSealed`. Exported for
+ * `doctor`'s sealed verify, which decompresses the same frames by a separate
+ * path and must refuse exactly what this reader refuses: were the two to drift,
+ * `doctor` would decline to check a frame the reader happily serves, or the
+ * reverse, and no test anywhere would notice. Module-public, not re-exported
+ * from `index.ts` — the same standing as `declaredContentSize`.
+ */
+export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface ArchiveReaderStats {
   hits: number;
