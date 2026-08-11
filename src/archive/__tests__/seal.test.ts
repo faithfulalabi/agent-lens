@@ -22,6 +22,7 @@ import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from
 import { archiveOnce } from '../mirror.js';
 import { sealArchiveFile } from '../seal.js';
 import { canonicalizeTranscriptPath, resolveTranscriptRoot } from '../paths.js';
+import { readSidecar, serializeSidecar, sidecarPath, SIDECAR_VERSION } from '../sidecar.js';
 import {
   archivePath,
   cleanup,
@@ -107,7 +108,12 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
     rmSync(sourcePath(s, SESSION));
     pass();
 
-    expect(readdirSync(join(s.archiveRoot, SLUG))).toEqual(['sess-1.jsonl.zst']);
+    // Exactly two names: the frame and the sidecar published beside it. Sorted
+    // because readdir order is the filesystem's business, not this assertion's.
+    expect(readdirSync(join(s.archiveRoot, SLUG)).sort()).toEqual([
+      'sess-1.jsonl.zst',
+      'sess-1.jsonl.zst.sha256',
+    ]);
     expect(zstdDecompressSync(readBytes(`${logical}.zst`)).equals(hotBytes)).toBe(true);
   });
 
@@ -122,6 +128,159 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
     expect(sealed.sealed_size).toBe(statSync(`${logical}.zst`).size);
     expect(sealed.sealed_size).toBeLessThan(sealed.hot_size);
     expect(sealed.archive_sha256).toBe(sha256(Buffer.from(body)));
+  });
+});
+
+describe('AC1/AC2 — the seal persists its reference hash in a sidecar (Test 16)', () => {
+  it('writes <name>.zst.sha256 beside the frame, 0600, holding the pre-seal hash', () => {
+    const s = sb();
+    const body = transcriptLines(200);
+    const logical = writeArchive(s, SESSION, body);
+
+    const sealed = sealArchiveFile(logical, canonicalizeTranscriptPath(s.archiveRoot));
+    const path = sidecarPath(`${logical}.zst`);
+
+    // Reachable from the `.zst` alone: no log scan, no store, no directory walk.
+    const record = readSidecar(path);
+    expect(record).toBeDefined();
+    expect(record!.v).toBe(SIDECAR_VERSION);
+    // The basename, never an absolute path — a relocated root must not red.
+    expect(record!.file).toBe('sess-1.jsonl');
+    expect(record!.file).not.toContain('/');
+    // The hash is over the PRE-seal plaintext, i.e. exactly what the seal returned.
+    expect(record!.sha256).toBe(sha256(Buffer.from(body)));
+    expect(record!.sha256).toBe(sealed.archive_sha256);
+    expect(record!.hot_size).toBe(sealed.hot_size);
+    expect(record!.sealed_size).toBe(sealed.sealed_size);
+    expect(record!.sealed_size).toBe(statSync(`${logical}.zst`).size);
+    expect(record!.sealed_at).toBe(sealed.sealed_at);
+
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // One line, newline-terminated, so a truncated tail cannot parse.
+    expect(readFileSync(path, 'utf8').endsWith('\n')).toBe(true);
+    expect(readFileSync(path, 'utf8').trimEnd()).not.toContain('\n');
+  });
+
+  it('leaves no sidecar temp behind, and the temp name never entered the union', () => {
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(40));
+    pass();
+    rmSync(sourcePath(s, SESSION));
+    const result = pass();
+
+    // The pair and nothing else — the `.tmp.<pid>` halves of both publishes are gone.
+    expect(readdirSync(join(s.archiveRoot, SLUG)).sort()).toEqual([
+      'sess-1.jsonl.zst',
+      'sess-1.jsonl.zst.sha256',
+    ]);
+    // …and the sidecar is not a second logical file: one entry, one archived file.
+    expect(result.filesSeen).toBe(1);
+  });
+
+  it('the reader declines rather than throws for every expected bad input', () => {
+    const s = sb();
+    const body = jsonLines(8);
+    const logical = writeArchive(s, SESSION, body);
+    sealArchiveFile(logical, canonicalizeTranscriptPath(s.archiveRoot));
+    const path = sidecarPath(`${logical}.zst`);
+    const good = readSidecar(path)!;
+
+    // Absent.
+    expect(readSidecar(`${path}.nope`)).toBeUndefined();
+    // Truncated mid-line: JSON.parse throws, the reader must not.
+    const raw = readFileSync(path, 'utf8');
+    writeFileSync(path, raw.slice(0, Math.floor(raw.length / 2)));
+    expect(readSidecar(path)).toBeUndefined();
+    // Parses, but a version this build does not know: decline, never guess.
+    writeFileSync(path, serializeSidecar({ ...good, v: SIDECAR_VERSION + 1 }));
+    expect(readSidecar(path)).toBeUndefined();
+    // Parses and versions correctly, but the hash is not a hash.
+    writeFileSync(path, serializeSidecar({ ...good, sha256: 'not-a-sha256' }));
+    expect(readSidecar(path)).toBeUndefined();
+    // Positive control: the untouched record really does come back, so the four
+    // `undefined`s above are the validation working and not a broken reader.
+    writeFileSync(path, serializeSidecar(good));
+    expect(readSidecar(path)).toEqual(good);
+  });
+});
+
+describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () => {
+  it('a sidecar with no frame is re-sealed over, and the hot bytes survive intact', () => {
+    // The state a crash between the two renames leaves: sidecar published, `.zst`
+    // not, hot file still the only copy. It must self-heal, and above all the
+    // still-authoritative hot bytes must not be touched on the way.
+    const s = sb();
+    const body = jsonLines(30);
+    const logical = writeArchive(s, SESSION, body);
+    const hotBytes = readBytes(logical);
+    const path = sidecarPath(`${logical}.zst`);
+    // A stale record from the interrupted attempt, deliberately wrong.
+    writeArchive(
+      s,
+      `${SESSION}.zst.sha256`,
+      serializeSidecar({
+        v: SIDECAR_VERSION,
+        file: 'sess-1.jsonl',
+        sha256: sha256(Buffer.from('nothing like the real bytes')),
+        hot_size: 1,
+        sealed_size: 1,
+        sealed_at: '2000-01-01T00:00:00.000Z',
+      }),
+    );
+
+    const result = pass();
+
+    // The orphan was invisible: one entry, and shouldSeal fired on it.
+    expect(result.filesSeen).toBe(1);
+    expect(result.sealed).toEqual([logical]);
+    // The hot file's bytes reached the frame unaltered…
+    expect(zstdDecompressSync(readBytes(`${logical}.zst`)).equals(hotBytes)).toBe(true);
+    // …and the stale record was replaced by one describing exactly those bytes.
+    const record = readSidecar(path)!;
+    expect(record.sha256).toBe(sha256(hotBytes));
+    expect(record.hot_size).toBe(hotBytes.length);
+  });
+
+  it('a hot+frame pair carrying a sidecar is still a no-op, deleting nothing', () => {
+    // Test 12's state, now with the sidecar its publish order guarantees. The
+    // guarantee is unchanged: nothing written, and nothing deleted.
+    const s = sb();
+    const body = jsonLines(20);
+    writeArchive(s, SESSION, body);
+    const logical = archivePath(s, SESSION);
+    writeArchive(
+      s,
+      `${SESSION}.zst`,
+      zstdCompressSync(Buffer.from(body), {
+        params: {
+          [zlibConstants.ZSTD_c_compressionLevel]: 3,
+          [zlibConstants.ZSTD_c_checksumFlag]: 1,
+          [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
+        },
+      }),
+    );
+    writeArchive(
+      s,
+      `${SESSION}.zst.sha256`,
+      serializeSidecar({
+        v: SIDECAR_VERSION,
+        file: 'sess-1.jsonl',
+        sha256: sha256(Buffer.from(body)),
+        hot_size: body.length,
+        sealed_size: statSync(`${logical}.zst`).size,
+        sealed_at: '2026-08-09T00:00:00.000Z',
+      }),
+    );
+
+    const before = snapshotTree(s.archiveRoot);
+    const result = pass();
+
+    expect(result.filesSeen).toBe(1);
+    expect(result.sealed).toEqual([]);
+    expect(snapshotTree(s.archiveRoot)).toEqual(before);
+    expect(existsSync(logical)).toBe(true);
+    expect(existsSync(`${logical}.zst`)).toBe(true);
+    expect(existsSync(sidecarPath(`${logical}.zst`))).toBe(true);
   });
 });
 
@@ -443,17 +602,23 @@ describe('the forward-contract reword says less, not more (Test 15)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('still says a stored hash does not exist, and claims no seal-time check', () => {
-    // The reword drops a date, never the claim. Naming the round-trip verify
-    // here would be the tempting "improvement" that makes the doctor lie: that
-    // check runs once, against bytes then deleted, and is nothing doctor can
-    // re-check later.
+  it('claims no check anywhere, now that a stored hash is real for some files', () => {
+    // What the reword preserves is the claim that nothing was CHECKED. What it
+    // drops is the assertion that nothing is STORED: a seal now persists its
+    // hash in a `.zst.sha256` sidecar, and `doctor` reads it nowhere. The
+    // sealed string is therefore existence-agnostic — it has to be true both of
+    // a sidecar-bearing file and of one sealed before sidecars existed, and
+    // nothing here can yet tell those apart. `NO_LIVE_SOURCE_REASON` is
+    // untouched because its population is unsealed, so a sidecar cannot exist
+    // for it at all. Naming the round-trip verify in either would be the
+    // tempting "improvement" that makes the doctor lie: that check runs once,
+    // against bytes then deleted, and is nothing doctor can re-check later.
     const report = readFileSync(join(ARCHIVE_SRC, 'report.ts'), 'utf8');
     const doctor = readFileSync(join(REPO_ROOT, 'src', 'cli', 'commands', 'doctor.ts'), 'utf8');
 
     expect(report).toContain("'no live source — no stored hash exists'");
-    expect(report).toContain("'sealed — no integrity check available (no stored hash exists)'");
-    expect(doctor).toContain('No stored hash exists for these, so there is nothing to');
+    expect(report).toContain("'sealed — not checked: doctor reads no stored hash yet (task 1.8)'");
+    expect(doctor).toContain('Nothing here reads a stored hash yet (task 1.8), so none of');
 
     for (const source of [report, doctor]) {
       expect(source).not.toMatch(/seal[- ]time|checked at seal|verified at seal/i);

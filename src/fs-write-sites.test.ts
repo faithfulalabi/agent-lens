@@ -132,7 +132,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/seal.ts#1',
     callee: 'openSync',
-    why: 'opens the HOT archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to hash and compress it; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — the same documented safe direction as archive/mirror.ts#4. O_NOFOLLOW is load-bearing here rather than decorative: without it a symlinked leaf under the archive root would be read THROUGH the link, so a live transcript would be compressed into the archive and the link unlinked by #6. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant',
+    why: 'opens the HOT archive file READ-ONLY (O_RDONLY|O_NOFOLLOW) to hash and compress it; writes nothing. Listed only because the scanner counts a non-string flags argument as a write — the same documented safe direction as archive/mirror.ts#4. O_NOFOLLOW is load-bearing here rather than decorative: without it a symlinked leaf under the archive root would be read THROUGH the link, so a live transcript would be compressed into the archive and the link unlinked by #10. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant',
   },
   {
     key: 'archive/seal.ts#2',
@@ -151,13 +151,33 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   },
   {
     key: 'archive/seal.ts#5',
-    callee: 'renameSync',
-    why: 'atomically moves the temp file from #2 onto <archivePath>.zst, both under the archive root asserted before #2. rename(2) acts on the link itself, never a symlink target. Ordered before #6 so no instant exists at which only a partial frame is present',
+    callee: 'openSync',
+    why: "creates <archivePath>.zst.sha256.tmp.<pid> with 'wx' (O_WRONLY|O_CREAT|O_EXCL), which POSIX requires to refuse a final symlink, live or dangling. Same directory as #2, covered by the same assertUnderArchiveRoot call, and the same `.tmp.<pid>` trick that keeps a crashed temp out of discover's union. Directory chain as in archive/mirror.ts#1: narrowed by ensureDirUnder, narrowed further by task 1.7, permanently open to a concurrent plant",
   },
   {
     key: 'archive/seal.ts#6',
+    callee: 'fchmodSync',
+    why: 'forces 0600 on the sidecar temp from #5 (umask can mask the create-mode). fd-based like #3, so it re-resolves no path and has no residual leaf race',
+  },
+  {
+    key: 'archive/seal.ts#7',
+    callee: 'writeSync',
+    why: "writes the one JSON line of the seal record positionally to the fd from #5; no path of its own, and inherits #5's scope",
+  },
+  {
+    key: 'archive/seal.ts#8',
+    callee: 'renameSync',
+    why: "atomically moves the sidecar temp from #5 onto <archivePath>.zst.sha256, in the directory asserted before #2. rename(2) acts on the link itself, never a symlink target. Ordered BEFORE #9 on purpose: publishing the record first is what makes 'a .zst at its final name always has a sidecar' an invariant, and a crash between the two leaves an inert sidecar with no frame, which the next pass overwrites",
+  },
+  {
+    key: 'archive/seal.ts#9',
+    callee: 'renameSync',
+    why: 'atomically moves the temp file from #2 onto <archivePath>.zst, both under the archive root asserted before #2. rename(2) acts on the link itself, never a symlink target. Ordered after #8 so the frame never reaches its final name without its sidecar, and before #10 so no instant exists at which only a partial frame is present',
+  },
+  {
+    key: 'archive/seal.ts#10',
     callee: 'unlinkSync',
-    why: 'removes the hot archive file from #1, only after #5 published a frame already round-trip verified byte-identical to it. unlink(2) removes the link itself, never a symlink target — and #1 refused to follow one in the first place',
+    why: 'removes the hot archive file from #1, only after #9 published a frame already round-trip verified byte-identical to it. unlink(2) removes the link itself, never a symlink target — and #1 refused to follow one in the first place',
   },
   {
     key: 'archive/paths.ts#1',
@@ -283,7 +303,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
 
 // Exhaustive, like WRITE_SITES. Every writing row here is also a WRITE_SITES row
 // (archive/lock.ts#1, archive/mirror.ts#1, archive/mirror.ts#4, archive/paths.ts#2,
-// archive/seal.ts#1, archive/seal.ts#2) and reviewed there; the read-only rows are
+// archive/seal.ts#1, archive/seal.ts#2, archive/seal.ts#5) and reviewed there; the read-only rows are
 // listed only so `openSync` cannot silently leave the scan. The four numeric rows
 // are the archive-side opens given O_NOFOLLOW: they carry no string literal, so
 // isReadOnlyFlags rejects all four and they land in `writes` too — including
@@ -303,6 +323,8 @@ const OPEN_SITES: readonly string[] = [
   "archive/report.ts:'r'",
   "archive/report.ts:'r'",
   'archive/seal.ts:O_RDONLY | O_NOFOLLOW',
+  // Two: the frame's temp and the sidecar's, both created with O_CREAT|O_EXCL.
+  "archive/seal.ts:'wx'",
   "archive/seal.ts:'wx'",
   "capture/tailer.ts:'r'",
 ];
@@ -574,6 +596,7 @@ describe('the guard reds when the property it protects is broken', () => {
       'archive/paths.ts#1': ['1.7'],
       'archive/seal.ts#1': ['1.7'],
       'archive/seal.ts#2': ['1.7'],
+      'archive/seal.ts#5': ['1.7'],
     });
 
     // A citation is worth something only while the task is open, so the set of
