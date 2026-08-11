@@ -15,10 +15,14 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
-import { refuseSymlinkedLeaf } from './mirror.js';
-import { assertUnderArchiveRoot, canonicalizeTranscriptPath } from './paths.js';
+import {
+  assertUnderArchiveRoot,
+  canonicalizeTranscriptPath,
+  refuseSymlinkedLeaf,
+} from './paths.js';
+import { serializeSidecar, sidecarPath, SIDECAR_VERSION } from './sidecar.js';
 
 const { O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -44,9 +48,10 @@ const ZSTD_PARAMS: Record<number, number> = {
 };
 
 /**
- * What a seal computes. Every field is RETURNED, none is persisted: no store in
- * this repo has a per-file slot for a hash, so `doctor` still has nothing to
- * re-check a sealed file against. Durability is a separate follow-up.
+ * What a seal computes. Every field is returned AND persisted, in the
+ * `<archivePath>.zst.sha256` sidecar published beside the frame, so the record
+ * that certifies these bytes lives and dies with them. Nothing reads that
+ * sidecar yet — `doctor` gains the comparison in task 1.8.
  */
 export interface SealResult {
   /** sha256 over the pre-seal bytes, and the round-trip verify's expectation. */
@@ -116,14 +121,45 @@ export function sealArchiveFile(archivePath: string, archiveRoot: string): SealR
     closeSync(tempFd);
   }
 
+  const sealedAt = new Date().toISOString();
+
+  // The sidecar is published FIRST, by its own temp+rename, which is what makes
+  // "a `.zst` at its final name always has a sidecar" an invariant rather than a
+  // hope (files sealed before this landed excepted — there is no honest hash to
+  // backfill for them, since their pre-seal bytes are gone). Crashing between
+  // the two renames leaves a sidecar with no `.zst`: inert, invisible to
+  // `discover`, and overwritten by the next pass, which re-seals the still
+  // intact hot file. Nothing in this repo reads the record yet; task 1.8 does.
+  const sealedPath = `${archivePath}${SEALED_SUFFIX}`;
+  const sidecar = sidecarPath(sealedPath);
+  const sidecarTemp = `${sidecar}.tmp.${process.pid}`;
+  const sidecarBytes = Buffer.from(
+    serializeSidecar({
+      v: SIDECAR_VERSION,
+      file: basename(archivePath),
+      sha256: archiveSha256,
+      hot_size: hotSize,
+      sealed_size: compressed.length,
+      sealed_at: sealedAt,
+    }),
+    'utf8',
+  );
+  const sidecarFd = refuseSymlinkedLeaf(sidecarTemp, () => openSync(sidecarTemp, 'wx', 0o600));
+  try {
+    fchmodSync(sidecarFd, 0o600); // as for the frame's temp: umask can mask the create-mode
+    writeSync(sidecarFd, sidecarBytes, 0, sidecarBytes.length, 0);
+  } finally {
+    closeSync(sidecarFd);
+  }
+  renameSync(sidecarTemp, sidecar);
+
   // Rename before unlink, never the reverse: at every instant either the hot
   // file alone is authoritative, or both exist with the `.zst` already verified
   // against the bytes it came from. There is no instant at which only a partial
   // frame exists at the final name.
-  renameSync(temp, `${archivePath}${SEALED_SUFFIX}`);
+  renameSync(temp, sealedPath);
   unlinkSync(archivePath);
 
-  const sealedAt = new Date().toISOString();
   return {
     archive_sha256: archiveSha256,
     sealed_at: sealedAt,

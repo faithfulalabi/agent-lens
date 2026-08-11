@@ -11,12 +11,16 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const SLUG = '-Users-dev-proj';
+
+/** Under `<dataDir>` but outside the archive root — see `decoyPath`. */
+export const DECOYS = 'decoys';
 
 export interface Sandbox {
   root: string;
@@ -50,6 +54,42 @@ export function writeArchive(sandbox: Sandbox, rel: string, content: string | Bu
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
   return path;
+}
+
+/**
+ * Plants a symlink where the archive would put `rel`. `discover` cannot see it —
+ * `readDirSafe` filters on `isFile()` and a symlink `Dirent` reports `false` — so
+ * the entry still arrives from the source walk, which is the whole point.
+ */
+export function plantArchiveSymlink(sandbox: Sandbox, rel: string, target: string): string {
+  const link = join(sandbox.archiveRoot, rel);
+  mkdirSync(dirname(link), { recursive: true });
+  symlinkSync(target, link);
+  return link;
+}
+
+/**
+ * Plants a symlinked DIRECTORY component at `rel` under the archive root, aimed
+ * at `targetDir` (created if absent). The directory-chain counterpart of
+ * `plantArchiveSymlink`.
+ */
+export function plantDirSymlink(sandbox: Sandbox, rel: string, targetDir: string): string {
+  const link = join(sandbox.archiveRoot, rel);
+  mkdirSync(dirname(link), { recursive: true });
+  mkdirSync(targetDir, { recursive: true });
+  symlinkSync(targetDir, link);
+  return link;
+}
+
+/**
+ * Creates `<dataDir>/decoys` and returns a path inside it — under `<dataDir>` but
+ * outside the archive root, so the target is harmless and the dir is snapshottable
+ * on its own without the archive log and lock churning underneath it.
+ */
+export function decoyPath(sandbox: Sandbox, name: string): string {
+  const dir = join(sandbox.dataDir, DECOYS);
+  mkdirSync(dir, { recursive: true });
+  return join(dir, name);
 }
 
 export function sourcePath(sandbox: Sandbox, rel: string): string {

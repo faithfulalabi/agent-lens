@@ -4,6 +4,10 @@
 // load-bearing twice over: a reporting command that took the pass lock would
 // make a concurrent cron pass report `held`, and one that created the data dir
 // would leave evidence on a machine that has never archived.
+//
+// One read here is deliberately non-following: the archive-side stat is an
+// `lstat`, so a symlink planted at an archive leaf is reported as unmirrored
+// rather than counted as a mirror whose target's bytes belong to the archive.
 
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -12,6 +16,7 @@ import { discover } from './discover.js';
 import { detectDivergence, type DivergenceReason } from './mirror.js';
 import {
   canonicalizeTranscriptPath,
+  lstatSafe,
   resolveArchiveRoot,
   resolveDataDir,
   resolveTranscriptRoot,
@@ -23,14 +28,26 @@ const CHUNK_BYTES = 1024 * 1024;
 const SEALED_SUFFIX = '.zst';
 
 /**
- * Why a file cannot be integrity-checked. Both strings say the same thing on
- * purpose: no reference hash is persisted anywhere. `ArchiveLogRecord` stores
- * none, `source_head_sha256` never leaves memory, and neither does the hash a
- * seal computes — so there is nothing durable to compare against here either.
+ * Why a file cannot be integrity-checked here. The two strings no longer say
+ * the same thing, because the two populations no longer are the same.
+ *
+ * `NO_LIVE_SOURCE_REASON` stays literally true: it is pushed only after the
+ * sealed branch has already `continue`d, so its files are unsealed, and only a
+ * `.zst` ever acquires a sidecar. `ArchiveLogRecord` stores no hash and
+ * `source_head_sha256` never leaves memory, so for those files nothing durable
+ * exists at all.
+ *
+ * `SEALED_REASON` is different now: the hash a seal computes is persisted in a
+ * `<archivePath>.zst.sha256` sidecar beside the frame. This module reads no
+ * sidecar, and cannot yet tell a file that has one from a file sealed before
+ * they existed — telling those apart is task 1.8's first step. So the string
+ * says what `doctor` DOES, not what is on disk, which is the only wording true
+ * of both populations.
+ *
  * Never soften these into a claim that something was checked.
  */
 export const NO_LIVE_SOURCE_REASON = 'no live source — no stored hash exists';
-export const SEALED_REASON = 'sealed — no integrity check available (no stored hash exists)';
+export const SEALED_REASON = 'sealed — not checked: doctor reads no stored hash yet (task 1.8)';
 
 export interface CoverageStats {
   /** Source files that exist right now. The denominator is the survivors only. */
@@ -213,10 +230,14 @@ export function buildDoctorReport(options: DoctorReportOptions = {}): DoctorRepo
 
   for (const entry of discover(sourceRoot, archiveRoot)) {
     const diskPath = archiveDiskPath(entry.archivePath, entry.sealed);
-    const archiveStat = statSafe(diskPath);
-    // A 0-byte archive file is not a mirror: `mirrorFile` creates lazily so that
-    // an empty file never outlives its source as the archived truth.
-    const archiveSize = archiveStat?.size ?? 0;
+    // `lstatSafe`, never a following `statSafe`: a path-based `statSync` resolves
+    // a symlinked leaf, so a link planted in the archive was reported as a mirror
+    // and its TARGET's bytes — which may sit inside the transcript root — were
+    // attributed to the archive. Only a regular file is archived bytes.
+    const archiveStat = lstatSafe(diskPath);
+    // A 0-byte archive file is not a mirror either: `mirrorFile` creates lazily
+    // so that an empty file never outlives its source as the archived truth.
+    const archiveSize = archiveStat?.isFile() === true ? archiveStat.size : 0;
     const archived = archiveSize > 0;
 
     if (entry.presence === 'archive-only') {
