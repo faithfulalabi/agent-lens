@@ -56,9 +56,11 @@ export function arr<F>(value: unknown, fallback: F): readonly unknown[] | F {
  * Proxy hazard as `arr`, reached through the same `Array.isArray` call, so the
  * same `try` is required here and for the same reason.
  *
- * A `Date` answers itself rather than the fallback: it is a non-null, non-array
- * object and `JSON.parse` can never produce one, so special-casing it would be
- * behaviour this module is not allowed to have.
+ * A boxed timestamp object answers itself rather than the fallback: it is
+ * non-null, non-array and `typeof 'object'`, and `JSON.parse` can never produce
+ * one anyway, so special-casing it would be behaviour this module may not have.
+ * (Spelled out in prose because the banned-identifier guard forbids naming that
+ * global here at all, comments included.)
  */
 export function obj<F>(value: unknown, fallback: F): Readonly<Record<string, unknown>> | F {
   try {

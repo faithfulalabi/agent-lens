@@ -158,6 +158,11 @@ function bannedIdentifiers(file: string, text = read(file)): string[] {
   return identifiers(file, text).filter((name) => BANNED.has(name));
 }
 
+/** The clock global anywhere in the raw text, comments and all. See its test. */
+function namesClockInText(file: string, text = read(file)): boolean {
+  return /\bDate\b/.test(text);
+}
+
 describe('AC1 — raw-types.ts is documentation that compiles', () => {
   it('emits no JavaScript at all', () => {
     expect(emit(read(RAW_TYPES))).toBe(TYPE_ONLY_EMIT);
@@ -225,6 +230,16 @@ describe('AC4 — neither module imports anything, nor can reach a clock', () =>
     expect(bannedIdentifiers(file)).toEqual([]);
   });
 
+  it.each([RAW_TYPES, ACCESSORS])('%s does not contain the clock global even in prose', (file) => {
+    // The founder ruling is that the identifier must not appear AT ALL, and the
+    // AST walk above satisfies only the precise reading of that — comments are
+    // trivia and never become identifiers. This limb takes the ruling literally
+    // over the raw text, so nobody has to adjudicate which reading was meant.
+    // The cost is that both modules must explain in prose why they avoid the
+    // clock without naming it; they do.
+    expect(namesClockInText(file)).toBe(false);
+  });
+
   it('the identifier walk actually sees identifiers', () => {
     // Without this, a walker that silently stopped recursing would make the two
     // assertions above pass for every file on earth.
@@ -232,7 +247,7 @@ describe('AC4 — neither module imports anything, nor can reach a clock', () =>
     expect(named).toContain('isoTs');
     // `Array.isArray` is the throwing call the `try` in `arr`/`obj` exists for.
     // Seeing it here proves the walk reaches inside a function body, which is
-    // exactly where a `Date.now()` would hide.
+    // exactly where a clock read would hide.
     expect(named).toContain('Array');
     expect(named.length).toBeGreaterThan(20);
     expect(identifiers(RAW_TYPES).length).toBeGreaterThan(50);
@@ -298,6 +313,14 @@ describe('the guard reds when the property it protects is broken', () => {
     expect(
       bannedIdentifiers(ACCESSORS, `${ACCESSORS_SRC}\nexport const r = Math.random();\n`),
     ).toEqual(['Math']);
+  });
+
+  it('the clock global reds the text limb even when only a comment names it', () => {
+    // The case the AST limb cannot see, and the reason the text limb exists.
+    const commented = `${ACCESSORS_SRC}\n// returns a Date, eventually\n`;
+    expect(bannedIdentifiers(ACCESSORS, commented)).toEqual([]);
+    expect(namesClockInText(ACCESSORS, commented)).toBe(true);
+    expect(namesClockInText(ACCESSORS, ACCESSORS_SRC)).toBe(false);
   });
 
   it('a filesystem import reds the import limb', () => {
