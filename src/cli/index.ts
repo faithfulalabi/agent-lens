@@ -3,7 +3,13 @@ import { argv, exit } from 'node:process';
 interface Command {
   name: string;
   summary: string;
-  run: (args: string[]) => void | Promise<void>;
+  /**
+   * A command may return its own process exit code; `void` means 0. Only
+   * `archive` has a code to carry today, and `commands/archive.ts:1` is where
+   * the whole code namespace is stated. Widened as a union deliberately, so the
+   * other six commands keep returning `void` unchanged.
+   */
+  run: (args: string[]) => void | number | Promise<void | number>;
 }
 
 /**
@@ -73,8 +79,8 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
-  await match.run(rest);
-  return 0;
+  const code = await match.run(rest);
+  return code ?? 0;
 }
 
 // Auto-run only when executed as the CLI entry (not when imported by tests).

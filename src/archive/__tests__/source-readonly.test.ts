@@ -19,6 +19,7 @@ import {
   truncateSync,
   writeFileSync,
 } from 'node:fs';
+import { hostname as osHostname } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { archiveOnce } from '../mirror.js';
 // Through the package's own export surface on purpose: AC3's reachable case is a
@@ -32,6 +33,7 @@ import {
   jsonLines,
   makeSandbox,
   plantArchiveSymlink,
+  plantDataDirSymlink,
   plantDirSymlink,
   SLUG,
   snapshotTree,
@@ -566,6 +568,265 @@ describe('the archive refuses a symlinked log leaf and directory component (Test
     expect(readFileSync(join(inside, 'sess-1', 'subagents', 'agent-a.meta.json'), 'utf8')).toBe(
       body,
     );
+  });
+});
+
+// --- Test 27: the three <dataDir>-level directory creations, and the last
+// path-based mode change (task 1.7) ---------------------------------------
+// 27 names the requirement, not the file, like 19/20/21/26 above.
+
+/** The refusal the two `<dataDir>`-anchored callers produce. */
+const OUTSIDE_DATA_DIR = /refusing to write outside the data dir/;
+
+/** The refusal that keeps the archive's own writes out of the corpus. */
+const INSIDE_SOURCE_ROOT = /refusing to write inside the transcript root/;
+
+describe('the archive contains its own <dataDir>-level writes (Test 27)', () => {
+  it('(A1) the create-branch mode change is fd-based — 0600 survives a masking umask', () => {
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+
+    // 0o400 masks the owner READ bit. NOT 0o200: `makeSandbox` leaves <dataDir>
+    // unmade, so the first ensureDir would create it at 0o700 & ~0o200 = 0o500 and
+    // the recursive mkdir of `archive` inside a non-writable directory fails
+    // EACCES. 0o077 would distinguish nothing — 0600 has no group/other bits.
+    // Vitest's default `forks` pool gives this file its own process and runs its
+    // tests sequentially, so the umask cannot leak into another file.
+    const previous = process.umask(0o400);
+    try {
+      const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+      expect(result.errors).toEqual([]);
+      // `lstatSync` only: the directories the umask created land 0o300, so nothing
+      // here may readdir that sandbox.
+      const stat = lstatSync(join(s.archiveRoot, SESSION));
+      expect(stat.isSymbolicLink()).toBe(false);
+      expect(stat.mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+      // Every directory the umask created, not just the two on the archive path:
+      // 0o300 is write+exec but NOT readable, so the shared afterEach's recursive
+      // rmSync fails ENOTEMPTY without this and lands as its own failing test.
+      restorePermissions(s.dataDir);
+    }
+  });
+
+  it('(A2) positive control — the create open ALONE leaves 0200 under that umask', () => {
+    // What makes A1 non-vacuous: with the mode change deleted the archive file
+    // lands 0200 (0o600 & ~0o400), so removing it reds A1 while this stays green.
+    // Uses openSync directly — test files are excluded from the write-site scan
+    // (fs-write-sites.test.ts), so no manifest site is added.
+    const s = sb();
+    const probe = join(s.root, 'probe-mode');
+    mkdirSync(probe, { recursive: true });
+    const raw = join(probe, 'raw.bin');
+
+    const previous = process.umask(0o400);
+    try {
+      closeSync(openSync(raw, O_WRONLY | O_CREAT | O_EXCL, 0o600));
+      expect(lstatSync(raw).mode & 0o777).toBe(0o200);
+    } finally {
+      process.umask(previous);
+      restorePermissions(probe);
+    }
+  });
+
+  it('(C1) refuses a PRE-PLANTED <dataDir>/logs symlink that escapes the data dir', () => {
+    // Pre-fix `ensureDir` followed the link and the O_NOFOLLOW open then created
+    // `archive.jsonl` INSIDE the escape target — measured, after.size === 1. The
+    // escape target's own tree is what distinguishes pre- from post-fix here,
+    // exactly as in (B1) above.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(6));
+    const escape = join(s.root, 'escape-logs');
+    mkdirSync(escape, { recursive: true });
+    mkdirSync(s.dataDir, { recursive: true });
+    symlinkSync(escape, join(s.dataDir, 'logs'));
+
+    const before = snapshotTreeSafe(escape);
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+    const after = snapshotTreeSafe(escape);
+
+    expect(after).toEqual(before);
+    expect(after.size).toBe(0);
+    expect(result.logged).toBe(false);
+
+    const logErrors = result.errors.filter((e) => e.path === join(s.dataDir, LOG_REL));
+    expect(logErrors).toHaveLength(1);
+    expect(logErrors[0]?.message).toMatch(OUTSIDE_DATA_DIR);
+
+    // Non-vacuity, and the same rule (A3) pins: a refused log must not cost the
+    // pass the bytes it already mirrored.
+    expect(result.bytesCopied).toBeGreaterThan(0);
+  });
+
+  it('(C2) refuses a PRE-PLANTED escaping <dataDir>/archive.lock rather than reading the victim', () => {
+    // The delta this caller has is a READ, not a write, and the test is written to
+    // that. MEASURED pre-fix: the pass returned
+    // {"state":"held","holder_pid":<live pid>,"age_ms":12345} — the victim's own
+    // planted record decided the verdict — while the escape target's tree was
+    // unchanged and the victim's bytes intact, because 'wx' refuses to write
+    // through the link and `unlinkSync` removes the link rather than the target.
+    // An escape-target snapshot here would therefore be GREEN BEFORE THE FIX,
+    // which is the vacuity (B1)'s comment forbids; the lock verdict is the only
+    // limb that genuinely distinguishes pre from post.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+    mkdirSync(s.dataDir, { recursive: true });
+    const victim = join(s.root, 'victim.lock');
+    // A LIVE pid on THIS host, or rows 3/4 reclaim the lock and unlink instead of
+    // reporting `held`, and the pre-fix verdict this asserts against never occurs.
+    writeFileSync(
+      victim,
+      JSON.stringify({ pid: process.pid, started_at: Date.now() - 12345, hostname: osHostname() }),
+    );
+    const victimBytes = readFileSync(victim);
+    symlinkSync(victim, join(s.dataDir, 'archive.lock'));
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.lock.state).not.toBe('held');
+    expect(result.lock.holder_pid).toBeUndefined();
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(OUTSIDE_DATA_DIR);
+    expect(result.errors[0]?.origin).toBe('archive');
+    expect(result.bytesCopied).toBe(0);
+
+    // Secondary, and deliberately NOT the distinguishing limb: this property
+    // already held pre-fix. Labelled so no later reader promotes it.
+    expect(readFileSync(victim)).toEqual(victimBytes);
+  });
+
+  it('(C3) refuses a <dataDir> that resolves INSIDE the transcript root', () => {
+    // MEASURED on main, and it needs no symlink at all: `--dataDir <path inside
+    // the corpus>` returned `errors: []` and created lens-data/archive/… AND
+    // lens-data/logs/archive.jsonl inside ~/.claude/projects. Test 19's read-only
+    // guarantee over the corpus was defeated by a plain flag value.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+    const inside = join(s.sourceRoot, 'lens-data');
+
+    const before = snapshotTree(s.sourceRoot);
+    const result = archiveOnce({ dataDir: inside, transcriptRoot: s.sourceRoot });
+    const after = snapshotTree(s.sourceRoot);
+
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [rel, entry] of before) expect(after.get(rel), rel).toEqual(entry);
+    expect(existsSync(inside)).toBe(false);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(INSIDE_SOURCE_ROOT);
+    // 1.9's discriminator: an archive-side refusal exits 3, never 0.
+    expect(result.errors[0]?.origin).toBe('archive');
+    expect(result.bytesCopied).toBe(0);
+    expect(result.logged).toBe(false);
+  });
+
+  it('(C4) refuses a <dataDir>/archive symlinked INTO the transcript root', () => {
+    // Neither anchor subsumes the other, which is why both exist: (C3)'s data-dir
+    // anchor passes here — <dataDir> is a sibling of the corpus — and the
+    // archive-root anchor passes in (C3), where <dataDir>/archive is an ordinary
+    // child. MEASURED on main: errors=[], 16 bytes, and
+    // `stolen/-Users-dev-proj/sess-1.jsonl` created inside the corpus.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+    const stolen = join(s.sourceRoot, 'stolen');
+    mkdirSync(stolen, { recursive: true });
+    mkdirSync(s.dataDir, { recursive: true });
+    symlinkSync(stolen, s.archiveRoot);
+
+    const before = snapshotTree(s.sourceRoot);
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+    const after = snapshotTree(s.sourceRoot);
+
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [rel, entry] of before) expect(after.get(rel), rel).toEqual(entry);
+    expect(readdirSync(stolen)).toEqual([]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(INSIDE_SOURCE_ROOT);
+    expect(result.errors[0]?.origin).toBe('archive');
+    expect(result.bytesCopied).toBe(0);
+  });
+
+  it('(C5) refuses a <dataDir> inside the corpus even when its archive escapes outward', () => {
+    // The limb that pins the DATA-DIR anchor specifically, and the reason it is
+    // not redundant with (C3)/(C4): with <dataDir>/archive symlinked OUT of the
+    // corpus the archive-root anchor is satisfied — the bytes really do land on
+    // the other volume — while the log and the lock, which sit beside the archive
+    // rather than inside it, are still created in ~/.claude/projects. MEASURED:
+    // deleting the data-dir assert alone reds nothing WITHOUT this test, and
+    // leaves lens-data/logs/archive.jsonl and lens-data/archive.lock in the
+    // corpus. One anchor per escape route, each with the test that proves it.
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+    const inside = join(s.sourceRoot, 'lens-data');
+    const volume = join(s.root, 'archive-volume');
+    mkdirSync(volume, { recursive: true });
+    mkdirSync(inside, { recursive: true });
+    symlinkSync(volume, join(inside, 'archive'));
+
+    const before = snapshotTree(s.sourceRoot);
+    const result = archiveOnce({ dataDir: inside, transcriptRoot: s.sourceRoot });
+    const after = snapshotTree(s.sourceRoot);
+
+    // Nothing new inside the corpus: no logs/, no archive.lock, nothing.
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [rel, entry] of before) expect(after.get(rel), rel).toEqual(entry);
+    expect(readdirSync(volume)).toEqual([]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toMatch(INSIDE_SOURCE_ROOT);
+    expect(result.errors[0]?.origin).toBe('archive');
+    expect(result.lock.state).toBe('not-attempted');
+    expect(result.bytesCopied).toBe(0);
+    expect(result.logged).toBe(false);
+  });
+
+  it('(D1) counterweight — a symlinked <dataDir> still mirrors normally', () => {
+    // Relocating the whole store onto another volume is a supported layout, and
+    // the counterweight that stops (C1)-(C4) from being bought with a blanket
+    // symlink refusal. Never previously committed as a fixture — only measured.
+    const s = sb();
+    const body = jsonLines(4);
+    writeSource(s, SESSION, body);
+    const real = plantDataDirSymlink(s, join(s.root, 'real-data'));
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.errors).toEqual([]);
+    expect(result.archiveRoot).toBe(join(real, 'archive'));
+    expect(readFileSync(join(real, 'archive', SESSION), 'utf8')).toBe(body);
+    expect(result.logged).toBe(true);
+  });
+
+  it('(D2) counterweight — a symlinked <dataDir>/archive still mirrors normally', () => {
+    // Duplicates Test 26's (C2) pin on purpose, so the counterweight is legible
+    // from inside Test 27 too: a blanket symlink refusal reds D1, D2 and Test 26's
+    // (C2)/(C3) at once, the fastest available signal that this guard over-refused.
+    const s = sb();
+    const body = jsonLines(4);
+    writeSource(s, SESSION, body);
+    const volume = join(s.root, 'archive-volume');
+    mkdirSync(volume, { recursive: true });
+    mkdirSync(s.dataDir, { recursive: true });
+    symlinkSync(volume, s.archiveRoot);
+
+    const result = archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(join(volume, SESSION), 'utf8')).toBe(body);
+  });
+
+  it('(E) every guarded site records the concurrent-plant window as PERMANENT', () => {
+    // AC5, characterised rather than claimed, and read off the NEW sites too: the
+    // sentence on `ensureDirUnder` alone would let the archiveOnce and acquireLock
+    // guards ship with no statement of their limit at all. The `why`-string half
+    // of AC5 is asserted in fs-write-sites.test.ts, where WRITE_SITES is in scope.
+    const PERMANENCE = /openat|mkdirat|dirfd/;
+    for (const file of ['paths.ts', 'mirror.ts', 'lock.ts']) {
+      expect(readFileSync(join(ARCHIVE_SRC, file), 'utf8'), file).toMatch(PERMANENCE);
+    }
   });
 });
 

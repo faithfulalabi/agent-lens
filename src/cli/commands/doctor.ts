@@ -1,8 +1,11 @@
 // `agent-lens doctor`. A report, never a repair: it states the retention setting
 // and never writes the user's `settings.json`. The installer was deliberately
 // deleted, and a doctor that silently "fixed" retention would resurrect exactly
-// the surface Phase 8 removed. Exits 0 always — a non-zero contract on integrity
-// failure needs `main` to propagate a code, which is its own decision.
+// the surface Phase 8 removed. Exits 0 always — whether a real integrity
+// mismatch should exit non-zero is still undecided (task 1.3). The blocker this
+// used to name is gone: `main` propagates a command's code since task 1.9, and
+// `commands/archive.ts:1` states the whole code namespace. What is left to
+// settle is the mismatch semantics, not the plumbing.
 
 import {
   buildDoctorReport,

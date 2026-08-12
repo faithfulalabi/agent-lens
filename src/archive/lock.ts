@@ -5,16 +5,29 @@
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname as osHostname } from 'node:os';
 import { dirname } from 'node:path';
-import { ensureDir, resolveLockPath, statSafe } from './paths.js';
+import {
+  assertUnderRoot,
+  DATA_DIR_LABEL,
+  ensureDirUnder,
+  resolveLockPath,
+  statSafe,
+} from './paths.js';
 
 /** How long a stale record is trusted — never how long a live process may run. */
 export const MAX_LOCK_AGE_MS = 60 * 60 * 1000;
 
 export type ReclaimReason = 'esrch' | 'foreign-host' | 'unparseable';
 
-/** Reported in `--json` so a stuck lock is visible instead of swallowed by exit 0. */
+/**
+ * Reported in `--json` so a stuck lock is visible instead of swallowed by exit 0.
+ *
+ * `not-attempted` is the one value `acquireLock` never returns: it belongs to a
+ * pass that refused its own data dir before reaching the lock at all
+ * (`archiveOnce`). Fabricating `held` there would have said a second pass owns
+ * the lock, which is a different and untrue thing.
+ */
 export interface LockState {
-  state: 'acquired' | 'held' | 'reclaimed';
+  state: 'acquired' | 'held' | 'reclaimed' | 'not-attempted';
   holder_pid?: number;
   age_ms?: number;
   reclaim_reason?: ReclaimReason;
@@ -111,7 +124,19 @@ export function acquireLock(dataDir: string, identity: LockIdentity = {}): Lock 
   const isAlive = identity.isAlive ?? defaultIsAlive;
 
   const lockPath = resolveLockPath(dataDir);
-  ensureDir(dirname(lockPath));
+  ensureDirUnder(dirname(lockPath), dataDir, DATA_DIR_LABEL);
+  // What this assert changes is a READ, not a write. An escaping lock symlink was
+  // never written through — `tryCreate`'s 'wx' refuses it and `unlinkSync` removes
+  // the link, not the target — but `readFileSync` and `statSafe` below FOLLOW it,
+  // so the victim's bytes decided this pass's lock verdict. The `ensureDirUnder`
+  // above is vacuous by construction (its target IS the anchor) and is taken for
+  // the uniform shape; this line is the half with behaviour behind it.
+  //
+  // Check-then-act, and PERMANENTLY so: a symlink planted between this assert and
+  // the open below is not covered. Closing that needs a directory-fd-relative
+  // syscall family — `openat`/`mkdirat` with `O_NOFOLLOW` per component — and Node
+  // exposes none. A limitation of the runtime, not a follow-up anyone can file.
+  assertUnderRoot(lockPath, dataDir, DATA_DIR_LABEL);
   const mine: LockRecord = { pid, started_at: now, hostname };
 
   if (tryCreate(lockPath, mine)) {

@@ -225,6 +225,9 @@ describe('a held lock copies zero bytes and stays observable', () => {
 
       const { status, result } = await runBinary(s);
 
+      // Conditional on `errors` staying empty since task 1.9: the binary exits 3
+      // when an archive-side error is reported, so a transient here would now
+      // flip this status assertion instead of being absorbed by a blanket 0.
       expect(status).toBe(0); // a cron must not page for a normal overlap
       expect(result.lock.state).toBe('held');
       expect(result.lock.holder_pid).toBe(holder.pid);
@@ -248,6 +251,8 @@ describe('two concurrent passes (Test 10)', () => {
 
     const [a, b] = await Promise.all([runBinary(s), runBinary(s)]);
 
+    // Same task-1.9 caveat as Test 10a: these two are green only because both
+    // children report `errors: []`. An archive-side error in either now exits 3.
     expect(a.status).toBe(0);
     expect(b.status).toBe(0);
     // A child that lost the lock must have copied nothing at all.

@@ -91,18 +91,46 @@ function isUnder(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
+// The roots the guards below anchor on, named once so the messages are too.
+// Only the two an outside module names are exported.
+const ARCHIVE_ROOT_LABEL = 'the archive root';
+export const DATA_DIR_LABEL = 'the data dir';
+export const TRANSCRIPT_ROOT_LABEL = 'the transcript root';
+
 /**
  * Containment guard for every archive write. Canonicalizes BOTH sides rather
  * than trusting the caller to have done it, so the rule is stated once: the
- * archive root may itself be a symlink (relocating a "keep everything forever"
- * store onto another volume is a legitimate thing to do), an interior symlink
- * that stays inside the real root is allowed, and one that escapes it is not.
+ * root may itself be a symlink (relocating a "keep everything forever" store
+ * onto another volume is a legitimate thing to do), an interior symlink that
+ * stays inside the real root is allowed, and one that escapes it is not.
+ *
+ * The root is a parameter rather than a hard-coded noun because the archive has
+ * three write anchors, not one: the archive root, the data dir the lock and the
+ * log sit directly under, and — inverted, below — the transcript root nothing
+ * may land inside.
  */
-export function assertUnderArchiveRoot(path: string, archiveRoot: string): void {
+export function assertUnderRoot(path: string, root: string, label: string): void {
   const resolved = realpathDeepest(path);
-  if (!isUnder(resolved, realpathDeepest(archiveRoot))) {
-    throw new Error(`refusing to write outside the archive root: ${resolved}`);
+  if (!isUnder(resolved, realpathDeepest(root))) {
+    throw new Error(`refusing to write outside ${label}: ${resolved}`);
   }
+}
+
+/**
+ * The inverse: `path` may not resolve INSIDE `root`. Exported because `isUnder`
+ * is module-private and must stay so — this is how `mirror.ts` states "the
+ * archive may not write into the corpus it only reads" at its own call site
+ * without a second containment idiom being invented up there.
+ */
+export function assertNotUnderRoot(path: string, root: string, label: string): void {
+  const resolved = realpathDeepest(path);
+  if (isUnder(resolved, realpathDeepest(root))) {
+    throw new Error(`refusing to write inside ${label}: ${resolved}`);
+  }
+}
+
+export function assertUnderArchiveRoot(path: string, archiveRoot: string): void {
+  assertUnderRoot(path, archiveRoot, ARCHIVE_ROOT_LABEL);
 }
 
 /** Root-relative mapping key, or `undefined` when `path` escapes `root`. */
@@ -140,10 +168,10 @@ export function ensureDir(dir: string): void {
  *    an unhelpful errno rather than from this guard. Asserted by a test, not
  *    assumed.
  */
-export function ensureDirUnder(dir: string, archiveRoot: string): void {
-  assertUnderArchiveRoot(dir, archiveRoot);
+export function ensureDirUnder(dir: string, root: string, label = ARCHIVE_ROOT_LABEL): void {
+  assertUnderRoot(dir, root, label);
   ensureDir(dir);
-  assertUnderArchiveRoot(dir, archiveRoot);
+  assertUnderRoot(dir, root, label);
 }
 
 /** `lstat`, shaped like `statSafe`. Never follows what it is asked about. */
@@ -200,9 +228,16 @@ export function refuseSymlinkedLeaf<T>(archivePath: string, open: () => T): T {
  * write at EOF atomically, which is the append semantics `appendFileSync` gave.
  * The mode change is `fchmodSync` rather than a path-based `chmodSync`: umask
  * can still mask the create-mode, but the fd re-resolves nothing.
+ *
+ * `dataDir` is the anchor the parent directory is created under, so a
+ * pre-planted `<dataDir>/logs` symlink that escapes the data dir is refused
+ * before any directory is made through it. Same permanent limit as everywhere
+ * else here: a link planted between the assert and the `mkdirSync` is not
+ * covered, and cannot be — that needs `openat`/`mkdirat` against a dirfd and
+ * Node has none.
  */
-export function appendOwnedLine(path: string, line: string, dir: string): void {
-  ensureDir(dir);
+export function appendOwnedLine(path: string, line: string, dataDir: string): void {
+  ensureDirUnder(dirname(path), dataDir, DATA_DIR_LABEL);
   const fd = refuseSymlinkedLeaf(path, () =>
     openSync(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0o600),
   );
