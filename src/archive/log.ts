@@ -2,7 +2,6 @@
 // reads it. It is the only durable record that a source ever diverged, since
 // divergence is recomputed each pass and never remembered.
 
-import { dirname } from 'node:path';
 import { appendOwnedLine, resolveArchiveLogPath } from './paths.js';
 import type { LockState } from './lock.js';
 
@@ -42,7 +41,6 @@ export function isQuiet(record: ArchiveLogRecord): boolean {
 /** Returns whether it wrote. */
 export function appendArchiveLog(dataDir: string, record: ArchiveLogRecord): boolean {
   if (isQuiet(record)) return false;
-  const path = resolveArchiveLogPath(dataDir);
-  appendOwnedLine(path, `${JSON.stringify(record)}\n`, dirname(path));
+  appendOwnedLine(resolveArchiveLogPath(dataDir), `${JSON.stringify(record)}\n`, dataDir);
   return true;
 }

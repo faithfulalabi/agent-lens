@@ -4,9 +4,9 @@
 
 import { createHash } from 'node:crypto';
 import {
-  chmodSync,
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
   openSync,
   readSync,
@@ -15,13 +15,15 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { discover, type DiscoveredEntry } from './discover.js';
-import { acquireLock, type LockIdentity, type LockState } from './lock.js';
+import { acquireLock, type Lock, type LockIdentity, type LockState } from './lock.js';
 import { appendArchiveLog, type ArchiveLogRecord, type DivergedLogEntry } from './log.js';
 import { sealArchiveFile } from './seal.js';
 import {
+  assertNotUnderRoot,
   canonicalizeTranscriptPath,
   ensureDir,
   ensureDirUnder,
+  realpathDeepest,
   refuseSymlinkedLeaf,
   resolveArchiveLogPath,
   resolveArchiveRoot,
@@ -29,6 +31,7 @@ import {
   resolveTranscriptRoot,
   statSafe,
   statSafeBig,
+  TRANSCRIPT_ROOT_LABEL,
 } from './paths.js';
 
 const { O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_RDWR, O_WRONLY } = constants;
@@ -254,7 +257,8 @@ function writeArchiveBytes(params: {
     openSync(archivePath, archiveExists ? O_RDWR | O_NOFOLLOW : O_WRONLY | O_CREAT | O_EXCL, 0o600),
   );
   try {
-    if (!archiveExists) chmodSync(archivePath, 0o600); // umask can mask the create-mode
+    // umask can mask the create-mode; fd-based, no re-resolve
+    if (!archiveExists) fchmodSync(fd, 0o600);
     let pos = from;
     let bytesRead = 0;
     while (pos < to) {
@@ -498,14 +502,83 @@ export function mirrorFile(entry: DiscoveredEntry, ctx: MirrorContext): ArchiveF
   }
 }
 
+/**
+ * Creates the archive root, and refuses to put it — or the data dir it hangs off
+ * — inside the corpus this pass may only read. Returns the root, resolved from
+ * the resolved data dir so the traversal is explicit rather than accidental.
+ *
+ * BOTH anchors are load-bearing and neither subsumes the other. Measured on
+ * `main`: a plain `--dataDir <path inside the corpus>` wrote `lens-data/archive/…`
+ * AND `lens-data/logs/archive.jsonl` into `~/.claude/projects` with `errors: []`,
+ * which an archive-root anchor alone does not stop; and a `<dataDir>/archive`
+ * symlinked INTO the corpus copied transcript bytes there, which a data-dir
+ * anchor alone does not stop. Test 19's read-only guarantee was defeated by
+ * either. The data-dir anchor is the one that covers the log and the lock, which
+ * sit BESIDE the archive root rather than under it.
+ *
+ * What this deliberately does NOT refuse: a symlinked `<dataDir>`, or a symlinked
+ * `<dataDir>/archive`, landing anywhere outside the corpus. Moving a
+ * keep-everything-forever store onto another volume is a supported layout —
+ * pinned by Test 26's `(C2)`/`(C3)` and Test 27's `(D1)`/`(D2)`, which red on a blanket
+ * symlink refusal. The rule is "may not escape into the corpus", never "may not
+ * be a link".
+ *
+ * The post-assert is what `ensureDirUnder` buys at every other creation site: a
+ * link planted in the window still gets directories made through it, but the
+ * pass refuses before a single transcript byte follows them.
+ *
+ * That window is PERMANENT. Closing it needs a directory-fd-relative syscall
+ * family — `openat`/`mkdirat` with `O_NOFOLLOW` per component — so that
+ * resolution is anchored to an fd instead of re-walked from a string, and Node
+ * exposes none: every `fs` call re-resolves its path. A limitation of this
+ * runtime, not work anyone can file a follow-up for.
+ */
+function ensureContainedArchiveRoot(dataDir: string, sourceRoot: string): string {
+  const resolvedDataDir = realpathDeepest(dataDir);
+  assertNotUnderRoot(resolvedDataDir, sourceRoot, TRANSCRIPT_ROOT_LABEL);
+  const root = resolveArchiveRoot(resolvedDataDir);
+  assertNotUnderRoot(root, sourceRoot, TRANSCRIPT_ROOT_LABEL);
+  ensureDir(root);
+  assertNotUnderRoot(root, sourceRoot, TRANSCRIPT_ROOT_LABEL);
+  return root;
+}
+
 /** One pass. Copies zero bytes when the lock cannot be acquired (see `lock.ts`). */
 export function archiveOnce(options: ArchiveOptions = {}): ArchiveResult {
   const sourceRoot = canonicalizeTranscriptPath(resolveTranscriptRoot(options.transcriptRoot));
   const dataDir = resolveDataDir(options.dataDir);
-  ensureDir(resolveArchiveRoot(dataDir));
-  const archiveRoot = canonicalizeTranscriptPath(resolveArchiveRoot(dataDir));
 
-  const lock = acquireLock(dataDir, options.lockIdentity);
+  let archiveRoot: string;
+  let lock: Lock;
+  try {
+    archiveRoot = canonicalizeTranscriptPath(ensureContainedArchiveRoot(dataDir, sourceRoot));
+    // Inside this `try` because `acquireLock` asserts the lock path too, and that
+    // guard has to run BEFORE the lock is taken — a lock claimed against a path
+    // nothing has cleared yet is the ordering the hole above exploited.
+    lock = acquireLock(dataDir, options.lockIdentity);
+  } catch (error) {
+    // Same idiom as the log-write catch at the bottom of this function, and for
+    // the same reason stated in the CONTRACT there: a caller that asked for a
+    // result gets one. `origin` is `archive` rather than left to the per-entry
+    // classifier — that classifier never runs here — so a refused pass exits 3
+    // instead of falling through as an unclassified 0.
+    return {
+      files: [],
+      filesSeen: 0,
+      bytesCopied: 0,
+      bytesRead: 0,
+      // Never `held`: no second pass owns anything, the lock was simply never
+      // reached. Nothing is logged either — the log lives under the refused dir.
+      lock: { state: 'not-attempted' },
+      errors: [{ path: dataDir, message: String(error), origin: 'archive' }],
+      sourceRoot,
+      // Lexical, deliberately unresolved: resolving is what this pass refused.
+      archiveRoot: resolveArchiveRoot(dataDir),
+      logged: false,
+      sealed: [],
+    };
+  }
+
   const result: ArchiveResult = {
     files: [],
     filesSeen: 0,

@@ -82,6 +82,18 @@ export function plantDirSymlink(sandbox: Sandbox, rel: string, targetDir: string
 }
 
 /**
+ * Points `<dataDir>` ITSELF at `targetDir` (created if absent) — the supported
+ * relocation layout, a "keep everything forever" store moved onto another
+ * volume. `makeSandbox` returns `dataDir` as an unmade path and never links it,
+ * so this layout has only ever been measured, never committed as a fixture.
+ */
+export function plantDataDirSymlink(sandbox: Sandbox, targetDir: string): string {
+  mkdirSync(targetDir, { recursive: true });
+  symlinkSync(targetDir, sandbox.dataDir);
+  return targetDir;
+}
+
+/**
  * Creates `<dataDir>/decoys` and returns a path inside it — under `<dataDir>` but
  * outside the archive root, so the target is harmless and the dir is snapshottable
  * on its own without the archive log and lock churning underneath it.
