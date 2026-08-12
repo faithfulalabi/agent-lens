@@ -14,8 +14,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
+import { serializeSidecar, SIDECAR_VERSION, type SealSidecar } from '../sidecar.js';
 
 export const SLUG = '-Users-dev-proj';
 
@@ -196,4 +199,77 @@ export function snapshotTree(
  */
 export function snapshotTreeSafe(root: string): Map<string, TreeEntry> {
   return existsSync(root) ? snapshotTree(root) : new Map();
+}
+
+// --- sealed frames and their sidecars ---------------------------------------
+
+/**
+ * The seal's own compressor params (`seal.ts`), so a hand-built frame is the
+ * frame `sealArchiveFile` would have produced for the same bytes — including the
+ * checksum and the declared content size a reader checks against.
+ */
+export function compressLikeSeal(body: string | Buffer): Buffer {
+  return zstdCompressSync(Buffer.from(body), {
+    params: {
+      [zlibConstants.ZSTD_c_compressionLevel]: 3,
+      [zlibConstants.ZSTD_c_checksumFlag]: 1,
+      [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
+    },
+  });
+}
+
+export function sha256Hex(body: string | Buffer): string {
+  return createHash('sha256').update(Buffer.from(body)).digest('hex');
+}
+
+/**
+ * Writes the record for `<rel>.zst`. `writeArchive` takes arbitrary names, so
+ * the `.zst.sha256` pair is expressible without teaching it the suffix. The
+ * defaults exist so a caller can state only the field under test.
+ */
+export function writeSidecar(
+  sandbox: Sandbox,
+  rel: string,
+  record: Partial<SealSidecar> & Pick<SealSidecar, 'file' | 'sha256'>,
+): string {
+  return writeArchive(
+    sandbox,
+    `${rel}.zst.sha256`,
+    serializeSidecar({
+      v: SIDECAR_VERSION,
+      hot_size: 0,
+      sealed_size: 0,
+      sealed_at: '2026-08-11T00:00:00.000Z',
+      ...record,
+    }),
+  );
+}
+
+/** Rewrites named fields of an EXISTING record, leaving the frame alone. */
+export function patchSidecar(sandbox: Sandbox, rel: string, patch: Partial<SealSidecar>): void {
+  const path = join(sandbox.archiveRoot, `${rel}.zst.sha256`);
+  const record = JSON.parse(readFileSync(path, 'utf8')) as SealSidecar;
+  writeFileSync(path, serializeSidecar({ ...record, ...patch }));
+}
+
+/**
+ * The crash window a seal leaves between its `rename` and its `unlink`: the hot
+ * file and the frame both on disk, no source. `sealed` is planted verbatim so a
+ * caller can make it garbage, and the record describes `describes` — defaulting
+ * to the hot bytes, which is what a real seal would have hashed.
+ */
+export function plantCrashWindow(
+  sandbox: Sandbox,
+  rel: string,
+  parts: { hot: string | Buffer; sealed: Buffer; describes?: string | Buffer },
+): void {
+  const described = Buffer.from(parts.describes ?? parts.hot);
+  writeArchive(sandbox, rel, parts.hot);
+  writeArchive(sandbox, `${rel}.zst`, parts.sealed);
+  writeSidecar(sandbox, rel, {
+    file: basename(rel),
+    sha256: sha256Hex(described),
+    hot_size: described.length,
+    sealed_size: parts.sealed.length,
+  });
 }

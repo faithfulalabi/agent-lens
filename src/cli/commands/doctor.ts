@@ -89,11 +89,22 @@ export function formatDoctorReport(report: DoctorReport): string {
 
   if (integrity.diverged.length > 0) {
     lines.push(
-      `  diverged (${integrity.diverged.length}) — the archived bytes and the live source disagree.`,
+      `  diverged (${integrity.diverged.length}) — the archived bytes and their reference disagree.`,
       '    Consistent with two readings, and this check cannot tell them apart: the',
       '    source was rewritten, or the archived bytes were corrupted. Nothing was',
       '    overwritten either way.',
     );
+    // A sealed row has no source, so the two readings above do not apply to it.
+    // The four sealed reasons are the only ones carrying this prefix — the
+    // mirror's own reasons are bare words like `shrink` — so no export is needed
+    // to tell them apart.
+    if (integrity.diverged.some((file) => file.reason.startsWith('sealed-'))) {
+      lines.push(
+        '    A sealed row is narrower than that: its source is already gone, so it was',
+        '    compared against the hash the seal recorded and one reading is left —',
+        '    the archived bytes changed.',
+      );
+    }
     for (const file of integrity.diverged) {
       lines.push(`    ${file.reason}  ${file.archivePath}`);
     }
@@ -102,9 +113,12 @@ export function formatDoctorReport(report: DoctorReport): string {
   if (integrity.unverifiable.length > 0) {
     lines.push(
       `  unverifiable (${integrity.unverifiable.length}) — NOT checked, and NOT verified.`,
-      '    Nothing here reads a stored hash yet (task 1.8), so none of',
-      '    these was compared against anything.',
+      '    Each row names its own reason. Nothing here was compared against anything.',
     );
+    // Only offered when it would actually change the answer.
+    if (!integrity.verify) {
+      lines.push('    Pass --verify to re-hash every sealed file that has a stored hash.');
+    }
     lines.push(
       ...listCapped(
         integrity.unverifiable.map((file) => `${file.reason}  ${file.archivePath}`),

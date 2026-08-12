@@ -7,9 +7,13 @@
 // This module is deliberately pure — it names no mutating fs call, only
 // `readFileSync` — so the archive's "who may write" allowlist stays four
 // filenames long and `seal.ts` remains the single place the publish ORDER is
-// argued. Nothing in production reads a sidecar yet; `doctor` gains the
-// comparison in task 1.8. The reader below ships now because it is the half
-// that has to stay symmetric with the writer, and it is tested against it.
+// argued. `doctor` is the consumer: it reads a record through the function
+// below and re-hashes the frame beside it. The reader has to stay symmetric
+// with the writer, which is what it is tested against.
+//
+// `readSidecar` takes a path and opens it with no `lstat` and no size bound, so
+// a caller reaching a path an attacker can choose must gate it itself — see the
+// `isFile()` check `report.ts` puts in front of this call.
 
 import { readFileSync } from 'node:fs';
 
