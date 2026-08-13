@@ -1,0 +1,21 @@
+{
+  "exp": "large-output",
+  "session_id": "0f4b75bd-214b-4364-8983-d4741ec23c9f",
+  "claude_code_version": "2.1.212 (Claude Code)",
+  "node_version": "v26.0.0",
+  "hook_counts": {
+    "PostToolUse": 7,
+    "PreToolUse": 8,
+    "SessionStart": 1,
+    "Stop": 1,
+    "SubagentStop": 1,
+    "UserPromptSubmit": 1,
+    "unknown": 62
+  },
+  "path_map": {
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/0f4b75bd-214b-4364-8983-d4741ec23c9f.jsonl": "transcripts/parent.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/0f4b75bd-214b-4364-8983-d4741ec23c9f/tool-results/b3rotzf8t.txt": "tool-results/b3rotzf8t.txt",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/0f4b75bd-214b-4364-8983-d4741ec23c9f/tool-results/bcy4frfr0.txt": "tool-results/bcy4frfr0.txt",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/0f4b75bd-214b-4364-8983-d4741ec23c9f/tool-results/bpm6s2ql8.txt": "tool-results/bpm6s2ql8.txt"
+  }
+}

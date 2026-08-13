@@ -1,0 +1,25 @@
+{
+  "exp": "subagent",
+  "session_id": "132db661-a751-487d-9904-076ac407af13",
+  "claude_code_version": "2.1.212 (Claude Code)",
+  "node_version": "v26.0.0",
+  "hook_counts": {
+    "PostToolUse": 7,
+    "PreToolUse": 8,
+    "SessionStart": 1,
+    "Stop": 1,
+    "SubagentStart": 1,
+    "SubagentStop": 1,
+    "UserPromptSubmit": 1,
+    "unknown": 20
+  },
+  "path_map": {
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13.jsonl": "transcripts/parent.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-a08c8cbbc57139aa2.jsonl": "transcripts/subagents/agent-a08c8cbbc57139aa2.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-a08c8cbbc57139aa2.meta.json": "transcripts/subagents/agent-a08c8cbbc57139aa2.meta.json",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-a84e37adc14b34546.jsonl": "transcripts/subagents/agent-a84e37adc14b34546.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-a84e37adc14b34546.meta.json": "transcripts/subagents/agent-a84e37adc14b34546.meta.json",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-abf92dc8635043dac.jsonl": "transcripts/subagents/agent-abf92dc8635043dac.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/132db661-a751-487d-9904-076ac407af13/subagents/agent-abf92dc8635043dac.meta.json": "transcripts/subagents/agent-abf92dc8635043dac.meta.json"
+  }
+}

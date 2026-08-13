@@ -1,0 +1,18 @@
+{
+  "exp": "multi-turn",
+  "session_id": "833c3d9b-ae41-49b2-9e77-6debef45c98c",
+  "claude_code_version": "2.1.212 (Claude Code)",
+  "node_version": "v26.0.0",
+  "hook_counts": {
+    "PostToolUse": 1,
+    "PreToolUse": 1,
+    "SessionStart": 1,
+    "Stop": 3,
+    "SubagentStop": 2,
+    "UserPromptSubmit": 3,
+    "unknown": 22
+  },
+  "path_map": {
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/833c3d9b-ae41-49b2-9e77-6debef45c98c.jsonl": "transcripts/parent.jsonl"
+  }
+}
