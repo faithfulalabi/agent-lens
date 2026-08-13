@@ -1,0 +1,15 @@
+{
+  "exp": "compaction",
+  "session_id": "d363303b-31aa-4037-8679-ecc6ba4be861",
+  "claude_code_version": "2.1.212 (Claude Code)",
+  "node_version": "v26.0.0",
+  "hook_counts": {
+    "unknown": 102
+  },
+  "path_map": {
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/d363303b-31aa-4037-8679-ecc6ba4be861.jsonl": "transcripts/parent.jsonl",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/d363303b-31aa-4037-8679-ecc6ba4be861/tool-results/bebmajfa2.txt": "tool-results/bebmajfa2.txt",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/d363303b-31aa-4037-8679-ecc6ba4be861/tool-results/bltaapxsu.txt": "tool-results/bltaapxsu.txt",
+    "/home/USER/.claude/projects/-Users-USER-Desktop-agent-lens-experiments-tracer-bullet-scratch-project/d363303b-31aa-4037-8679-ecc6ba4be861/tool-results/bw05huzyn.txt": "tool-results/bw05huzyn.txt"
+  }
+}

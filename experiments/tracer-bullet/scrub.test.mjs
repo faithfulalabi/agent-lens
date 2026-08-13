@@ -222,6 +222,169 @@ describe('scrubJsonl strips attachment bodies (AC2)', () => {
   });
 });
 
+describe('scrubJsonl strips hookInfos[].command from system lines (Task 1.7 OQ3)', () => {
+  // The real leak, verbatim from fixtures/scrubbed/*/transcripts/parent.jsonl
+  // before this rule existed. It is the operator's OTHER registered hook.
+  const OPERATOR_HOOK =
+    '[ -n "$SUPERSET_HOME_DIR" ] && [ -x "$SUPERSET_HOME_DIR/hooks/notify.sh" ] && ' +
+    'SUPERSET_AGENT_ID=claude "$SUPERSET_HOME_DIR/hooks/notify.sh" || true';
+
+  const stopHookLine = JSON.stringify({
+    type: 'system',
+    subtype: 'stop_hook_summary',
+    uuid: 'u-stop-1',
+    parentUuid: 'u-prev',
+    hookCount: 2,
+    hookInfos: [{ command: OPERATOR_HOOK, durationMs: 49 }, { command: 'agent-lens hook' }],
+    hookErrors: [],
+  });
+
+  it('redacts every command, including agent-lens own', () => {
+    const out = JSON.parse(stripAttachmentLine(stopHookLine, config));
+    expect(out.hookInfos[0].command).toBe('[REDACTED-HOOK-COMMAND]');
+    // Deliberately NOT allowlisted: auditing a redactor by reading the strings
+    // it chose to keep is not auditing it. agent-lens's participation is proven
+    // by the envelope stream, not by this field.
+    expect(out.hookInfos[1].command).toBe('[REDACTED-HOOK-COMMAND]');
+    expect(JSON.stringify(out)).not.toContain('SUPERSET_HOME_DIR');
+    expect(JSON.stringify(out)).not.toContain('notify.sh');
+  });
+
+  it('preserves shape: line kept, array length, hookCount, durationMs, uuid chain', () => {
+    const out = JSON.parse(stripAttachmentLine(stopHookLine, config));
+    expect(out.hookInfos).toHaveLength(2);
+    expect(out.hookCount).toBe(2);
+    expect(out.hookInfos[0].durationMs).toBe(49); // sibling keys untouched
+    expect(out.uuid).toBe('u-stop-1');
+    expect(out.parentUuid).toBe('u-prev'); // the chain Phase 3's tailer walks
+    expect(out.subtype).toBe('stop_hook_summary');
+  });
+
+  it('★ NO regex rule can catch this — which is why it needed a structural strip', () => {
+    // The whole reason this survived four captures and a standing security gate:
+    // the command is ordinary shell text with no secret SHAPE, so the text pass
+    // and every detectRule score it clean. If this expectation ever flips, the
+    // structural strip has become redundant and this comment is wrong.
+    expect(scrubText(stopHookLine, rules, anon)).toContain('SUPERSET_HOME_DIR');
+  });
+
+  it('★ EXEMPTS compact_boundary — the compaction set’s entire payload', () => {
+    const boundary = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'u-boundary',
+      logicalParentUuid: 'u-pre-compact',
+      compactMetadata: { trigger: 'manual', preTokens: 1234 },
+      hookInfos: [{ command: 'should survive the exemption' }],
+    });
+    expect(stripAttachmentLine(boundary, config)).toBe(boundary);
+  });
+
+  it('leaves other system subtypes and non-system lines alone', () => {
+    // turn_duration / away_summary carry no hookInfos; nothing should change.
+    const turn = JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 12 });
+    expect(stripAttachmentLine(turn, config)).toBe(turn);
+    expect(stripAttachmentLine('{"type":"user"}', config)).toBe('{"type":"user"}');
+  });
+
+  it('is idempotent', () => {
+    const once = stripAttachmentLine(stopHookLine, config);
+    expect(stripAttachmentLine(once, config)).toBe(once);
+  });
+
+  it('survives a malformed hookInfos without throwing', () => {
+    const odd = JSON.stringify({
+      type: 'system',
+      subtype: 'stop_hook_summary',
+      hookInfos: [null, 'a string', {}, { command: OPERATOR_HOOK }],
+    });
+    const out = JSON.parse(stripAttachmentLine(odd, config));
+    expect(out.hookInfos[3].command).toBe('[REDACTED-HOOK-COMMAND]');
+    expect(out.hookInfos[0]).toBeNull();
+    expect(JSON.stringify(out)).not.toContain('SUPERSET_HOME_DIR');
+  });
+
+  it('runs through the full scrubJsonl pass, not just the unit helper', () => {
+    const out = scrubJsonl(stopHookLine, rules, anon, config);
+    expect(out).not.toContain('SUPERSET_HOME_DIR');
+    expect(out).toContain('[REDACTED-HOOK-COMMAND]');
+  });
+
+  it('★ strips the ENVELOPE-nested copy too (envelopes.jsonl, raw_payload)', () => {
+    // The same transcript line reaches disk twice, in two shapes. This is the
+    // one the original strip never tested — see stripParsedLine's header.
+    const envelope = JSON.stringify({
+      event_id: 'sess-1:transcript:u-stop-1',
+      session_id: 'sess-1',
+      source: 'transcript',
+      ts: '2026-08-05T00:00:00.000Z',
+      raw_payload: JSON.parse(stopHookLine),
+    });
+    const out = JSON.parse(stripAttachmentLine(envelope, config));
+    expect(out.raw_payload.hookInfos[0].command).toBe('[REDACTED-HOOK-COMMAND]');
+    expect(JSON.stringify(out)).not.toContain('SUPERSET_HOME_DIR');
+    // The envelope's own identity fields must survive — Phase 2 replays these.
+    expect(out.event_id).toBe('sess-1:transcript:u-stop-1');
+    expect(out.source).toBe('transcript');
+  });
+});
+
+describe('★ REGRESSION: attachment bodies nested in an Envelope (found 2026-08-05)', () => {
+  // PR #11's attachment strip only ever tested the TOP-LEVEL `type`. Every
+  // attachment captured through the collector therefore reached
+  // envelopes.jsonl INTACT — 11 across three fixture sets, carrying the
+  // operator's installed skill/agent/MCP inventory. verify.mjs exits 0 on it
+  // because no scrub or detect rule can recognize those names, which is exactly
+  // why this needed a structural strip and why it survived four captures.
+  const inventoryLine = JSON.stringify({
+    type: 'attachment',
+    uuid: 'u-att-1',
+    parentUuid: 'u-prev',
+    attachment: {
+      type: 'skill_listing',
+      content: `- ${PRIVATE_INVENTORY[0]}: a private skill the operator installed`,
+    },
+  });
+
+  it('strips it inside raw_payload, not just at the top level', () => {
+    const envelope = JSON.stringify({
+      event_id: 'sess-1:transcript:u-att-1',
+      session_id: 'sess-1',
+      source: 'transcript',
+      raw_payload: JSON.parse(inventoryLine),
+    });
+    const out = JSON.parse(stripAttachmentLine(envelope, config));
+    expect(out.raw_payload.attachment).toEqual({ type: 'skill_listing', stripped: true });
+    expect(JSON.stringify(out)).not.toContain(PRIVATE_INVENTORY[0]);
+    expect(out.event_id).toBe('sess-1:transcript:u-att-1');
+    expect(out.raw_payload.parentUuid).toBe('u-prev');
+  });
+
+  it('★ the text pass alone would NOT have caught it', () => {
+    // The proof that this is a structural leak and not a regex gap: an
+    // installed skill name has no secret shape, so scrubText passes it through.
+    expect(scrubText(inventoryLine, rules, anon)).toContain(PRIVATE_INVENTORY[0]);
+  });
+
+  it('is idempotent over an already-stripped envelope', () => {
+    const envelope = JSON.stringify({
+      source: 'transcript',
+      raw_payload: JSON.parse(inventoryLine),
+    });
+    const once = stripAttachmentLine(envelope, config);
+    expect(stripAttachmentLine(once, config)).toBe(once);
+  });
+
+  it('leaves an envelope whose raw_payload is not a strippable line alone', () => {
+    const hookEnv = JSON.stringify({
+      source: 'hook',
+      hook_name: 'PreToolUse',
+      raw_payload: { tool_name: 'Bash', tool_use_id: 'toolu_1' },
+    });
+    expect(stripAttachmentLine(hookEnv, config)).toBe(hookEnv);
+  });
+});
+
 describe('scrubJsonl is deterministic, idempotent, and shape-preserving (AC1/AC4)', () => {
   const corpus = Array.from({ length: 100 }, (_, i) =>
     i % 3 === 0

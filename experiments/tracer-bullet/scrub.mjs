@@ -115,19 +115,99 @@ function parseJsonLine(line) {
   }
 }
 
-/** Apply the attachment strip to an already-parsed line; `original` on a no-op. */
+/**
+ * Apply the structural strips to an already-parsed line; `original` on a no-op.
+ *
+ * ⚠️ TWO SHAPES CARRY THE SAME TRANSCRIPT LINE, and this is the bug that shipped
+ * in PR #11 and survived four captures (found 2026-08-05).
+ *
+ *   transcripts/*.jsonl  →  the raw transcript line, `type` at the TOP level.
+ *   envelopes.jsonl      →  an agent-lens Envelope, whose `raw_payload` IS that
+ *                           same transcript line — so `type` is one level down.
+ *
+ * The original strip only ever tested the top level, so every attachment body
+ * captured through the collector went into `envelopes.jsonl` INTACT: 11 of them
+ * across three sets, carrying `skill_listing`, `agent_listing_delta` and
+ * `deferred_tools_delta` — the operator's installed inventory, verbatim. Nothing
+ * caught it, because (as this config's own comment says) no scrub or detect rule
+ * can recognize a skill/agent/MCP name, so `verify.mjs` exits 0 on it.
+ *
+ * Both strips therefore run against the top level AND against `raw_payload`.
+ * Only these two positions are walked — not an arbitrary deep traversal — so
+ * the transform stays predictable and auditable against a diff.
+ */
 function stripParsedLine(parsed, original, cfg) {
-  if (parsed === null || typeof parsed !== 'object' || parsed.type !== 'attachment') {
-    return original;
-  }
-  const kind = parsed.attachment?.type ?? null;
+  if (parsed === null || typeof parsed !== 'object') return original;
+  // Bitwise-or, not `||`: every node must be visited, not short-circuited.
+  const changed = stripNode(parsed, cfg) | stripNode(parsed.raw_payload, cfg);
+  return changed ? JSON.stringify(parsed) : original;
+}
+
+/** Apply both structural strips to one node in place. Returns whether it changed. */
+function stripNode(node, cfg) {
+  if (node === null || typeof node !== 'object') return 0;
+  if (node.type === 'attachment') return stripAttachmentBody(node, cfg);
+  if (node.type === 'system') return stripSystemHookCommands(node, cfg);
+  return 0;
+}
+
+/** Replace an `attachment` body with `{type, stripped:true}`. Mutates in place. */
+function stripAttachmentBody(node, cfg) {
+  const kind = node.attachment?.type ?? null;
   const strip = cfg?.strip ?? {};
   const stripAll = strip.stripAllAttachments !== false;
   const known = strip.attachmentTypes ?? [];
-  if (!stripAll && !known.includes(kind)) return original;
+  if (!stripAll && !known.includes(kind)) return 0;
+  if (node.attachment?.stripped === true) return 0; // already stripped: idempotent
 
-  parsed.attachment = { type: kind, stripped: true };
-  return JSON.stringify(parsed);
+  node.attachment = { type: kind, stripped: true };
+  return 1;
+}
+
+/**
+ * Redact `hookInfos[].command` on `type:"system"` lines (Task 1.7 OQ3).
+ *
+ * `subtype:"stop_hook_summary"` records every hook Claude Code fired at the Stop
+ * event, and each entry's `command` is the operator's registered hook line
+ * verbatim — e.g. a `$SUPERSET_HOME_DIR/hooks/notify.sh` invocation. That is
+ * operator environment config, the same class the attachment strip removes.
+ *
+ * No regex can reach it: the values are ordinary shell text with no secret
+ * SHAPE, so every `detectRules` pattern scores them clean and `verify.mjs`
+ * exits 0. That is precisely why the leak survived four capture sessions and a
+ * standing security gate — it is a structural leak, so it needs a structural
+ * strip, and this runs before the text pass for the same reason the attachment
+ * strip does.
+ *
+ * EVERY command is redacted, including agent-lens's own `agent-lens hook`. A
+ * content-based allowlist would mean auditing the redactor by reading the
+ * strings it chose to keep, and the fixture already proves agent-lens ran from
+ * its envelope stream rather than from this field.
+ *
+ * Shape is preserved: the line, the array, its length, `hookCount` and each
+ * entry's `durationMs` all survive, so the transcript still exercises Phase 3's
+ * tailer and the compaction set's ordering is untouched.
+ *
+ * `exemptSystemSubtypes` (default `compact_boundary`) is never modified — it is
+ * the compaction experiment's whole payload.
+ */
+function stripSystemHookCommands(node, cfg) {
+  const strip = cfg?.strip ?? {};
+  if (strip.systemHookCommands === false) return 0;
+  const exempt = strip.exemptSystemSubtypes ?? ['compact_boundary'];
+  if (exempt.includes(node.subtype)) return 0;
+  if (!Array.isArray(node.hookInfos)) return 0;
+
+  const placeholder = strip.systemHookCommandPlaceholder ?? '[REDACTED-HOOK-COMMAND]';
+  let changed = 0;
+  for (const info of node.hookInfos) {
+    if (info !== null && typeof info === 'object' && 'command' in info) {
+      if (info.command === placeholder) continue; // idempotent
+      info.command = placeholder;
+      changed = 1;
+    }
+  }
+  return changed;
 }
 
 /**

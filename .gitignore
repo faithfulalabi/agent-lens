@@ -42,6 +42,16 @@ ui/dist/
 **/fixtures/raw/
 **/.capture-scratch/
 
+# Scrubbed SPILL payloads only — never the scrubbed transcripts themselves.
+# `fixtures/scrubbed/` is deliberately committable (that is what the scrubber is
+# for, and gitignore.test.mjs asserts it stays that way), but two of the captured
+# tool-results are 10 MB each: 22 MB total against a 106 KB largest-tracked-file,
+# and git history cannot be pruned without a rewrite. The `.jsonl` transcripts and
+# manifests beside them DO commit — they are the projector fixtures Phase 2 reads.
+# The spills stay local, regenerable from fixtures/raw/ via scrub.mjs, and every
+# consumer must gate on existsSync rather than assume them present.
+**/fixtures/scrubbed/*/tool-results/
+
 # `npm run dev`'s data dir: a real SQLite DB of the developer's own sessions.
 /.agent-lens-dev/
 
