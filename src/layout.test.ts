@@ -13,6 +13,17 @@ describe('repo layout conforms to the tech plan', () => {
     }
   });
 
+  // `src/transcript/` is the one module with NO index.ts, deliberately: four
+  // Phase 2 tasks each proposed a different owner for the barrel, which is a
+  // guaranteed merge conflict on every branch. Deep imports with `.js`
+  // extensions instead. The absence is asserted so nobody helpfully adds one.
+  it('has the transcript module, and no barrel in it', () => {
+    for (const file of ['raw-types.ts', 'accessors.ts', 'line.ts', 'drift.ts']) {
+      expect(existsSync(resolve(srcDir, 'transcript', file)), file).toBe(true);
+    }
+    expect(existsSync(resolve(srcDir, 'transcript', 'index.ts'))).toBe(false);
+  });
+
   it('has all six CLI command stubs', () => {
     for (const cmd of ['start', 'hook', 'install', 'uninstall', 'doctor', 'import']) {
       expect(existsSync(resolve(srcDir, 'cli', 'commands', `${cmd}.ts`))).toBe(true);

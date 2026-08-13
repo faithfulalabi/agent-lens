@@ -1,0 +1,7 @@
+{"type":"summary","summary":"a top-level summary line, which the corpus has never contained","leafUuid":"44444444-4444-4444-8444-444444444444"}
+{"type":"holographic-preview","payload":{"frames":3},"sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"system","subtype":"quantum_entanglement","uuid":"b0000000-0000-4000-8000-000000000001","sessionId":"33333333-3333-4333-8333-333333333333","timestamp":"2026-08-13T10:00:00.000Z"}
+{"type":7,"payload":"the type field is a number"}
+{"type":null,"payload":"the type field is null"}
+{"payload":"there is no type field at all"}
+{"type":"","payload":"the type field is the empty string"}
