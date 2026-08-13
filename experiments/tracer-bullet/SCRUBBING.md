@@ -52,14 +52,40 @@ installed skill/agent/MCP inventory — measured at **63–66% of transcript byt
 on the Task 1.5 captures, and a pure environment-config leak with no fixture
 value. Regex cannot reach it, so `scrubJsonl` handles it structurally:
 
-| Strip               | What happens                                                                                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `type:"attachment"` | `attachment` body → `{type:<kind>,stripped:true}`; every other key byte-identical                                                                                              |
-| kinds covered       | `skill_listing`, `agent_listing_delta`, `deferred_tools_delta`, `mcp_instructions_delta`, `task_reminder` — **and any future kind** (`stripAllAttachments: true` fails closed) |
+| Strip                                     | What happens                                                                                                                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type:"attachment"`                       | `attachment` body → `{type:<kind>,stripped:true}`; every other key byte-identical                                                                                              |
+| kinds covered                             | `skill_listing`, `agent_listing_delta`, `deferred_tools_delta`, `mcp_instructions_delta`, `task_reminder` — **and any future kind** (`stripAllAttachments: true` fails closed) |
+| `type:"system"` + `hookInfos[]`           | every `command` → `[REDACTED-HOOK-COMMAND]`; `hookCount`, array length and each `durationMs` survive                                                                            |
+| exempt                                    | `subtype:"compact_boundary"` — the compaction experiment's entire payload, never touched                                                                                        |
 
 The line is kept, not dropped: line count, ordering, and the `uuid`/`parentUuid`
 chain survive, so the scrubbed transcript still exercises Phase 3's append-only
 tailer.
+
+### ⚠️ Both strips run at TWO positions — the bug that shipped in PR #11
+
+The same transcript line reaches disk in **two shapes**:
+
+- `transcripts/*.jsonl` — the raw line, `type` at the **top level**
+- `envelopes.jsonl` — an agent-lens `Envelope` whose **`raw_payload` is that same line**, so `type` is one level down
+
+PR #11's strip only ever tested the top level. Every attachment captured through
+the collector therefore reached `envelopes.jsonl` **intact** — found 2026-08-05:
+**11 unstripped bodies across three sets**, carrying `skill_listing`,
+`agent_listing_delta` and `deferred_tools_delta` verbatim. It survived four
+capture sessions and a standing security gate because, as noted below, no scrub
+or detect rule can recognize a skill/agent/MCP name, so `verify.mjs` exits `0`.
+
+`scrubJsonl` now applies both strips to the top level **and** to `raw_payload`.
+Only those two positions are walked — not an arbitrary deep traversal — so the
+transform stays auditable against a diff. Regression tests:
+`scrub.test.mjs` → *"REGRESSION: attachment bodies nested in an Envelope"*.
+
+**The general lesson for anyone adding a strip here:** a structural leak needs a
+structural rule, and it must be applied at every position the structure occurs.
+Neither of these two leaks had a secret *shape*, so no regex and no `detectRule`
+could ever have caught them — the automated gate was green the entire time.
 
 The scrubber **preserves JSON shape and Q3 size markers**, so scrubbed envelope
 fixtures still POST cleanly through `/api/ingest` (Phases 2–4 replay them). Join

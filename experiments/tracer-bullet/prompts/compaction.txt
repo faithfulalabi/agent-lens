@@ -18,8 +18,19 @@ WHAT TO OBSERVE / CAPTURE:
 - HEAD hash: unchanged head => the file was appended to (append-only holds).
   Changed head => the file was rewritten (append-only BROKEN — Phase-3 impact).
 - SIZE: should only grow if append-only.
+- ⚠ IGNORE the `full` hash when judging append-vs-rewrite. It changes on EVERY
+  read of a live transcript — the fingerprint command is itself a tool call that
+  gets appended before you see the result. Measured 2026-08-02: two consecutive
+  runs with NO compaction between them returned different `full` values and a
+  +957 B size delta. A changed `full` hash is the normal case and proves nothing.
+  Judge on `head256` + "size only grew". (findings Q4/C1)
 - The PreCompact / PostCompact hook envelopes captured by agent-lens — confirm
   they fire and note any payload correlators (e.g. transcript_path).
+- ALSO record, from the parent transcript after compaction: the one
+  `subtype:"compact_boundary"` line (note `logicalParentUuid` and
+  `compactMetadata`), the following `isCompactSummary:true` user line, and the
+  COUNT of `parentUuid === null` lines — it should be 2, not 1. That forest shape
+  is expected, not a capture defect. (findings Q4/C2-C3)
 
 CAPTURE: handled for you.
   `source experiments/tracer-bullet/run-experiment.sh compaction` printed this
@@ -29,4 +40,5 @@ CAPTURE: handled for you.
   discovers the transcript, captures, scrubs, runs verify.mjs, and prints both
   fingerprints side by side.
 
-Record both fingerprints (before/after) verbatim in the findings doc Q4 block.
+Record both fingerprints (before/after) verbatim in the findings doc Q4 block —
+but see the warning above: only `head256` and the size are evidence.

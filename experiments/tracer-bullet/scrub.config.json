@@ -141,7 +141,12 @@
       "mcp_instructions_delta",
       "task_reminder"
     ],
-    "stripAllAttachments": true
+    "stripAllAttachments": true,
+    "$systemHookComment": "Task 1.7 Open Question 3, resolved 2026-08-02 and implemented 2026-08-05. `type:\"system\"` / `subtype:\"stop_hook_summary\"` lines carry `hookInfos[].command` — the operator's OTHER registered hook commands, verbatim (observed: a $SUPERSET_HOME_DIR/hooks/notify.sh invocation). That is operator environment config, the same class the attachment strip exists to remove, and no regex rule can reach it: the values are ordinary shell text with no secret SHAPE, so `detectRules` scores them clean and verify.mjs exits 0 — which is exactly why this survived four captures. Present in ALL FOUR sets (compaction 10, multi-turn 6, large-output 2, subagent 2), not only compaction. EVERY command is redacted, including agent-lens's own: a content-based allowlist would mean auditing a redactor by reading the strings it chose to keep, and the fixture proves agent-lens ran from its envelopes, not from this field. The line, the array length, `hookCount` and each entry's `durationMs` all survive, so shape and ordering are preserved for the tailer.",
+    "systemHookCommands": true,
+    "systemHookCommandPlaceholder": "[REDACTED-HOOK-COMMAND]",
+    "$exemptComment": "`compact_boundary` is the compaction experiment's entire payload (Q4: compactMetadata + logicalParentUuid + isCompactSummary + the two-root parentUuid forest), so it is never touched. It carries no `hookInfos` today, which makes this belt-and-braces — it exists so a future Claude Code release that adds hook fields to the boundary record cannot silently gut the one set that exists to study it.",
+    "exemptSystemSubtypes": ["compact_boundary"]
   },
   "anonymize": {
     "$comment": "Path/identity anonymization applied AFTER regex redaction. Set homeDir/username at runtime via --home and --user flags; these placeholders document intent.",
