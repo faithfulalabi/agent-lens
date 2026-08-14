@@ -1,0 +1,373 @@
+// One harness JSONL line in, one of OUR kinds out. This is the single place that
+// knows what Claude Code calls things, so everything downstream can stop knowing.
+//
+// Pure: no I/O, no clock, no randomness. Every field is read through
+// `./accessors.js`, which is total, so this module declares no guards and no
+// `try`/`catch` of its own — that is Task 2.1's contract and duplicating it here
+// would just create a second place for the rules to disagree.
+//
+// **Nothing is ever dropped.** An unrecognised `type` becomes `kind:'unknown'`
+// carrying `raw_type`, `raw_subtype` and its byte offset, so a Claude Code format
+// change shows up in the product on the first session opened after the update,
+// instead of as a silent hole discovered three months later. N lines in is always
+// N lines out.
+//
+// Measured against the frozen archive on 2026-08-13: 14 top-level types over
+// 41,911 lines, harness 2.1.197 and 2.1.212. Two shapes a reader will expect and
+// not find:
+//   - `summary` is NOT a top-level type. Zero occurrences. The `"type":"summary"`
+//     hits in the corpus are all nested inside other payloads, which a top-level
+//     classifier never sees, so there is deliberately no branch for it.
+//   - `compact_boundary` is NOT a top-level type either. It is a `system` SUBTYPE
+//     with 3 occurrences, and anything that greps for it at the top level finds
+//     nothing and silently drops compaction.
+//
+// `api_error` is the opposite case: 9 occurrences on 2026-08-07 and 0 today, lost
+// to transcript expiry rather than removed from the harness. Its branch stays,
+// pinned by a synthetic fixture.
+
+import { isoTs, obj, str } from './accessors.js';
+import type { DriftCounter } from './drift.js';
+
+/** Everything a line needs from its file to be classified. */
+export interface LineContext {
+  /**
+   * Byte offset of this line's first byte, ARCHIVE-relative (RFC §6 rule 5).
+   * The caller computes it with `Buffer.byteLength`; a source-relative offset
+   * breaks the moment Claude Code expires the file, and a string index
+   * desynchronises the rest of the file on the first emoji in a prompt.
+   */
+  byteOffset: number;
+  /**
+   * Counts what this line carried that agent-lens has never measured.
+   * Classification is the only moment an unmeasured field is still visible.
+   */
+  drift: DriftCounter;
+}
+
+/**
+ * The 7 declared `system` subtypes, measured 2026-08-13: `turn_duration` 255,
+ * `stop_hook_summary` 247, `away_summary` 63, `local_command` 15,
+ * `compact_boundary` 3, `informational` 1 — and `api_error`, now extinct at 0.
+ *
+ * The list is the single source of both the type and the runtime check below, so
+ * they cannot fall out of step.
+ */
+const SYSTEM_SUBTYPES = [
+  'turn_duration',
+  'stop_hook_summary',
+  'away_summary',
+  'local_command',
+  'compact_boundary',
+  'informational',
+  'api_error',
+] as const;
+
+export type SystemSubtype = (typeof SYSTEM_SUBTYPES)[number];
+
+const SYSTEM_SUBTYPE_SET: ReadonlySet<string> = new Set(SYSTEM_SUBTYPES);
+
+function isSystemSubtype(value: string): value is SystemSubtype {
+  return SYSTEM_SUBTYPE_SET.has(value);
+}
+
+/** Our name for a harness line. `unknown` is a real kind, not a failure. */
+export type ParsedKind = ParsedLine['kind'];
+
+/** Carried by every classified line, whatever its kind. */
+interface ParsedBase {
+  readonly byte_offset: number;
+  /** Only `assistant`, `user`, `system` and `attachment` carry one. */
+  readonly uuid: string | undefined;
+  readonly session_id: string | undefined;
+  readonly timestamp: string | undefined;
+  /**
+   * The line's object verbatim, so a projector can read further fields through
+   * the accessors without re-parsing. A line that was not a JSON object at all
+   * gets a shared frozen empty record.
+   */
+  readonly raw: Readonly<Record<string, unknown>>;
+}
+
+interface Classified<K extends string> extends ParsedBase {
+  readonly kind: K;
+}
+
+/** A line agent-lens cannot name. It still renders; that is the entire point. */
+interface UnknownLine extends ParsedBase {
+  readonly kind: 'unknown';
+  /** The `type` as sent, or a `<label>` when it was not a string. */
+  readonly raw_type: string;
+  /** The `subtype` as sent. `''` means the line carried none. */
+  readonly raw_subtype: string;
+}
+
+export type ParsedLine =
+  | Classified<'assistant'>
+  | Classified<'user'>
+  | (Classified<'system'> & { readonly subtype: SystemSubtype })
+  | Classified<'attachment'>
+  | Classified<'mode'>
+  | Classified<'last-prompt'>
+  | Classified<'permission-mode'>
+  | Classified<'ai-title'>
+  | Classified<'file-history-snapshot'>
+  | Classified<'file-history-delta'>
+  | Classified<'queue-operation'>
+  | Classified<'pr-link'>
+  | Classified<'started'>
+  | Classified<'result'>
+  | UnknownLine;
+
+/**
+ * The envelope the four uuid-carrying types share — the union measured across
+ * `assistant`, `user`, `system` and `attachment`, not the intersection. Listing a
+ * name here only means "do not report this as drift", so the union costs a little
+ * sensitivity and buys one list instead of four near-copies.
+ */
+const ENVELOPE: readonly string[] = [
+  'type',
+  'uuid',
+  'parentUuid',
+  'sessionId',
+  'session_id',
+  'timestamp',
+  'version',
+  'userType',
+  'isSidechain',
+  'isMeta',
+  'agentId',
+  'cwd',
+  'gitBranch',
+  'slug',
+  'entrypoint',
+];
+
+function fields(...groups: readonly (readonly string[])[]): ReadonlySet<string> {
+  return new Set(groups.flat());
+}
+
+interface LineType {
+  readonly kind: Exclude<ParsedKind, 'unknown'>;
+  readonly knownFields: ReadonlySet<string>;
+}
+
+/**
+ * Harness `type` -> our kind, plus the field inventory measured for it. ONE table
+ * rather than a 14-arm `if` chain, so adding a harness type is a one-line diff and
+ * the drift allowlist cannot fall out of step with the classifier: two
+ * hand-maintained lists would diverge on the first harness update.
+ *
+ * A `Map`, not an object literal: a transcript controls the lookup key, and
+ * `LINE_TYPES['toString']` on an object would answer a function.
+ */
+const LINE_TYPES = new Map<string, LineType>([
+  [
+    'assistant',
+    {
+      kind: 'assistant',
+      knownFields: fields(ENVELOPE, [
+        'message',
+        'requestId',
+        'effort',
+        'attributionAgent',
+        'attributionSkill',
+        'attributionPlugin',
+        // Still sent, though every `subtype: 'api_error'` system line has expired.
+        'isApiErrorMessage',
+        'error',
+      ]),
+    },
+  ],
+  [
+    'user',
+    {
+      kind: 'user',
+      knownFields: fields(ENVELOPE, [
+        'message',
+        'origin',
+        'toolUseResult',
+        'sourceToolAssistantUUID',
+        'sourceToolUseID',
+        'promptId',
+        'promptSource',
+        'permissionMode',
+        'isCompactSummary',
+        'isVisibleInTranscriptOnly',
+        'classifierMetaLines',
+        'toolEndsTurn',
+        'toolDenialKind',
+        'imagePasteIds',
+      ]),
+    },
+  ],
+  [
+    'system',
+    {
+      kind: 'system',
+      knownFields: fields(ENVELOPE, [
+        'subtype',
+        'content',
+        'level',
+        'durationMs',
+        'messageCount',
+        'stopReason',
+        'preventedContinuation',
+        'compactMetadata',
+        'logicalParentUuid',
+        'toolUseID',
+        'hasOutput',
+        'hookCount',
+        'hookErrors',
+        'hookInfos',
+        'hookAdditionalContext',
+        'pendingBackgroundAgentCount',
+        'pendingWorkflowCount',
+      ]),
+    },
+  ],
+  ['attachment', { kind: 'attachment', knownFields: fields(ENVELOPE, ['attachment']) }],
+  ['mode', { kind: 'mode', knownFields: fields(['type', 'mode', 'sessionId']) }],
+  [
+    'last-prompt',
+    {
+      kind: 'last-prompt',
+      knownFields: fields(['type', 'lastPrompt', 'leafUuid', 'sessionId']),
+    },
+  ],
+  [
+    'permission-mode',
+    {
+      kind: 'permission-mode',
+      knownFields: fields(['type', 'permissionMode', 'sessionId']),
+    },
+  ],
+  ['ai-title', { kind: 'ai-title', knownFields: fields(['type', 'aiTitle', 'sessionId']) }],
+  [
+    'file-history-snapshot',
+    {
+      kind: 'file-history-snapshot',
+      knownFields: fields(['type', 'messageId', 'snapshot', 'isSnapshotUpdate']),
+    },
+  ],
+  [
+    'file-history-delta',
+    {
+      kind: 'file-history-delta',
+      knownFields: fields([
+        'type',
+        'messageId',
+        'snapshotMessageId',
+        'trackingPath',
+        'backup',
+        'timestamp',
+      ]),
+    },
+  ],
+  [
+    'queue-operation',
+    {
+      kind: 'queue-operation',
+      knownFields: fields(['type', 'operation', 'content', 'timestamp', 'sessionId']),
+    },
+  ],
+  [
+    'pr-link',
+    {
+      kind: 'pr-link',
+      knownFields: fields(['type', 'sessionId', 'prNumber', 'prUrl', 'prRepository', 'timestamp']),
+    },
+  ],
+  // Sidecar-only, and only in `subagents/workflows/wf_*/journal.jsonl`: a workflow
+  // span pair, 12 each, paired 1:1. Task 3.3 wants both ends.
+  ['started', { kind: 'started', knownFields: fields(['type', 'key', 'agentId']) }],
+  ['result', { kind: 'result', knownFields: fields(['type', 'key', 'agentId', 'result']) }],
+]);
+
+/** Stands in for a line that was not a JSON object, so `raw` is always readable. */
+const EMPTY_RECORD: Readonly<Record<string, unknown>> = Object.freeze({});
+
+/**
+ * A non-empty drift key naming what arrived. A string `type` is used as sent;
+ * anything else becomes a `<label>`, so "absent", "a number" and "null" stay three
+ * rows in the report rather than merging into one. A line that was not an object
+ * at all has no readable `type` and lands on `<undefined>` with the type-less
+ * objects — both mean the same thing to a reader: a line we cannot name.
+ */
+function rawTypeKey(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return value === null ? '<null>' : `<${typeof value}>`;
+}
+
+/** Classify one parsed JSONL line, counting whatever it carried that we cannot name. */
+export function classifyLine(json: unknown, ctx: LineContext): ParsedLine {
+  const raw = obj(json, EMPTY_RECORD);
+  const base = {
+    byte_offset: ctx.byteOffset,
+    uuid: str(raw.uuid, undefined),
+    session_id: str(raw.sessionId, undefined),
+    timestamp: isoTs(raw.timestamp, undefined),
+    raw,
+  };
+
+  const entry = LINE_TYPES.get(str(raw.type, ''));
+  if (entry === undefined) {
+    // Only the type is counted, not its fields: a whole new type would otherwise
+    // flood the field report with its entire legitimate inventory.
+    const raw_type = rawTypeKey(raw.type);
+    ctx.drift.noteUnknownType(raw_type);
+    return { ...base, kind: 'unknown', raw_type, raw_subtype: str(raw.subtype, '') };
+  }
+
+  ctx.drift.noteLine(raw, entry.knownFields);
+
+  if (entry.kind === 'system') {
+    const subtype = str(raw.subtype, '');
+    if (!isSystemSubtype(subtype)) {
+      // Deliberately NOT a generic `system` row: a new subtype must surface, not
+      // disappear into an existing bucket.
+      ctx.drift.noteUnknownType(`system.${subtype}`);
+      return { ...base, kind: 'unknown', raw_type: 'system', raw_subtype: subtype };
+    }
+    return { ...base, kind: 'system', subtype };
+  }
+
+  return { ...base, kind: entry.kind };
+}
+
+/** What the uuid-less control lines contribute to a session. Almost nothing. */
+export interface ControlProjection {
+  /** The free session title. */
+  ai_title: string | undefined;
+  /** The text of the resume bookmark. */
+  last_prompt: string | undefined;
+  /** The leaf uuid that same bookmark points at. */
+  last_prompt_leaf_uuid: string | undefined;
+}
+
+/**
+ * Fold the control lines into the only two things they project to.
+ *
+ * `classifyLine` is per-line and structurally cannot know it is looking at the
+ * LAST `ai-title`, so last-wins has to happen here. A single forward pass that
+ * OVERWRITES on every hit makes it true by construction: there is no `if (!seen)`
+ * for a later editor to "optimize", and a first-wins version gives a stale title
+ * on every long session — 19 of 26 archived session files carry more than one
+ * `ai-title`, one of them 66.
+ */
+export function foldControlLines(lines: readonly ParsedLine[]): ControlProjection {
+  const projection: ControlProjection = {
+    ai_title: undefined,
+    last_prompt: undefined,
+    last_prompt_leaf_uuid: undefined,
+  };
+  for (const line of lines) {
+    if (line.kind === 'ai-title') {
+      projection.ai_title = str(line.raw.aiTitle, undefined);
+    } else if (line.kind === 'last-prompt') {
+      projection.last_prompt = str(line.raw.lastPrompt, undefined);
+      projection.last_prompt_leaf_uuid = str(line.raw.leafUuid, undefined);
+    }
+  }
+  return projection;
+}

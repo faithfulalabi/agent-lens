@@ -1,0 +1,10 @@
+{"type":"ai-title","aiTitle":"first title","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"last-prompt","lastPrompt":"first prompt","leafUuid":"aaaaaaaa-1111-4111-8111-111111111111","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"parentUuid":null,"isSidechain":false,"type":"assistant","uuid":"22222222-2222-4222-8222-222222222222","timestamp":"2026-08-13T10:00:00.000Z","message":{"id":"msg_0001","type":"message","role":"assistant","model":"claude-opus-4","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":10,"output_tokens":2}},"userType":"external","entrypoint":"cli","cwd":"/repo","sessionId":"33333333-3333-4333-8333-333333333333","version":"2.1.212","gitBranch":"main"}
+{"type":"ai-title","aiTitle":"second title","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"last-prompt","lastPrompt":"second prompt","leafUuid":"aaaaaaaa-2222-4222-8222-222222222222","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"mode","mode":"default","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"ai-title","aiTitle":"third title","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"last-prompt","lastPrompt":"third prompt","leafUuid":"aaaaaaaa-3333-4333-8333-333333333333","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"parentUuid":"22222222-2222-4222-8222-222222222222","isSidechain":false,"type":"assistant","uuid":"55555555-5555-4555-8555-555555555555","timestamp":"2026-08-13T10:00:07.000Z","message":{"id":"msg_0002","type":"message","role":"assistant","model":"claude-opus-4","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":11,"output_tokens":3}},"userType":"external","entrypoint":"cli","cwd":"/repo","sessionId":"33333333-3333-4333-8333-333333333333","version":"2.1.212","gitBranch":"main"}
+{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"33333333-3333-4333-8333-333333333333"}
