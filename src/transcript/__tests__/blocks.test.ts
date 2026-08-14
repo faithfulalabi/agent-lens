@@ -140,7 +140,7 @@ describe('AC1 — the block inventory is total', () => {
     const [result] = classifyContent(rawContent(nested[0]));
     expect(result?.kind).toBe('tool_result');
     if (result?.kind !== 'tool_result') throw new Error('unreachable');
-    expect(result.tool_use_id).toBe('toolu_10');
+    expect(result.tool_call_id).toBe('toolu_10');
     expect(result.is_error).toBe(false);
     expect(kinds(result.children)).toEqual(['text', 'image', 'tool_reference']);
     expect(result.children.at(-1)).toEqual({ kind: 'tool_reference', name: 'SendMessage' });

@@ -52,7 +52,7 @@ const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const HASHED_TREES = ['transcript', 'project'] as const;
 
 /** The committed pair. Both change together or this file reds. */
-const PROJECTOR_SOURCE_SHA = '34f22e97c70a3f7e56cb640813adbacb5060842185fda037158a4b0635e2d5f4';
+const PROJECTOR_SOURCE_SHA = 'e70c03b402c00413e33ac4b58196f46acbbb5c28a1be7c4859f028b302456a98';
 
 interface HashedFile {
   path: string;
@@ -136,6 +136,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     ]) {
       expect(paths).toContain(`transcript/${module}.ts`);
     }
+    expect(paths).toContain('project/pipeline.ts');
 
     expect(paths.filter((path) => path.endsWith('.test.ts'))).toEqual([]);
     expect(paths.filter((path) => path.includes('__tests__/'))).toEqual([]);
@@ -180,11 +181,22 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     expect(projectorHash(shuffled)).toBe(PROJECTOR_SOURCE_SHA);
   });
 
-  it('src/project/ is absent, and the hash is well-defined anyway', () => {
-    // Asserted positively: the absent tree is the shipped state, and the
-    // committed sha is the hash of exactly that state.
-    expect(existsSync(join(SRC_DIR, 'project'))).toBe(false);
-    expect(treeFiles('project')).toEqual([]);
+  it('src/project/ is present and contributes its production source only', () => {
+    // The mirror image of the assertion this file shipped with. Task 3.1 landed
+    // the tree, so the absence limb became a lie the moment it did — a sha paste
+    // could never have fixed it, and rewriting it is the second of that task's
+    // two edits here.
+    expect(existsSync(join(SRC_DIR, 'project'))).toBe(true);
+    expect(treeFiles('project').length).toBeGreaterThan(0);
+
+    // …and its own `__tests__/` contribute nothing, exactly as transcript's do.
+    const paths = hashedFiles().map((file) => file.path);
+    expect(paths.filter((path) => path.startsWith('project/__tests__/'))).toEqual([]);
+    expect(
+      readdirSync(join(SRC_DIR, 'project', '__tests__'), { recursive: true, encoding: 'utf8' })
+        .length,
+    ).toBeGreaterThan(0);
+
     expect(projectorHash()).toBe(PROJECTOR_SOURCE_SHA);
   });
 

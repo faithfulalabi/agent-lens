@@ -57,7 +57,7 @@ describe('classifyLine is total over any JSON a transcript can hold', () => {
       fc.property(fc.array(lineArb, { maxLength: 40 }), (values) => {
         const drift = new DriftCounter();
         const rows = values.map((value, index) =>
-          classifyLine(value, { byteOffset: index * 100, drift }),
+          classifyLine(value, { byteOffset: index * 100, byteLength: 0, drift }),
         );
 
         // N in, N out. The property the product depends on.
@@ -92,11 +92,14 @@ describe('classifyLine is total over any JSON a transcript can hold', () => {
     fc.assert(
       fc.property(fc.dictionary(fc.string({ minLength: 1 }), fc.jsonValue()), (fields) => {
         const forward = new DriftCounter();
-        classifyLine({ ...fields, type: 'mode' }, { byteOffset: 0, drift: forward });
+        classifyLine({ ...fields, type: 'mode' }, { byteOffset: 0, byteLength: 0, drift: forward });
 
         const backward = new DriftCounter();
         const reversed = Object.fromEntries(Object.entries(fields).reverse());
-        classifyLine({ ...reversed, type: 'mode' }, { byteOffset: 0, drift: backward });
+        classifyLine(
+          { ...reversed, type: 'mode' },
+          { byteOffset: 0, byteLength: 0, drift: backward },
+        );
 
         expect(backward.serialize()).toBe(forward.serialize());
 
@@ -119,7 +122,7 @@ describe('the inputs that break a naive implementation', () => {
     const revocable = Proxy.revocable(function noop() {}, {});
     revocable.revoke();
     const drift = new DriftCounter();
-    const row = classifyLine(revocable.proxy, { byteOffset: 5, drift });
+    const row = classifyLine(revocable.proxy, { byteOffset: 5, byteLength: 0, drift });
     expect(row.kind).toBe('unknown');
     expect(row.byte_offset).toBe(5);
   });
@@ -128,7 +131,9 @@ describe('the inputs that break a naive implementation', () => {
     const revocable = Proxy.revocable({ type: 'assistant' }, {});
     revocable.revoke();
     const drift = new DriftCounter();
-    expect(classifyLine(revocable.proxy, { byteOffset: 0, drift }).kind).toBe('unknown');
+    expect(classifyLine(revocable.proxy, { byteOffset: 0, byteLength: 0, drift }).kind).toBe(
+      'unknown',
+    );
   });
 
   it('a line whose type collides with an Object prototype member is unknown', () => {
@@ -137,7 +142,7 @@ describe('the inputs that break a naive implementation', () => {
     // whatever that truthy hit implied.
     const drift = new DriftCounter();
     for (const type of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
-      expect(classifyLine({ type }, { byteOffset: 0, drift }).kind).toBe('unknown');
+      expect(classifyLine({ type }, { byteOffset: 0, byteLength: 0, drift }).kind).toBe('unknown');
     }
   });
 });

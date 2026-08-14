@@ -22,7 +22,7 @@
 // `./accessors.js`, so this module declares no `try`/`catch` of its own.
 
 import { obj, str } from './accessors.js';
-import { classifyContent } from './blocks.js';
+import { contentBlocks } from './blocks.js';
 import type { ParsedLine } from './line.js';
 
 /** Why a line was called human or machinery, and which path decided it. */
@@ -77,7 +77,7 @@ const LEADING_TAG = /^<[a-z][a-z0-9-]*>/;
  * has already turned it into one top-level `text` block.
  */
 function promptText(line: ParsedLine): string {
-  return classifyContent(obj(line.raw.message, undefined)?.content)
+  return contentBlocks(line)
     .flatMap((block) => (block.kind === 'text' ? [block.text] : []))
     .join('\n')
     .trim();

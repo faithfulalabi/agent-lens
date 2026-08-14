@@ -26,7 +26,7 @@
 // to transcript expiry rather than removed from the harness. Its branch stays,
 // pinned by a synthetic fixture.
 
-import { isoTs, obj, str } from './accessors.js';
+import { isoTs, num, obj, str } from './accessors.js';
 import type { DriftCounter } from './drift.js';
 
 /** Everything a line needs from its file to be classified. */
@@ -38,6 +38,17 @@ export interface LineContext {
    * desynchronises the rest of the file on the first emoji in a prompt.
    */
   byteOffset: number;
+  /**
+   * Byte length of this line, EXCLUDING its `\n`, so that reading
+   * `[byteOffset, byteOffset + byteLength)` returns exactly this line's JSON.
+   *
+   * Required, never optional: it feeds `events.src_len`, which is NOT NULL, and
+   * `0` is a legal-looking length, so an absent value read through `?? 0` would
+   * fill the column with silent zeros instead of failing. Classification is
+   * handed a parsed object rather than text, so this is the only moment the
+   * length is knowable.
+   */
+  byteLength: number;
   /**
    * Counts what this line carried that agent-lens has never measured.
    * Classification is the only moment an unmeasured field is still visible.
@@ -77,6 +88,8 @@ export type ParsedKind = ParsedLine['kind'];
 /** Carried by every classified line, whatever its kind. */
 interface ParsedBase {
   readonly byte_offset: number;
+  /** Bytes of this line, excluding its `\n`. Feeds `events.src_len`. */
+  readonly byte_length: number;
   /** Only `assistant`, `user`, `system` and `attachment` carry one. */
   readonly uuid: string | undefined;
   readonly session_id: string | undefined;
@@ -304,6 +317,7 @@ export function classifyLine(json: unknown, ctx: LineContext): ParsedLine {
   const raw = obj(json, EMPTY_RECORD);
   const base = {
     byte_offset: ctx.byteOffset,
+    byte_length: ctx.byteLength,
     uuid: str(raw.uuid, undefined),
     session_id: str(raw.sessionId, undefined),
     timestamp: isoTs(raw.timestamp, undefined),
@@ -370,4 +384,73 @@ export function foldControlLines(lines: readonly ParsedLine[]): ControlProjectio
     }
   }
   return projection;
+}
+
+/**
+ * The id of the prompt group this line belongs to, when it declares one.
+ *
+ * Measured 2026-08-14: declared on `user` lines only, 14,396 of them, every one
+ * also carrying a uuid. A projector segments turns by watching this value change
+ * as it walks forward, which is why the reader answers only what the line itself
+ * declares and never anything about its neighbours.
+ */
+export function promptGroupId(line: ParsedLine): string | undefined {
+  return str(line.raw.promptId, undefined);
+}
+
+/** The turn duration a `system`/`turn_duration` line reports, when it reports one. */
+export function turnDurationMs(line: ParsedLine): number | undefined {
+  return line.kind === 'system' && line.subtype === 'turn_duration'
+    ? num(line.raw.durationMs, undefined)
+    : undefined;
+}
+
+/** What a whole file projects to before any turn or event exists. */
+export interface SessionEnvelope {
+  /** `cwd`. The session list groups and filters on it. */
+  project_path: string | undefined;
+  git_branch: string | undefined;
+  /** The harness's own version string; it groups the drift report. */
+  harness_version: string | undefined;
+  /** Most recent model named by any message. */
+  model: string | undefined;
+  /** First and last TOP-LEVEL timestamps — never a nested one. */
+  started_at: string | undefined;
+  last_activity_at: string | undefined;
+}
+
+/**
+ * Fold every line into the six session-wide values a file carries, in one pass.
+ *
+ * Sibling to `foldControlLines`, and here for the same reason: these are
+ * whole-file answers that a per-line classifier structurally cannot give. The
+ * timestamps are the MIN and MAX rather than the first and last seen, because
+ * 301 adjacent pairs in the archive run backwards and a first/last reading
+ * reports a negative session on every one of them.
+ */
+export function foldSessionEnvelope(lines: readonly ParsedLine[]): SessionEnvelope {
+  const envelope: SessionEnvelope = {
+    project_path: undefined,
+    git_branch: undefined,
+    harness_version: undefined,
+    model: undefined,
+    started_at: undefined,
+    last_activity_at: undefined,
+  };
+
+  for (const line of lines) {
+    envelope.project_path = str(line.raw.cwd, envelope.project_path);
+    envelope.git_branch = str(line.raw.gitBranch, envelope.git_branch);
+    envelope.harness_version = str(line.raw.version, envelope.harness_version);
+    envelope.model = str(obj(line.raw.message, undefined)?.model, envelope.model);
+
+    const at = line.timestamp;
+    if (at === undefined) continue;
+    if (envelope.started_at === undefined || at < envelope.started_at) envelope.started_at = at;
+    if (envelope.last_activity_at === undefined || at > envelope.last_activity_at) {
+      envelope.last_activity_at = at;
+    }
+  }
+
+  return envelope;
 }

@@ -33,7 +33,10 @@ describe('AC6 — unrecognised top-level fields are counted', () => {
   it('counts repeats rather than deduplicating them', () => {
     const drift = new DriftCounter();
     for (let i = 0; i < 3; i++) {
-      classifyLine({ type: 'mode', mode: 'default', novelField: i }, { byteOffset: i, drift });
+      classifyLine(
+        { type: 'mode', mode: 'default', novelField: i },
+        { byteOffset: i, byteLength: 0, drift },
+      );
     }
     expect(JSON.parse(drift.serialize()).unknown_top_level_fields).toEqual({ novelField: 3 });
   });
@@ -60,7 +63,10 @@ describe('AC6 — unknown line types are counted separately from fields', () => 
     // A whole new type would otherwise flood the field report with its entire
     // legitimate inventory, burying the one field that actually drifted.
     const drift = new DriftCounter();
-    classifyLine({ type: 'holographic-preview', frames: 3, codec: 'x' }, { byteOffset: 0, drift });
+    classifyLine(
+      { type: 'holographic-preview', frames: 3, codec: 'x' },
+      { byteOffset: 0, byteLength: 0, drift },
+    );
     expect(JSON.parse(drift.serialize())).toEqual({
       unknown_line_types: { 'holographic-preview': 1 },
     });
@@ -68,7 +74,10 @@ describe('AC6 — unknown line types are counted separately from fields', () => 
 
   it('an unrecognised system subtype is namespaced, so it cannot be read as a new type', () => {
     const drift = new DriftCounter();
-    classifyLine({ type: 'system', subtype: 'quantum_entanglement' }, { byteOffset: 0, drift });
+    classifyLine(
+      { type: 'system', subtype: 'quantum_entanglement' },
+      { byteOffset: 0, byteLength: 0, drift },
+    );
     expect(JSON.parse(drift.serialize()).unknown_line_types).toEqual({
       'system.quantum_entanglement': 1,
     });
@@ -94,7 +103,7 @@ describe('the counter is total and cannot be tricked by a transcript', () => {
 
   it('a non-object line counts its type but no fields', () => {
     const drift = new DriftCounter();
-    classifyLine([1, 2, 3], { byteOffset: 0, drift });
+    classifyLine([1, 2, 3], { byteOffset: 0, byteLength: 0, drift });
     expect(JSON.parse(drift.serialize())).toEqual({ unknown_line_types: { '<undefined>': 1 } });
   });
 

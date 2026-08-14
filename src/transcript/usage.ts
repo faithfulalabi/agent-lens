@@ -46,7 +46,7 @@ function usageOf(line: unknown): Readonly<Record<string, unknown>> | undefined {
 }
 
 /** `requestId` as sent, or `undefined`. A non-string id is no id. */
-function requestIdOf(line: unknown): string | undefined {
+export function requestIdOf(line: unknown): string | undefined {
   return str(obj(line, undefined)?.requestId, undefined);
 }
 

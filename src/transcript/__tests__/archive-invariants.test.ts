@@ -65,7 +65,11 @@ describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_
             // archive. It is still a line, so it still gets a row.
             parsed = undefined;
           }
-          return classifyLine(parsed, { byteOffset: entry.byteOffset, drift });
+          return classifyLine(parsed, {
+            byteOffset: entry.byteOffset,
+            byteLength: entry.byteLength,
+            drift,
+          });
         });
 
         // Per FILE, not in aggregate: a compensating pair of errors would hide
