@@ -116,21 +116,30 @@ export function releaseLock(lockPath: string, pid: number): void {
  *   3. ESRCH                 -> dead -> reclaim 'esrch'
  *   4. hostname differs      -> reclaim 'foreign-host'
  *   5. unparseable pid       -> reclaim, aged against the file's mtime
+ *
+ * `lockPath` is defaulted so this policy serves a second lock file without a
+ * second copy of it: `src/db/open.ts` locks `<dataDir>/cache.db.lock`, because a
+ * shared file would let a day-long server report `held` to every archive pass.
+ * A caller-supplied path is why the two containment guards below now matter.
  */
-export function acquireLock(dataDir: string, identity: LockIdentity = {}): Lock {
+export function acquireLock(
+  dataDir: string,
+  identity: LockIdentity = {},
+  lockPath: string = resolveLockPath(dataDir),
+): Lock {
   const pid = identity.pid ?? process.pid;
   const hostname = identity.hostname ?? osHostname();
   const now = identity.now ?? Date.now();
   const isAlive = identity.isAlive ?? defaultIsAlive;
 
-  const lockPath = resolveLockPath(dataDir);
   ensureDirUnder(dirname(lockPath), dataDir, DATA_DIR_LABEL);
   // What this assert changes is a READ, not a write. An escaping lock symlink was
   // never written through — `tryCreate`'s 'wx' refuses it and `unlinkSync` removes
   // the link, not the target — but `readFileSync` and `statSafe` below FOLLOW it,
-  // so the victim's bytes decided this pass's lock verdict. The `ensureDirUnder`
-  // above is vacuous by construction (its target IS the anchor) and is taken for
-  // the uniform shape; this line is the half with behaviour behind it.
+  // so the victim's bytes decided this pass's lock verdict. The two guards are
+  // NOT interchangeable now that `lockPath` is a parameter: `ensureDirUnder`
+  // stops a path whose DIRNAME escapes, and this line stops one whose final
+  // component is a live symlink out of the data dir. Measured, both directions.
   //
   // Check-then-act, and PERMANENTLY so: a symlink planted between this assert and
   // the open below is not covered. Closing that needs a directory-fd-relative
