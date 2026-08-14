@@ -2,7 +2,7 @@
 // `src/archive/__tests__/fixtures.ts`: one place that reads bytes, so the tests
 // below it assert behaviour instead of re-deriving file plumbing four times.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyLine, type LineContext, type ParsedLine } from '../line.js';
@@ -50,6 +50,20 @@ export function classifyFixture(name: string): {
     classifyLine(JSON.parse(entry.text), { byteOffset: entry.byteOffset, drift }),
   );
   return { lines, drift, offsets };
+}
+
+/**
+ * Every `.jsonl` file under `root`, recursively. The real-corpus enumerator for
+ * the opt-in sweeps, shared so one walker serves every suite rather than each
+ * keeping a private copy that skips a directory the others do not.
+ */
+export function archiveJsonlFiles(root: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) archiveJsonlFiles(path, found);
+    else if (entry.isFile() && path.endsWith('.jsonl')) found.push(path);
+  }
+  return found;
 }
 
 /** A throwaway context for classifying a single hand-built object. */
