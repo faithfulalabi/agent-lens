@@ -8,12 +8,12 @@
 // never an absolute count, which would red on a Tuesday for no reason.
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { classifyLine, type ParsedKind } from '../line.js';
 import { DriftCounter } from '../drift.js';
-import { offsetLines } from './fixtures.js';
+import { archiveJsonlFiles, offsetLines } from './fixtures.js';
 
 const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
 const runIt = ENABLED ? it : it.skip;
@@ -42,20 +42,11 @@ const DECLARED_KINDS: ReadonlySet<string> = new Set<ParsedKind>([
   'unknown',
 ]);
 
-function jsonlFiles(dir: string, found: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) jsonlFiles(path, found);
-    else if (entry.isFile() && path.endsWith('.jsonl')) found.push(path);
-  }
-  return found;
-}
-
 describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(
     'classifies every line of every archived transcript, dropping none',
     () => {
-      const files = jsonlFiles(ARCHIVE_ROOT);
+      const files = archiveJsonlFiles(ARCHIVE_ROOT);
       // Non-vacuity: without this, an empty archive passes every assertion below.
       expect(files.length).toBeGreaterThanOrEqual(MIN_FILES);
 
