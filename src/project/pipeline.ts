@@ -12,6 +12,10 @@
 // results preceding their own call — extinct, which is unwitnessed rather than
 // impossible, so the guard survives as synthetic fixtures instead.
 //
+// Then ONE join, after the turns exist. `./tools.ts` folds each `tool_result`
+// onto the row its `tool_use` already opened, which is why a tool call is one row
+// and not two. It runs last because the async `Agent` back-patch is CROSS-TURN.
+//
 // Turn boundaries come from ONE variable moving forward. The 128-hop ancestor walk
 // this replaces was proved EQUIVALENT, not approximately equivalent — 40,214
 // agreements and 0 disagreements — so it is deleted rather than kept as a fallback
@@ -20,6 +24,7 @@
 // Every harness-supplied name is read through `../transcript/`, so this module
 // names none of them. `src/__tests__/one-door.test.ts` enforces that.
 
+import { asyncAgentLaunch, taskNotification, type TaskNotification } from '../transcript/agents.js';
 import { type Block, contentBlocks } from '../transcript/blocks.js';
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
@@ -28,6 +33,7 @@ import {
   foldSessionEnvelope,
   type ParsedLine,
   promptGroupId,
+  toolDenialKind,
   turnDurationMs,
 } from '../transcript/line.js';
 import {
@@ -36,6 +42,13 @@ import {
   groupByRequestId,
   requestIdOf,
 } from '../transcript/usage.js';
+import {
+  joinToolCalls,
+  NO_INPUT,
+  type ProjectedInput,
+  toolInput,
+  type ToolResult,
+} from './tools.js';
 
 /** What opened a turn. Every arm is reachable and each is pinned by a fixture. */
 export type TurnKind =
@@ -86,7 +99,7 @@ export interface ProjectedTurn {
 }
 
 /** One `events` row: one thing the UI draws, in file order. */
-export interface ProjectedEvent {
+export interface ProjectedEvent extends ProjectedInput {
   id: string;
   session_id: string;
   turn_id: string;
@@ -97,14 +110,32 @@ export interface ProjectedEvent {
   block_index: number;
   /** The tool's name, on a `tool_call` row. */
   name: string | undefined;
-  /** `running` until task 3.2 joins the result half onto this same row. */
-  status: 'running' | undefined;
-  /** Prose, reasoning or the image placeholder. A tool call's output is 3.2's. */
+  /** `running` until the join answers this call — or forever, if none does. */
+  status: 'ok' | 'error' | 'denied' | 'running' | undefined;
+  /** Wall clock between the two stamps, not the tool's own run time. */
+  duration_ms: number | undefined;
+  /**
+   * Its own enum, NOT `ProjectedTurn`'s: `elapsed` answers "how was this tool
+   * call timed", `turn_duration`/`derived` answers "how was this turn timed",
+   * and merging the two columns would merge two different questions.
+   */
+  duration_source: 'elapsed' | undefined;
+  /** Prose, reasoning, the image placeholder — or a tool call's output. */
   text: string | undefined;
-  output_storage: 'absent' | undefined;
+  /** TRUE bytes of a tool call's output, never the preview's. Nothing sizes prose. */
+  text_bytes: number | undefined;
+  output_storage: 'inline' | 'line_ref' | 'spill' | 'absent' | undefined;
+  /** The writer's to fill: resolving a spill needs the filesystem. */
+  spill_path: string | undefined;
+  /** The notification's `<status>` for a background `Agent` row. */
+  agent_status: string | undefined;
   /** The EMITTING LINE's coordinates, never the block's. See `emit`. */
   src_offset: number;
   src_len: number;
+  /** The `tool_result` LINE's pair, and the result block's index inside it. */
+  result_offset: number | undefined;
+  result_len: number | undefined;
+  result_block: number | undefined;
   tokens_in: number | undefined;
   tokens_out: number | undefined;
   tokens_cache_read: number | undefined;
@@ -200,7 +231,16 @@ function prose(blocks: readonly Block[]): string {
     .trim();
 }
 
-/** What a block renders as. A tool call's output belongs to task 3.2, not here. */
+/**
+ * A tool result's own text, from the blocks hanging off it. Joined but NEVER
+ * trimmed, unlike `prose`: both marker predicates test index 0 and `text_bytes`
+ * is a size, so a stripped leading space would change all three answers.
+ */
+function resultText(children: readonly Block[]): string {
+  return children.flatMap((child) => (child.kind === 'text' ? [child.text] : [])).join('\n');
+}
+
+/** What a block renders as. A tool call's output is the join's, never a block's. */
 function blockText(block: Block | undefined): string | undefined {
   switch (block?.kind) {
     case 'text':
@@ -287,6 +327,8 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
   const reportedDuration = new Map<number, number>();
   const errorsOf = new Map<number, number>();
   const titleOf = new Map<number, string>();
+  const toolResults = new Map<string, ToolResult>();
+  const notifications: TaskNotification[] = [];
   let previewText: string | undefined;
 
   let segment = 0;
@@ -326,10 +368,34 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     ).length;
     if (failures > 0) errorsOf.set(segment, (errorsOf.get(segment) ?? 0) + failures);
 
+    // The OUTPUT HALF of every call, recorded here and folded onto the call's own
+    // row once the turns exist. First result wins, the same way this pass already
+    // resolves a repeated title or a repeated reported duration.
+    for (const [blockIndex, block] of blocks.entries()) {
+      if (block.kind !== 'tool_result' || toolResults.has(block.tool_call_id)) continue;
+      const output = resultText(block.children);
+      toolResults.set(block.tool_call_id, {
+        text: output,
+        is_error: block.is_error,
+        denial: toolDenialKind(line),
+        launch: asyncAgentLaunch(line, output),
+        ts: line.timestamp ?? '',
+        result_offset: line.byte_offset,
+        result_len: line.byte_length,
+        result_block: blockIndex,
+      });
+    }
+
     // `turns.title` is ONE rule for all six kinds, not a human-only rule: the
     // segment's leading prose, or `''`. Four of the six routinely carry none, and
     // the column is NOT NULL, so `''` is the only non-fabricated value for them.
     const text = prose(blocks);
+
+    // Read off the same string `turnKind` classifies on, so a line is a
+    // notification here exactly when it opens a `task_notification` turn there.
+    const notification = taskNotification(text);
+    if (notification !== undefined) notifications.push(notification);
+
     if (text === '') continue;
     if (!titleOf.has(segment)) titleOf.set(segment, text);
     if (humanAt[index] === true && previewText === undefined) previewText = text;
@@ -383,13 +449,25 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         request_id: requestIdOf(line.raw),
         block_index: blockIndex,
         name: block?.kind === 'tool_use' ? block.name : undefined,
+        // The in-flight state, and everything the join overwrites when it finds
+        // this call's result. A call that never gets one keeps exactly this.
         status: kind === 'tool_call' ? 'running' : undefined,
+        duration_ms: undefined,
+        duration_source: undefined,
+        // The input is the CALL's half, so it is known here and never moves.
+        ...(block?.kind === 'tool_use' ? toolInput(block.input) : NO_INPUT),
         text: kind === 'tool_call' ? undefined : blockText(block),
+        text_bytes: undefined,
         output_storage: kind === 'tool_call' ? 'absent' : undefined,
+        spill_path: undefined,
+        agent_status: undefined,
         // The EMITTING LINE's pair, never the block's: the resolver preads it,
         // re-parses that one line, and only then indexes `block[block_index]`.
         src_offset: line.byte_offset,
         src_len: line.byte_length,
+        result_offset: undefined,
+        result_len: undefined,
+        result_block: undefined,
         tokens_in: tokens?.input_tokens,
         tokens_out: tokens?.output_tokens,
         tokens_cache_read: tokens?.cache_read_input_tokens,
@@ -410,8 +488,8 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
 
     for (const [blockIndex, block] of blocks.entries()) {
       // A result block is the OUTPUT HALF of its call's row, not a row of its
-      // own. Task 3.2 folds it in; leaving the seam empty beats leaving it rows
-      // to delete.
+      // own — `joinToolCalls` below folds it onto that row. This is what keeps
+      // blocks-in minus results equal to rows-out.
       if (block.kind !== 'tool_result') emit(block, blockIndex);
     }
   }
@@ -470,6 +548,13 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
       last_seq: own[own.length - 1]!.seq,
     });
   }
+
+  // ---- the join: each call's result folded onto the call's own row ----------
+
+  // After the turns, never during emission: the back-patch is CROSS-TURN, and an
+  // `Agent` launched in turn 3 is answered by a notification in turn 17. No row
+  // is added, removed, reordered or re-parented, so every window above stands.
+  joinToolCalls(events, toolResults, notifications, ctx.drift);
 
   // ---- header: a file that emitted nothing is not a session -----------------
 

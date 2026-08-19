@@ -398,6 +398,18 @@ export function promptGroupId(line: ParsedLine): string | undefined {
   return str(line.raw.promptId, undefined);
 }
 
+/**
+ * Why the harness refused a tool call, when it refused one.
+ *
+ * Measured 2026-08-19: 8 occurrences, `permission-rule` 7 and `user-rejected` 1,
+ * and ALL 8 also carry `is_error: true`. A projector that reads the error flag
+ * first therefore labels every denial in the corpus an error, which is why the
+ * status ladder consults this reader before it consults the flag.
+ */
+export function toolDenialKind(line: ParsedLine): string | undefined {
+  return str(line.raw.toolDenialKind, undefined);
+}
+
 /** The turn duration a `system`/`turn_duration` line reports, when it reports one. */
 export function turnDurationMs(line: ParsedLine): number | undefined {
   return line.kind === 'system' && line.subtype === 'turn_duration'

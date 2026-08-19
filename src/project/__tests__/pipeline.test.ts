@@ -294,18 +294,39 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
     expect(turnAt(result, 1).tokens_out).toBe(22);
   });
 
-  it('labels a tool call in flight and leaves the result half to task 3.2', () => {
+  it('folds a tool call and its result into one row', () => {
+    // ★ REWRITTEN BY TASK 3.2, not repaired. This assertion pinned the seam 3.1
+    // deliberately left open — `status: 'running'`, `output_storage: 'absent'`,
+    // `text: undefined` — and `turn-kinds.jsonl` line 9 carries this very call's
+    // `tool_result`. The moment the join landed, all three became a lie about
+    // what the projector does, and a rewrite is the only honest fix. It is the
+    // mirror image of the edit 3.1 made to `projector-version.test.ts`.
     const result = project('turn-kinds.jsonl');
     const call = result.events.find((event) => event.kind === 'tool_call');
 
-    // A labelled in-flight state, not a drop: the seam 3.2 folds the result into.
     expect(call).toMatchObject({
       id: 'toolu_kinds1',
       name: 'Bash',
-      status: 'running',
-      output_storage: 'absent',
-      text: undefined,
+      // `is_error: false` on the result and no denial, so the ladder says `ok`.
+      status: 'ok',
+      output_storage: 'inline',
+      text: 'stdout',
+      text_bytes: 6,
+      duration_source: 'elapsed',
+      // Call stamped 09:00:03 on line 6, result 09:00:06 on line 9.
+      duration_ms: 3000,
+      result_block: 0,
+      input_storage: 'inline',
+      input_bytes: 16,
     });
+
+    // The result LINE's own byte pair, which is what the resolver preads.
+    const bytes = projectFixtureBytes('turn-kinds.jsonl');
+    const slice = bytes
+      .subarray(call!.result_offset!, call!.result_offset! + call!.result_len!)
+      .toString('utf8');
+    expect(JSON.parse(slice).uuid).toBe('77777777-1111-4111-8111-777777777777');
+
     expect(turnAt(result, 1).tool_call_count).toBe(1);
     // `is_error === true` exactly — never `!is_error`, which would call the
     // successful result on turn 4 a failure too.

@@ -84,6 +84,41 @@ describe('AC6 — unknown line types are counted separately from fields', () => 
   });
 });
 
+describe('AC8 — unjoined tool calls are a scalar, and silence stays silent', () => {
+  it('sorts `unjoined_tool_uses` FIRST, proved on a counter carrying two buckets', () => {
+    // ★ The ordering claim belongs HERE and not on a projected fixture: a
+    // fixture that drifts one way gives a ONE-KEY object, in which ordering is
+    // undefined by vacuity. `serialize()`'s contract is `serialize()`'s to test.
+    // `'unjoined' < 'unknown'` — `j` before `k` — and the column is diffed, so
+    // two identically drifted sessions must produce byte-identical rows.
+    const drift = new DriftCounter();
+    drift.noteUnjoinedToolUse();
+    drift.noteUnknownBlock('hologram');
+
+    expect(Object.keys(JSON.parse(drift.serialize()))).toEqual([
+      'unjoined_tool_uses',
+      'unknown_block_types',
+    ]);
+  });
+
+  it('counts each unanswered call rather than merely flagging that one existed', () => {
+    const drift = new DriftCounter();
+    for (let i = 0; i < 3; i++) drift.noteUnjoinedToolUse();
+    expect(JSON.parse(drift.serialize()).unjoined_tool_uses).toBe(3);
+  });
+
+  it('OMITS the key at zero, which is what keeps a clean session at exactly `{}`', () => {
+    // Load-bearing in two places, and neither is obvious: this file's exact
+    // strings, and `pipeline.test.ts`'s exact-KEY assertion on `runPipeline`'s
+    // drift output. A counter emitting `0` instead of omitting reds both.
+    const drift = new DriftCounter();
+    expect(drift.serialize()).toBe('{}');
+
+    drift.noteUnknownBlock('hologram');
+    expect(drift.serialize()).toBe('{"unknown_block_types":{"hologram":1}}');
+  });
+});
+
 describe('the counter is total and cannot be tricked by a transcript', () => {
   it('a literal __proto__ field is counted as data, not applied as a prototype', () => {
     // A transcript controls these key names. `Object.fromEntries` DEFINES rather
