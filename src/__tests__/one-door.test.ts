@@ -162,10 +162,14 @@ const LEGACY_TREES: readonly LegacyEntry[] = [
   },
 ];
 
-// The 20 production hits in files Task 4.5 does NOT delete, so none may be
+// The 25 production hits in files Task 4.5 does NOT delete, so none may be
 // quarantined by path. Nineteen are homonyms — the archive's own failure
-// provenance, the render gate's own report, the browser sense of "origin". One
-// is not, and says so.
+// provenance, the render gate's own report, the browser sense of "origin". Five
+// are SQL comments inside `db/schema.ts`, which is a verbatim TRANSPORT of the
+// v2 DDL and reads nothing at all; the spec predicts the false positive itself
+// (`data-model-v2.md:415-416`). Stripping those comments to quiet the grep would
+// delete the measured provenance the DDL exists to carry. One entry is neither
+// case, and says so.
 const SUPPRESSIONS: readonly Suppression[] = [
   {
     key: 'archive/mirror.ts#origin#1',
@@ -211,6 +215,31 @@ const SUPPRESSIONS: readonly Suppression[] = [
     key: 'cli/commands/archive.ts#origin#2',
     line: "return result.errors.some((e) => e.origin === 'archive') ? EXIT_ARCHIVE_ERRORS : EXIT_OK;",
     why: 'the exit-code predicate reading that same enum off the archive result',
+  },
+  {
+    key: 'db/schema.ts#sessionId#1',
+    line: 'id                    TEXT PRIMARY KEY,   -- sessionId (filename stem), or agentId for a sidecar',
+    why: 'a SQL comment in the v2 DDL, naming what the `sessions.id` column holds. The column is snake_case and this module reads nothing — it exports one frozen string and a version number',
+  },
+  {
+    key: 'db/schema.ts#promptId#1',
+    line: '-- One row per promptId group. The collapsible header on screen 2.',
+    why: 'the same verbatim DDL, describing what one `turns` row groups. The grouping itself is the projector’s, behind the door in src/transcript/',
+  },
+  {
+    key: 'db/schema.ts#requestId#1',
+    line: 'tokens_out            INTEGER NOT NULL DEFAULT 0,  -- per-requestId LAST-line fold',
+    why: 'DDL comment recording the measured token-fold rule for `sessions.tokens_out`; the fold is the projector’s, not this module’s',
+  },
+  {
+    key: 'db/schema.ts#requestId#2',
+    line: 'model              TEXT,                  -- \\\\  stamped on the FIRST event of each requestId',
+    why: 'DDL comment opening the `events` token block. The two backslashes are LITERAL: the source escapes them so the template literal is not a LineContinuation, and this entry stores the escaped bytes the file actually holds, never the spec text',
+  },
+  {
+    key: 'db/schema.ts#requestId#3',
+    line: 'tokens_cache_write INTEGER,               --  } taken once per requestId.',
+    why: 'closes that same DDL comment block; the column beside it is snake_case and nothing here reads either',
   },
   {
     key: 'render-gate/index.ts#sessionId#1',

@@ -92,7 +92,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/lock.ts#1',
     callee: 'openSync',
-    why: 'opens <dataDir>/archive.lock (resolveLockPath, paths.ts:85-87), a fixed name never derived from the transcript corpus. acquireLock asserts the lock path resolves under <dataDir> before this open, so a pre-planted symlink escaping the data dir is refused. What that assert closes is a READ, not a write: this open is `wx`, which never writes through a link, but readFileSync/statSafe below it followed one and let the victim decide the lock verdict',
+    why: 'opens the lock file: <dataDir>/archive.lock by default (resolveLockPath, paths.ts:85-87), or <dataDir>/cache.db.lock when db/open.ts supplies it. Both are fixed names, neither derived from the transcript corpus. acquireLock asserts the lock path resolves under <dataDir> before this open, so a pre-planted symlink escaping the data dir is refused. What that assert closes is a READ, not a write: this open is `wx`, which never writes through a link, but readFileSync/statSafe below it followed one and let the victim decide the lock verdict',
   },
   {
     key: 'archive/lock.ts#2',
@@ -102,7 +102,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'archive/lock.ts#3',
     callee: 'unlinkSync',
-    why: 'unlinks the lock path, and only when the record still names our pid (lock.ts:91-92); unlink removes the link itself, never a symlink target. All three in-repo callers pass resolveLockPath(dataDir) (lock.ts:120,130,177), but releaseLock IS re-exported from index.ts, so an external caller supplies the path — this is not the closed-caller-set argument used for ensureDir/appendOwnedLine',
+    why: 'unlinks the lock path, and only when the record still names our pid (lock.ts:105); unlink removes the link itself, never a symlink target. The three in-repo callers pass whatever acquireLock resolved (lock.ts:154,164,211), and that is now either resolveLockPath(dataDir) or a lockPath the caller supplied — db/open.ts passes <dataDir>/cache.db.lock. Neither is a closed-caller-set argument anyway: releaseLock IS re-exported from index.ts, so an external caller supplies the path directly, unlike ensureDir/appendOwnedLine. What bounds the path is the containment assert in acquireLock, not the caller list',
   },
   {
     key: 'archive/lock.ts#4',
@@ -233,6 +233,11 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     key: 'cli/hook.ts#4',
     callee: 'appendFileSync',
     why: "the second failure path's log append, same <dataDir>/logs target",
+  },
+  {
+    key: 'db/open.ts#1',
+    callee: 'rmSync',
+    why: "removes <dataDir>/cache.db and its -wal/-shm siblings when user_version does not match SCHEMA_VERSION. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm']. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and the removal runs only while THIS process holds the cache lock — unlinking under a live handle forks the database silently, which is why the lock is taken before the open. `force: true` is load-bearing: a first run on an empty data dir reads user_version 0, takes this branch, and finds no -wal/-shm to remove",
   },
   {
     key: 'render-gate/index.ts#1',

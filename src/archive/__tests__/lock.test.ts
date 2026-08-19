@@ -2,7 +2,14 @@
 
 import { afterEach, describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync, utimesSync } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+  utimesSync,
+} from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { acquireLock, MAX_LOCK_AGE_MS, releaseLock } from '../lock.js';
@@ -174,6 +181,61 @@ describe('guarded release (Test 11)', () => {
     writeLock(s, 'garbage');
     expect(() => releaseLock(resolveLockPath(s.dataDir), process.pid)).not.toThrow();
     expect(existsSync(resolveLockPath(s.dataDir))).toBe(true);
+  });
+});
+
+describe('the defaulted lockPath seam (Test 14)', () => {
+  // Three arms, and the middle one is the point. The two containment guards in
+  // `acquireLock` are NOT interchangeable, and only a caller-supplied path can
+  // reach the second — every in-repo caller passed `resolveLockPath(dataDir)`
+  // until `db/open.ts` arrived. Each arm asserts the DISTINGUISHING TAIL of its
+  // own message: a bare `refusing to write outside the data dir` greens on arm
+  // (a) with `:139` never running, which is exactly how the new line would ship
+  // uncovered.
+
+  it('(a) a path outside dataDir stops at ensureDirUnder, which names the DIRNAME', () => {
+    const s = sb();
+    ensureDir(s.dataDir);
+    const outside = join(s.root, 'evil');
+
+    expect(() => acquireLock(s.dataDir, {}, join(outside, 'cache.db.lock'))).toThrow(
+      `refusing to write outside the data dir: ${outside}`,
+    );
+  });
+
+  it('(b) a LIVE symlinked leaf stops at assertUnderRoot, which names the TARGET', () => {
+    const s = sb();
+    ensureDir(s.dataDir);
+    const outside = join(s.root, 'evil');
+    ensureDir(outside);
+    // The target must EXIST. `realpathDeepest` cannot tell a dangling link from
+    // a missing tail (paths.ts:160-170), so a dangling leaf is not refused here
+    // at all — pointing at an absent path would red this arm for an unrelated
+    // reason and read like a bug in the guard.
+    const target = join(outside, 'target.lock');
+    writeFileSync(target, '');
+    const link = join(s.dataDir, 'x.lock');
+    symlinkSync(target, link);
+
+    expect(() => acquireLock(s.dataDir, {}, link)).toThrow(
+      `refusing to write outside the data dir: ${target}`,
+    );
+  });
+
+  it('(c) a plain path under dataDir acquires, and leaves the default lock alone', () => {
+    const s = sb();
+    const path = join(s.dataDir, 'cache.db.lock');
+
+    const lock = acquireLock(s.dataDir, { pid: process.pid }, path);
+
+    expect(lock.state.state).toBe('acquired');
+    expect(existsSync(path)).toBe(true);
+    // A SEPARATE file, never archive.lock: sharing one would make a day-long
+    // server report `held` to every 15-minute archive pass.
+    expect(existsSync(resolveLockPath(s.dataDir))).toBe(false);
+
+    lock.release();
+    expect(existsSync(path)).toBe(false);
   });
 });
 
