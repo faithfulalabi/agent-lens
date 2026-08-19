@@ -24,6 +24,7 @@
 // first session opened after the update.
 
 import { arr, obj, str } from './accessors.js';
+import type { ParsedLine } from './line.js';
 
 /**
  * A `type: 'image'` content block. Declared HERE and not in `raw-types.ts`:
@@ -81,7 +82,14 @@ interface ToolUseBlock {
 
 interface ToolResultBlock {
   readonly kind: 'tool_result';
-  readonly tool_use_id: string;
+  /**
+   * The `tool_use` block this result answers. OUR name for it, deliberately not
+   * the harness's: `src/__tests__/one-door.test.ts` greps for the harness string
+   * outside this directory, so a consumer in `src/project/` reading a field of
+   * that name would be born red for reading OUR type. It is our vocabulary
+   * anyway — the joined row is `events.kind = 'tool_call'`.
+   */
+  readonly tool_call_id: string;
   readonly is_error: boolean;
   /**
    * The result's own blocks, hanging off the parent rather than sitting beside
@@ -206,7 +214,7 @@ export function classifyBlock(raw: unknown, position: BlockPosition): Block {
       if (position === 'top') {
         return {
           kind: 'tool_result',
-          tool_use_id: str(block.tool_use_id, ''),
+          tool_call_id: str(block.tool_use_id, ''),
           is_error: block.is_error === true,
           // Through the same normaliser, so a bare-string content — 13,144 of
           // the 13,393 tool results — yields exactly one nested `text` child.
@@ -229,4 +237,16 @@ export function classifyBlock(raw: unknown, position: BlockPosition): Block {
 /** One row per top-level block of `content`. N blocks in is always N rows out. */
 export function classifyContent(content: unknown): readonly Block[] {
   return normalizeContent(content).map((block) => classifyBlock(block, 'top'));
+}
+
+/**
+ * A classified line's own top-level blocks. Empty for every line that carries
+ * no message at all — 1,592 uuid-carrying lines measured, which still project a
+ * row each, so an empty answer here is data and never an error.
+ *
+ * The one place the message payload is reached, so no caller outside this
+ * directory has to name it.
+ */
+export function contentBlocks(line: ParsedLine): readonly Block[] {
+  return classifyContent(obj(line.raw.message, undefined)?.content);
 }

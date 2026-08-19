@@ -10,10 +10,12 @@ import { DriftCounter } from '../drift.js';
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
-/** One JSONL line with the byte offset of its first byte. */
+/** One JSONL line with the byte offset of its first byte, and its own length. */
 export interface OffsetLine {
   text: string;
   byteOffset: number;
+  /** Bytes of `text`, EXCLUDING the `\n`, so a read of the pair returns it exactly. */
+  byteLength: number;
 }
 
 export function fixtureBytes(name: string): Buffer {
@@ -32,8 +34,9 @@ export function offsetLines(text: string): OffsetLine[] {
   const lines: OffsetLine[] = [];
   let byteOffset = 0;
   for (const line of text.split('\n')) {
-    if (line !== '') lines.push({ text: line, byteOffset });
-    byteOffset += Buffer.byteLength(line, 'utf8') + 1; // +1 for the '\n'
+    const byteLength = Buffer.byteLength(line, 'utf8');
+    if (line !== '') lines.push({ text: line, byteOffset, byteLength });
+    byteOffset += byteLength + 1; // +1 for the '\n'
   }
   return lines;
 }
@@ -47,7 +50,11 @@ export function classifyFixture(name: string): {
   const drift = new DriftCounter();
   const offsets = offsetLines(fixtureBytes(name).toString('utf8'));
   const lines = offsets.map((entry) =>
-    classifyLine(JSON.parse(entry.text), { byteOffset: entry.byteOffset, drift }),
+    classifyLine(JSON.parse(entry.text), {
+      byteOffset: entry.byteOffset,
+      byteLength: entry.byteLength,
+      drift,
+    }),
   );
   return { lines, drift, offsets };
 }
@@ -67,6 +74,6 @@ export function archiveJsonlFiles(root: string, found: string[] = []): string[] 
 }
 
 /** A throwaway context for classifying a single hand-built object. */
-export function ctx(byteOffset = 0): LineContext & { drift: DriftCounter } {
-  return { byteOffset, drift: new DriftCounter() };
+export function ctx(byteOffset = 0, byteLength = 0): LineContext & { drift: DriftCounter } {
+  return { byteOffset, byteLength, drift: new DriftCounter() };
 }

@@ -31,6 +31,7 @@ export class DriftCounter {
   // has no prototype chain to walk into.
   private readonly lineTypes = new Map<string, number>();
   private readonly fields = new Map<string, number>();
+  private readonly blockTypes = new Map<string, number>();
 
   /** Count every top-level key of `line` that `knownFields` does not list. */
   noteLine(line: Readonly<Record<string, unknown>>, knownFields: ReadonlySet<string>): void {
@@ -44,9 +45,21 @@ export class DriftCounter {
     bump(this.lineTypes, rawType);
   }
 
+  /**
+   * Count one content block whose `type` is not a kind agent-lens classifies.
+   *
+   * Blocks are counted at PROJECTION rather than at classification: a block is
+   * still visible one layer later, and the projector is the first code that
+   * knows which blocks a line actually contributed.
+   */
+  noteUnknownBlock(rawType: string): void {
+    bump(this.blockTypes, rawType);
+  }
+
   /** `sessions.drift_json`: sorted keys, and exactly `'{}'` when clean. */
   serialize(): string {
     return JSON.stringify({
+      unknown_block_types: bucket(this.blockTypes),
       unknown_line_types: bucket(this.lineTypes),
       unknown_top_level_fields: bucket(this.fields),
     });
