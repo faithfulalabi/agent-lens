@@ -1,7 +1,9 @@
-// The three harness strings a background `Agent` call speaks, behind the one
-// door. Pure: no I/O, no clock, no randomness, and no `node:` import at any
-// depth — `src/project/` imports this module, and `__tests__/purity.test.ts`
-// bans every `node:` specifier transitively from that tree.
+// What a background `Agent` call speaks, behind the one door: three harness
+// strings on the parent's own lines, plus the `agent-<id>.meta.json` sidecar
+// header that names which call started it. Pure: no I/O, no clock, no
+// randomness, and no `node:` import at any depth — `src/project/` imports this
+// module, and `__tests__/purity.test.ts` bans every `node:` specifier
+// transitively from that tree.
 //
 // ## Why the launch marker matters more than the structured field
 //
@@ -35,7 +37,7 @@
 // `__tests__/agents.test.ts` asserts the two copies still agree, over the source
 // text, rather than trusting a comment to be read.
 
-import { obj, str } from './accessors.js';
+import { num, obj, str } from './accessors.js';
 import type { ParsedLine } from './line.js';
 
 /**
@@ -86,6 +88,26 @@ export interface TaskNotification {
 }
 
 /**
+ * The header the harness writes beside every sub-agent transcript, as
+ * `agent-<id>.meta.json`.
+ *
+ * EVERY FIELD IS OPTIONAL, and `toolUseId` most of all: 12 of 269 measured metas
+ * are the whole file `{"agentType":"workflow-subagent","spawnDepth":1}` — no
+ * join key and no description. A required `toolUseId` would type a join map as
+ * `Map<string | undefined, …>` and let `undefined` become a key.
+ */
+export interface AgentMeta {
+  /** `'Explore'`, `'approach-critic'`, … — free, so nothing switches on it. */
+  agentType: string | undefined;
+  description: string | undefined;
+  /** The parent's `Agent` `tool_use.id`. THE join key, and nothing else is. */
+  toolUseId: string | undefined;
+  /** Recorded, never enforced: recursion has no depth limit by design. */
+  spawnDepth: number | undefined;
+  parentAgentId: string | undefined;
+}
+
+/**
  * A background launch, or nothing. `text` is the result's EXTRACTED text — the
  * only text a projector reads as output — never the raw line.
  */
@@ -111,6 +133,23 @@ export function taskNotification(text: string): TaskNotification | undefined {
     toolCallId: TOOL_CALL_ID.exec(text)?.[1],
     status: STATUS.exec(text)?.[1],
     result: RESULT.exec(text)?.[1],
+  };
+}
+
+/**
+ * One `agent-<id>.meta.json` read, or nothing when it was not a JSON object.
+ * Every field goes through the accessors, so a harness that changes a value's
+ * type drops that field rather than poisoning the row.
+ */
+export function parseAgentMeta(json: unknown): AgentMeta | undefined {
+  const meta = obj(json, undefined);
+  if (meta === undefined) return undefined;
+  return {
+    agentType: str(meta.agentType, undefined),
+    description: str(meta.description, undefined),
+    toolUseId: str(meta.toolUseId, undefined),
+    spawnDepth: num(meta.spawnDepth, undefined),
+    parentAgentId: str(meta.parentAgentId, undefined),
   };
 }
 

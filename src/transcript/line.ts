@@ -292,7 +292,7 @@ const LINE_TYPES = new Map<string, LineType>([
     },
   ],
   // Sidecar-only, and only in `subagents/workflows/wf_*/journal.jsonl`: a workflow
-  // span pair, 12 each, paired 1:1. Task 3.3 wants both ends.
+  // span pair, 12 each, paired 1:1.
   ['started', { kind: 'started', knownFields: fields(['type', 'key', 'agentId']) }],
   ['result', { kind: 'result', knownFields: fields(['type', 'key', 'agentId', 'result']) }],
 ]);
