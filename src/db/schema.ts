@@ -120,7 +120,10 @@ CREATE TABLE sessions (
   projected_size        INTEGER,
   projector_version     INTEGER,
   projected_at          TEXT,
-  projection_state      TEXT NOT NULL DEFAULT 'none',  -- none | ready | failed
+  projection_state      TEXT NOT NULL DEFAULT 'none',  -- none | ready | failed | empty
+                                            -- 'empty' is the tombstone: the file
+                                            -- projected no header, so it has no turns,
+                                            -- events or FTS rows and must not be re-read
   projection_error      TEXT,
   drift_json            TEXT NOT NULL DEFAULT '{}'
 );
@@ -239,7 +242,13 @@ CREATE INDEX        idx_events_child       ON events(child_session_id)
 -- concrete replacement for today's payloads_fts, which migration 001 creates and
 -- NOTHING populates. Dropping a session's projection MUST run the 'delete' idiom
 -- first; db/write.ts:deleteSessionProjection() is the only place that does it, and a
--- test asserts fts row count == events row count after 3 drop/reproject cycles.
+-- test asserts INSERT INTO events_fts(events_fts, rank) VALUES('integrity-check', 1)
+-- passes after 3 drop/reproject cycles, and that the inverted order throws
+-- 'database disk image is malformed' on the FIRST cycle.
+-- CORRECTED 2026-08-19 by measurement: this used to ask for fts row count == events
+-- row count, which is vacuous here. count(*) on an external-content table delegates
+-- to the content table, so it reads equal in the inverted order too, and bare
+-- integrity-check answers ok in every broken state. Only the rank=1 form discriminates.
 CREATE VIRTUAL TABLE events_fts USING fts5(
   text,
   input,
