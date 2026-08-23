@@ -34,6 +34,7 @@ export class DriftCounter {
   private readonly blockTypes = new Map<string, number>();
   /** A scalar, not a bucket: the spec declares `unjoined_tool_uses` a number. */
   private unjoinedToolUses = 0;
+  private sidecarAgentIdMismatches = 0;
 
   /** Count every top-level key of `line` that `knownFields` does not list. */
   noteLine(line: Readonly<Record<string, unknown>>, knownFields: ReadonlySet<string>): void {
@@ -72,12 +73,30 @@ export class DriftCounter {
     this.unjoinedToolUses += 1;
   }
 
+  /**
+   * Count one sidecar whose `agent-<id>.meta.json` named a `toolUseId` that
+   * resolved, while the launch result on that same call named a DIFFERENT agent
+   * id.
+   *
+   * The mismatch is reported and the link is still made: 217 of 217 measured
+   * async launches agree, and the remaining 41 `Agent` calls are synchronous and
+   * carry no agent id at all, so the id is a corroborator and never a gate.
+   * Gating on it would silently drop every sync call's sidecar.
+   */
+  noteSidecarMismatch(): void {
+    this.sidecarAgentIdMismatches += 1;
+  }
+
   /** `sessions.drift_json`: sorted keys, and exactly `'{}'` when clean. */
   serialize(): string {
     return JSON.stringify({
       // Omitted at zero, never emitted as `0`: a clean session must serialize to
       // exactly `'{}'`, and `JSON.stringify` drops an undefined-valued key.
-      // `'unjoined' < 'unknown'`, so this key sorts first.
+      // `'sidecar' < 'unjoined' < 'unknown'`, so the keys are emitted in the
+      // order they must serialize in. The column is a SORTED string, and the
+      // writer appends `unresolved_spills` after all of these.
+      sidecar_agent_id_mismatch:
+        this.sidecarAgentIdMismatches === 0 ? undefined : this.sidecarAgentIdMismatches,
       unjoined_tool_uses: this.unjoinedToolUses === 0 ? undefined : this.unjoinedToolUses,
       unknown_block_types: bucket(this.blockTypes),
       unknown_line_types: bucket(this.lineTypes),

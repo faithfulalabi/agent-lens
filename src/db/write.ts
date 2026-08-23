@@ -19,6 +19,11 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { type ProjectedEvent, type ProjectedTurn, runPipeline } from '../project/pipeline.js';
+import {
+  linkSubagents,
+  type SidecarDescriptor,
+  type SidecarSessionRow,
+} from '../project/subagents.js';
 import type { DriftCounter } from '../transcript/drift.js';
 import type { ParsedLine } from '../transcript/line.js';
 import { resolvePersistedOutput, type ResolveEnv, type SpillState } from '../transcript/spill.js';
@@ -27,8 +32,8 @@ import { estimateCost } from '../shared/pricing.js';
 import type { ArchiveFold } from './freshness.js';
 
 /**
- * The two reads a projection needs, injected so this module opens no transcript
- * and every test is hermetic. The corpus sweep supplies both.
+ * The three reads a projection needs, injected so this module opens no
+ * transcript and every test is hermetic. The corpus sweep supplies all three.
  */
 export interface ProjectionEnv {
   /**
@@ -43,6 +48,17 @@ export interface ProjectionEnv {
    * path present only as `<p>.zst`, or every sealed spill reports missing.
    */
   spillEnv(archivePath: string): ResolveEnv;
+  /**
+   * The sub-agent transcripts this session's `Agent` calls started. REQUIRED,
+   * not optional: sidecars are 65% of the corpus by bytes, and an env that
+   * quietly omitted them would project every session 2-6x cheap with nothing to
+   * show for it.
+   */
+  sidecars(
+    archivePath: string,
+    sourcePath: string,
+    toolUseIds: ReadonlySet<string>,
+  ): SidecarDescriptor[];
 }
 
 /** Every `sessions` column that is NOT NULL and has no DDL default, plus the id. */
@@ -77,6 +93,46 @@ export function upsertSessionIndex(db: DatabaseSync, row: SessionIndexRow): void
   db.prepare(UPSERT_INDEX_SQL).run({ ...row });
 }
 
+const UPSERT_SIDECAR_SQL = `INSERT INTO sessions
+    (id, source_path, archive_path, file_mtime_ms, file_size,
+     project_path, started_at, last_activity_at,
+     parent_session_id, spawned_by_event_id, agent_type, agent_description, spawn_depth)
+  VALUES
+    (:id, :source_path, :archive_path, :file_mtime_ms, :file_size,
+     :project_path, :started_at, :last_activity_at,
+     :parent_session_id, :spawned_by_event_id, :agent_type, :agent_description, :spawn_depth)
+  ON CONFLICT(id) DO UPDATE SET
+    source_path         = excluded.source_path,
+    archive_path        = excluded.archive_path,
+    file_mtime_ms       = excluded.file_mtime_ms,
+    file_size           = excluded.file_size,
+    project_path        = excluded.project_path,
+    started_at          = excluded.started_at,
+    last_activity_at    = excluded.last_activity_at,
+    parent_session_id   = excluded.parent_session_id,
+    spawned_by_event_id = excluded.spawned_by_event_id,
+    agent_type          = excluded.agent_type,
+    agent_description   = excluded.agent_description,
+    spawn_depth         = excluded.spawn_depth`;
+
+/**
+ * The Tier-A writer for a sub-agent, and the whole of "a sidecar IS a `sessions`
+ * row". SHALLOW on purpose: the header limbs a full projection owns —
+ * `git_branch`, `model`, `title`, the rollups — stay at their defaults until the
+ * sidecar is projected in its own right, through this same module.
+ *
+ * Like `upsertSessionIndex`, it touches no Tier-B stamp, so linking a child
+ * never invalidates a projection the child already has.
+ */
+export function upsertSidecarIndex(db: DatabaseSync, row: SidecarSessionRow): void {
+  db.prepare(UPSERT_SIDECAR_SQL).run({
+    ...row,
+    agent_type: row.agent_type ?? null,
+    agent_description: row.agent_description ?? null,
+    spawn_depth: row.spawn_depth ?? null,
+  });
+}
+
 /** The three statements, in this order and no other. See the module header. */
 export function deleteSessionProjection(db: DatabaseSync, id: string): void {
   db.prepare(
@@ -98,8 +154,9 @@ const INSERT_EVENT_SQL = `INSERT INTO events
      duration_ms, duration_source, input, input_bytes, input_storage, text, text_bytes,
      output_storage, spill_path, spill_bytes, src_offset, src_len, result_offset,
      result_len, result_block, tokens_in, tokens_out, tokens_cache_read,
-     tokens_cache_write, agent_status, raw_type, raw_subtype, attrs)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+     tokens_cache_write, child_session_id, agent_type, agent_status, raw_type,
+     raw_subtype, attrs)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 // FTS population costs 8-14x the rest of the SQLite write (5.6 -> 43.8 ms
 // measured). It belongs in this transaction, and Phase 7 must keep it out of the
@@ -146,13 +203,18 @@ export function projectSession(
   env: ProjectionEnv,
   fold: ArchiveFold,
 ): ProjectionState {
-  const row = db.prepare('SELECT archive_path FROM sessions WHERE id = ?').get(id) as
-    { archive_path: string } | undefined;
+  // `source_path` is selected because the sidecar resolver derives each child's
+  // source path from the parent's. The mirror is path-identical below the two
+  // roots, so the anchor is the only thing it cannot compute — and taking it off
+  // the row keeps the resolver hermetic where re-deriving the root would read
+  // ambient config.
+  const row = db.prepare('SELECT archive_path, source_path FROM sessions WHERE id = ?').get(id) as
+    { archive_path: string; source_path: string } | undefined;
   if (row === undefined) throw new Error(`no sessions row to project: ${id}`);
 
   db.exec(`SAVEPOINT ${SAVEPOINT}`);
   try {
-    const state = writeProjection(db, id, row.archive_path, env, fold);
+    const state = writeProjection(db, id, row.archive_path, row.source_path, env, fold);
     db.exec(`RELEASE ${SAVEPOINT}`);
     return state;
   } catch (error) {
@@ -168,6 +230,7 @@ function writeProjection(
   db: DatabaseSync,
   id: string,
   archivePath: string,
+  sourcePath: string,
   env: ProjectionEnv,
   fold: ArchiveFold,
 ): ProjectionState {
@@ -175,8 +238,29 @@ function writeProjection(
 
   const read = env.readLines(archivePath);
   const projection = runPipeline(read.lines, { session_id: id, drift: read.drift });
+
+  // AFTER the pipeline, because the ids the resolver narrows on are the ids the
+  // pipeline just minted. The `Agent` gate is what makes the resolver's cost
+  // proportional to a session's OWN children rather than to the whole enclosing
+  // tree — a leaf sub-agent asks for nothing and the resolver returns before its
+  // readdir.
+  const toolUseIds = new Set(
+    projection.events
+      .filter((event) => event.kind === 'tool_call' && event.name === 'Agent')
+      .map((event) => event.id),
+  );
+  const sidecarRows = linkSubagents(
+    projection.events,
+    env.sidecars(archivePath, sourcePath, toolUseIds),
+    projection.launches,
+    read.drift,
+  );
+
   const spills = resolveSpills(read.lines, env.spillEnv(archivePath));
-  const drift = withUnresolvedSpills(projection.drift, spills.unresolved);
+  // `read.drift`, NOT `projection.drift`: the same counter object went into
+  // `runPipeline`, and the link above may have bumped it since. The snapshot
+  // taken at the pipeline's return cannot carry a key counted after it.
+  const drift = withUnresolvedSpills(read.drift.serialize(), spills.unresolved);
 
   const header = projection.header;
   if (header === undefined) {
@@ -203,6 +287,11 @@ function writeProjection(
     last_activity_at: header.last_activity_at,
     id,
   });
+
+  // BEFORE the events, so `events.child_session_id` never points at a row that
+  // does not exist yet inside this savepoint. Safe against the drop above, which
+  // touches only `events`/`turns` for the parent id.
+  for (const sidecar of sidecarRows) upsertSidecarIndex(db, sidecar);
 
   insertTurns(db, projection.turns);
   insertEvents(db, projection.events, spills.byOffset);
@@ -315,6 +404,8 @@ function insertEvents(
       event.tokens_out ?? null,
       event.tokens_cache_read ?? null,
       event.tokens_cache_write ?? null,
+      event.child_session_id ?? null,
+      event.agent_type ?? null,
       event.agent_status ?? null,
       event.raw_type,
       event.raw_subtype ?? null,
@@ -419,8 +510,10 @@ interface RollupRow {
  * COALESCEd because `SUM`/`COUNT` over zero children returns NULL into a NOT
  * NULL column.
  *
- * The `sub_*` columns and `rollup_state` stay at their DDL defaults — they need
- * the sidecar linkage, which is a different task.
+ * The `sub_*` columns and `rollup_state` stay at their DDL defaults. The linkage
+ * they sum over now exists — `parent_session_id` and `events.child_session_id`
+ * are written above — but summing it belongs to task 4.1's second wave, which
+ * owns projecting every child before a parent's total can mean anything.
  */
 export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
   // HUMAN turns only. The plain count is ~19x high: 101 human prompts against

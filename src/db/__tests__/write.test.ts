@@ -26,9 +26,12 @@ import {
   seedIndexRow,
   sessionRow,
   spillMarker,
+  subagentsDirOf,
   toolCallLine,
   toolResultLine,
   writeFile,
+  writeSidecarMeta,
+  writeSidecarTranscript,
   writeTranscript,
 } from './fixtures/index.js';
 import {
@@ -625,6 +628,284 @@ describe('recomputeSessionRollups (AC8)', () => {
 
     project(db, id, path);
     expect(typeof sessionRow(db, id).est_cost).toBe('number');
+  });
+});
+
+describe('a sidecar IS a sessions row (Task 3.3 AC1, AC2, AC3)', () => {
+  /** The launch result text, exactly as the harness writes it. */
+  function launched(agentId: string): string {
+    return `Async agent launched successfully.\nagentId: ${agentId}`;
+  }
+
+  /** An `Agent` call answered by a background launch that names `agentId`. */
+  function asyncAgent(callId: string, agentId: string, at: number): readonly unknown[] {
+    return [
+      toolCallLine(callId, 'Agent', TS(at)),
+      toolResultLine(callId, launched(agentId), TS(at + 1), {
+        toolUseResult: { isAsync: true, agentId },
+      }),
+    ];
+  }
+
+  /** The sub-agent's own transcript: three stamped lines that all carry a cwd. */
+  function sidecarRecords(from: number, to: number): readonly unknown[] {
+    return [
+      humanLine('the brief', TS(from)),
+      machineryLine('working', TS(from + 1)),
+      machineryLine('done', TS(to)),
+    ];
+  }
+
+  /** A parent that launched one sub-agent, with the sidecar pair on disk. */
+  function linkedSession(name = 'linked'): { db: DatabaseSync; id: string; path: string } {
+    const db = cache();
+    const { path, dir } = plant(name, [
+      humanLine('go', TS(0)),
+      ...asyncAgent('toolu_agent', 'A1', 1),
+    ]);
+    const subagents = join(dir, 'subagents');
+    writeSidecarTranscript(subagents, 'A1', sidecarRecords(10, 250));
+    writeSidecarMeta(subagents, 'A1', {
+      agentType: 'Explore',
+      description: 'look around',
+      toolUseId: 'toolu_agent',
+      spawnDepth: 1,
+    });
+
+    // Anchored to the sandbox, because the fixture default is an unrelated fake
+    // path and the derivation would then be asserted against nothing real.
+    const id = seedIndexRow(db, path, { source_path: join(sb().sourceRoot, `${name}.jsonl`) });
+    project(db, id, path);
+    return { db, id, path };
+  }
+
+  it('the sidecar row carries the parentage, the linkage and a real source path', () => {
+    const { db, id, path } = linkedSession();
+    const row = sessionRow(db, 'A1');
+
+    expect(row.parent_session_id).toBe(id);
+    expect(row.spawned_by_event_id).toBe('toolu_agent');
+    expect(row.agent_type).toBe('Explore');
+    expect(row.agent_description).toBe('look around');
+    expect(row.spawn_depth).toBe(1);
+    expect(row.project_path).toBe(CWD);
+    expect(row.started_at).toBe(TS(10));
+    expect(row.last_activity_at).toBe(TS(250));
+    expect(row.source_path).toBe(join(sb().sourceRoot, 'linked', 'subagents', 'agent-A1.jsonl'));
+    expect(row.archive_path).toBe(
+      join(path.slice(0, -'.jsonl'.length), 'subagents', 'agent-A1.jsonl'),
+    );
+  });
+
+  it('the spawning event points at it, and no other event does', () => {
+    const { db, id } = linkedSession();
+    const linked = db
+      .prepare('SELECT id, child_session_id, agent_type FROM events WHERE session_id = ?')
+      .all(id) as { id: string; child_session_id: string | null; agent_type: string | null }[];
+
+    expect(linked.filter((row) => row.child_session_id !== null)).toEqual([
+      { id: 'toolu_agent', child_session_id: 'A1', agent_type: 'Explore' },
+    ]);
+    expect(linked.length).toBeGreaterThan(1);
+  });
+
+  it('the span is the sub-agent’s own, stamped sidecar_span', () => {
+    const { db } = linkedSession();
+    const row = db.prepare('SELECT * FROM events WHERE id = ?').get('toolu_agent') as Record<
+      string,
+      unknown
+    >;
+
+    expect(row.duration_source).toBe('sidecar_span');
+    // TS(10) -> TS(250), and never the 1,000 ms handshake it replaced. The
+    // property, never a literal: the measured launch gap ranges 40–3,263 ms.
+    expect(row.duration_ms).toBe(240_000);
+    expect(row.duration_ms).not.toBe(1_000);
+  });
+
+  it('a session with no sidecars keeps every Agent row on elapsed', () => {
+    const db = cache();
+    const { path } = plant('nosidecars', [
+      humanLine('go', TS(0)),
+      ...asyncAgent('toolu_a', 'X', 1),
+    ]);
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+
+    const row = db.prepare('SELECT * FROM events WHERE id = ?').get('toolu_a') as Record<
+      string,
+      unknown
+    >;
+    expect(row.duration_source).toBe('elapsed');
+    expect(row.child_session_id).toBeNull();
+    expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 1 });
+  });
+
+  it('a SYNCHRONOUS Agent call links too', () => {
+    // 41 of 258 measured `Agent` calls carry no launch marker at all, so a
+    // linker gated on the launch would drop every one of them.
+    const db = cache();
+    const { path, dir } = plant('sync', [
+      humanLine('go', TS(0)),
+      toolCallLine('toolu_sync', 'Agent', TS(1)),
+      toolResultLine('toolu_sync', 'answered inline', TS(2)),
+    ]);
+    writeSidecarTranscript(join(dir, 'subagents'), 'S1', sidecarRecords(10, 250));
+    writeSidecarMeta(join(dir, 'subagents'), 'S1', { toolUseId: 'toolu_sync' });
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    expect(sessionRow(db, 'S1').parent_session_id).toBe(id);
+    expect(String(sessionRow(db, id).drift_json)).not.toContain('sidecar_agent_id_mismatch');
+  });
+
+  it('a DISAGREEING agent id still links, and the mismatch reaches drift_json', () => {
+    // The objection-2 regression: this reds if the writer serializes the
+    // pipeline's drift SNAPSHOT instead of re-serializing its own live counter
+    // after the link.
+    const db = cache();
+    const { path, dir } = plant('mismatch', [
+      humanLine('go', TS(0)),
+      ...asyncAgent('toolu_agent', 'SOMEONEELSE', 1),
+    ]);
+    writeSidecarTranscript(join(dir, 'subagents'), 'ONDISK', sidecarRecords(10, 250));
+    writeSidecarMeta(join(dir, 'subagents'), 'ONDISK', { toolUseId: 'toolu_agent' });
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    expect(sessionRow(db, 'ONDISK').parent_session_id).toBe(id);
+    const drift = JSON.parse(String(sessionRow(db, id).drift_json)) as Record<string, unknown>;
+    expect(drift['sidecar_agent_id_mismatch']).toBe(1);
+    expect(Object.keys(drift)).toStrictEqual([...Object.keys(drift)].sort());
+  });
+
+  const MALFORMED: readonly [string, Record<string, unknown> | undefined, readonly unknown[]][] = [
+    // The exact shape of all 12 measured `wf_*` metas.
+    [
+      'a keyless workflow meta',
+      { agentType: 'workflow-subagent', spawnDepth: 1 },
+      [humanLine('brief', TS(10)), machineryLine('done', TS(20))],
+    ],
+    [
+      'end lines with no cwd',
+      { toolUseId: 'toolu_agent' },
+      [
+        { type: 'user', uuid: 'aaaa2222-1111-4111-8111-aaaa22220000', timestamp: TS(10) },
+        { type: 'user', uuid: 'bbbb2222-1111-4111-8111-bbbb22220000', timestamp: TS(20) },
+      ],
+    ],
+    [
+      'end lines with no timestamp',
+      { toolUseId: 'toolu_agent' },
+      [
+        { type: 'user', uuid: 'cccc2222-1111-4111-8111-cccc22220000', cwd: CWD },
+        { type: 'user', uuid: 'dddd2222-1111-4111-8111-dddd22220000', cwd: CWD },
+      ],
+    ],
+    [
+      'no sibling meta at all',
+      undefined,
+      [humanLine('brief', TS(10)), machineryLine('done', TS(20))],
+    ],
+  ];
+
+  it.each(MALFORMED)('%s links nothing and leaves the PARENT ready', (name, meta, records) => {
+    const db = cache();
+    const { path, dir } = plant(`bad-${name.replaceAll(' ', '-')}`, [
+      humanLine('go', TS(0)),
+      ...asyncAgent('toolu_agent', 'A1', 1),
+    ]);
+    writeSidecarTranscript(join(dir, 'subagents'), 'A1', records);
+    if (meta !== undefined) writeSidecarMeta(join(dir, 'subagents'), 'A1', meta);
+    const id = seedIndexRow(db, path);
+
+    expect(() => project(db, id, path)).not.toThrow();
+
+    // Removing the NOT NULL gate makes this row `failed`: the NULL bind throws
+    // inside the savepoint and one malformed sub-agent takes out the session.
+    expect(sessionRow(db, id).projection_state).toBe('ready');
+    expect(sessionRow(db, 'A1')).toBeUndefined();
+    expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 1 });
+    expect(String(sessionRow(db, id).drift_json)).not.toContain('sidecar');
+  });
+
+  it('depth 3 projects through the same function, with no depth named anywhere', () => {
+    // Depth 3 is UNWITNESSED in the corpus (1 x253, 2 x17), so this is synthetic
+    // — and all three generations share ONE flat `subagents/` directory, which
+    // is what the enclosing-directory walk resolves at every level.
+    const db = cache();
+    const { path, dir } = plant('deep', [
+      humanLine('go', TS(0)),
+      ...asyncAgent('toolu_d1', 'A1', 1),
+    ]);
+    const subagents = subagentsDirOf(path);
+    expect(subagents).toBe(join(dir, 'subagents'));
+
+    writeSidecarTranscript(subagents, 'A1', [
+      humanLine('depth two', TS(10)),
+      ...asyncAgent('toolu_d2', 'B1', 11),
+      machineryLine('done', TS(100)),
+    ]);
+    writeSidecarMeta(subagents, 'A1', {
+      agentType: 'Explore',
+      toolUseId: 'toolu_d1',
+      spawnDepth: 1,
+    });
+    writeSidecarTranscript(subagents, 'B1', sidecarRecords(20, 80));
+    writeSidecarMeta(subagents, 'B1', {
+      agentType: 'Explore',
+      toolUseId: 'toolu_d2',
+      spawnDepth: 2,
+    });
+
+    const id = seedIndexRow(db, path, { source_path: join(sb().sourceRoot, 'deep.jsonl') });
+    project(db, id, path);
+    // The SAME call, over the child's own row, then over the grandchild's.
+    project(db, 'A1', sessionRow(db, 'A1').archive_path as string);
+    project(db, 'B1', sessionRow(db, 'B1').archive_path as string);
+
+    expect(sessionRow(db, 'A1').parent_session_id).toBe(id);
+    expect(sessionRow(db, 'B1').parent_session_id).toBe('A1');
+    expect(sessionRow(db, 'B1').spawn_depth).toBe(2);
+    expect(sessionRow(db, 'B1').projection_state).toBe('ready');
+
+    const chain = db
+      .prepare(
+        `SELECT session_id, id, child_session_id FROM events
+         WHERE child_session_id IS NOT NULL ORDER BY session_id`,
+      )
+      .all() as { session_id: string; id: string; child_session_id: string }[];
+    expect(chain).toEqual([
+      { session_id: 'A1', id: 'toolu_d2', child_session_id: 'B1' },
+      { session_id: id, id: 'toolu_d1', child_session_id: 'A1' },
+    ]);
+  });
+
+  it('reprojecting the parent twice writes the same rows and keeps FTS intact', () => {
+    const { db, id, path } = linkedSession('idempotent');
+    const before = sessionRow(db, 'A1');
+
+    project(db, id, path);
+
+    expect(sessionRow(db, 'A1')).toStrictEqual(before);
+    expect(db.prepare(`SELECT count(*) AS n FROM sessions`).get()).toEqual({ n: 2 });
+    expect(countOf(db, 'events', id)).toBeGreaterThan(0);
+    expect(() => ftsIntegrityCheck(db)).not.toThrow();
+  });
+
+  it('linking a child never touches the child’s own Tier-B stamp', () => {
+    const { db, id, path } = linkedSession('restamp');
+    project(db, 'A1', sessionRow(db, 'A1').archive_path as string);
+    const projectedAt = sessionRow(db, 'A1').projected_at;
+    expect(projectedAt).not.toBeNull();
+
+    project(db, id, path);
+
+    // The parent re-linked the child; the child's projection is still valid.
+    expect(sessionRow(db, 'A1').projected_at).toBe(projectedAt);
+    expect(sessionRow(db, 'A1').projection_state).toBe('ready');
   });
 });
 

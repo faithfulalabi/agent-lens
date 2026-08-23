@@ -276,6 +276,7 @@ describe('ensureProjected is the gate every read passes (AC3)', () => {
         throw new Error('the archive line is torn');
       },
       spillEnv: () => ({ exists: () => false }),
+      sidecars: () => [],
     };
     db.prepare('UPDATE sessions SET projected_size = projected_size - 1 WHERE id = ?').run(id);
 

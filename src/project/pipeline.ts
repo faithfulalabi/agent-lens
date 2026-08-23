@@ -118,8 +118,17 @@ export interface ProjectedEvent extends ProjectedInput {
    * Its own enum, NOT `ProjectedTurn`'s: `elapsed` answers "how was this tool
    * call timed", `turn_duration`/`derived` answers "how was this turn timed",
    * and merging the two columns would merge two different questions.
+   *
+   * `sidecar_span` is the sub-agent's OWN first-to-last stamp, written by
+   * `./subagents.ts` over the row this call already owns. It replaces an
+   * `elapsed` that measured the launch handshake — 40 ms at its smallest — and
+   * never the time the agent worked.
    */
-  duration_source: 'elapsed' | undefined;
+  duration_source: 'elapsed' | 'sidecar_span' | undefined;
+  /** The sidecar `sessions` row this `Agent` call started. `./subagents.ts` fills it. */
+  child_session_id: string | undefined;
+  /** The sub-agent's kind, copied off its own meta header. */
+  agent_type: string | undefined;
   /** Prose, reasoning, the image placeholder — or a tool call's output. */
   text: string | undefined;
   /** TRUE bytes of a tool call's output, never the preview's. Nothing sizes prose. */
@@ -162,8 +171,24 @@ export interface Projection {
   header: SessionHeader | undefined;
   turns: readonly ProjectedTurn[];
   events: readonly ProjectedEvent[];
-  /** `sessions.drift_json` itself — the column value, not the counter. */
+  /**
+   * `sessions.drift_json` AS OF THE END OF THIS CALL — advisory for any caller
+   * that goes on mutating the counter it passed in. `db/write.ts` links the
+   * sidecars after this returns, so it re-serializes its own live counter rather
+   * than shipping this snapshot.
+   */
   drift: string;
+  /**
+   * A tool call's id to the id of the agent its launch named, for the launches
+   * that named one. Both halves are read through `../transcript/agents.js`.
+   *
+   * Returned rather than stamped on the row: every `ProjectedEvent` field maps
+   * to a column, and this id would either need one of its own or would pre-fill
+   * `child_session_id` with a pointer to a `sessions` row that may not exist.
+   * The sidecar linker takes it as a CROSS-CHECK — 41 of 258 measured `Agent`
+   * calls are synchronous and appear here not at all.
+   */
+  launches: ReadonlyMap<string, string>;
 }
 
 /** `turns.title` and `sessions.preview` are both capped here. */
@@ -454,6 +479,10 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         status: kind === 'tool_call' ? 'running' : undefined,
         duration_ms: undefined,
         duration_source: undefined,
+        // Both are the sidecar linker's, and it runs outside this function
+        // because it needs a filesystem `runPipeline` must never take.
+        child_session_id: undefined,
+        agent_type: undefined,
         // The input is the CALL's half, so it is known here and never moves.
         ...(block?.kind === 'tool_use' ? toolInput(block.input) : NO_INPUT),
         text: kind === 'tool_call' ? undefined : blockText(block),
@@ -556,6 +585,15 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
   // is added, removed, reordered or re-parented, so every window above stands.
   joinToolCalls(events, toolResults, notifications, ctx.drift);
 
+  // The launched agent ids, harvested from the SAME map the join reads. The join
+  // only tests that a launch happened; the id it carries has no column, so it
+  // leaves through the projection instead of on a row.
+  const launches = new Map<string, string>();
+  for (const [callId, result] of toolResults) {
+    const agentId = result.launch?.agentId;
+    if (agentId !== undefined) launches.set(callId, agentId);
+  }
+
   // ---- header: a file that emitted nothing is not a session -----------------
 
   // No rows means no `sessions` row at all, which is what makes `started_at` and
@@ -579,7 +617,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
           last_activity_at,
         };
 
-  return { header, turns, events, drift: ctx.drift.serialize() };
+  return { header, turns, events, drift: ctx.drift.serialize(), launches };
 }
 
 function sum(

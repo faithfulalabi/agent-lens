@@ -15,12 +15,14 @@
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createArchiveReader, type ArchiveReader } from '../../../archive/read.js';
 import { DriftCounter } from '../../../transcript/drift.js';
 import { classifyLine, type ParsedLine } from '../../../transcript/line.js';
 import type { ResolveEnv } from '../../../transcript/spill.js';
 import { offsetLines } from '../../../transcript/__tests__/fixtures.js';
 import { applyConnectionPragmas } from '../../open.js';
 import { SCHEMA_DDL } from '../../schema.js';
+import { readSidecars } from '../../sidecars.js';
 import { upsertSessionIndex, type ProjectionEnv } from '../../write.js';
 
 export const SESSION_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
@@ -156,6 +158,67 @@ export function sessionDirOf(archivePath: string): string {
   return archivePath.slice(0, -TRANSCRIPT_EXT.length);
 }
 
+/** Where the harness puts a session's sub-agent transcripts. */
+export function subagentsDirOf(archivePath: string): string {
+  return join(sessionDirOf(archivePath), 'subagents');
+}
+
+/** One `agent-<id>.jsonl`, under `dir`. Raw text so an over-long line is writable. */
+export function writeSidecarTranscript(
+  dir: string,
+  agentId: string,
+  content: readonly unknown[] | string,
+): string {
+  const text = typeof content === 'string' ? content : jsonl(content);
+  return writeFile(join(dir, `agent-${agentId}.jsonl`), text);
+}
+
+/** Its `agent-<id>.meta.json` sibling — written separately, so a test can omit it. */
+export function writeSidecarMeta(
+  dir: string,
+  agentId: string,
+  meta: Record<string, unknown>,
+): string {
+  return writeFile(join(dir, `agent-${agentId}.meta.json`), JSON.stringify(meta));
+}
+
+/** Every path the sidecar resolver opened, and how many bytes each read returned. */
+export interface ReaderLog {
+  reads: { path: string; bytes: number }[];
+  sizes: string[];
+}
+
+export function newReaderLog(): ReaderLog {
+  return { reads: [], sizes: [] };
+}
+
+/** Distinct paths the resolver read bytes from, in first-touch order. */
+export function readPaths(log: ReaderLog, suffix = ''): string[] {
+  return [...new Set(log.reads.map((entry) => entry.path))].filter((path) => path.endsWith(suffix));
+}
+
+export function bytesRead(log: ReaderLog, path: string): number {
+  return log.reads
+    .filter((entry) => entry.path === path)
+    .reduce((total, entry) => total + entry.bytes, 0);
+}
+
+/** The real reader, wrapped. The behaviour under test is the production one. */
+export function countingReader(log: ReaderLog, inner = createArchiveReader()): ArchiveReader {
+  return {
+    read: (path, offset, length) => {
+      const buf = inner.read(path, offset, length);
+      log.reads.push({ path, bytes: buf.length });
+      return buf;
+    },
+    size: (path) => {
+      log.sizes.push(path);
+      return inner.size(path);
+    },
+    stats: () => inner.stats(),
+  };
+}
+
 /** Restore a file's mtime, so a test can grow a sidecar without touching the parent. */
 export function freezeMtime(path: string, mtimeMs: number): void {
   utimesSync(path, mtimeMs / 1000, mtimeMs / 1000);
@@ -170,14 +233,20 @@ export interface EnvOptions {
   exists?: (path: string) => boolean;
   /** Records every path the probe was asked about. */
   probed?: string[];
+  /** The reader the sidecar resolver preads through. Wrap it to count. */
+  reader?: ArchiveReader;
 }
 
 /**
  * A `ProjectionEnv` over real files. `sessionRoot` is the sibling directory,
  * which is where the harness mirrors `tool-results/`.
+ *
+ * `sidecars` drives the REAL resolver, so every arm that projects through this
+ * env exercises the enclosing-directory walk rather than a stub of it.
  */
 export function fileEnv(options: EnvOptions = {}): ProjectionEnv {
   const probe = options.exists ?? existsSync;
+  const reader = options.reader ?? createArchiveReader();
   return {
     readLines: (archivePath) => parseJsonl(readFileSync(archivePath, 'utf8')),
     spillEnv: (archivePath): ResolveEnv => ({
@@ -187,6 +256,8 @@ export function fileEnv(options: EnvOptions = {}): ProjectionEnv {
       },
       sessionRoot: sessionDirOf(archivePath),
     }),
+    sidecars: (archivePath, sourcePath, toolUseIds) =>
+      readSidecars(archivePath, sourcePath, toolUseIds, reader),
   };
 }
 
