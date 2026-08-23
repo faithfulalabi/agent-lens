@@ -21,6 +21,7 @@ import { DriftCounter } from '../../transcript/drift.js';
 import { classifyLine, type ParsedLine } from '../../transcript/line.js';
 import { archiveJsonlFiles, offsetLines } from '../../transcript/__tests__/fixtures.js';
 import { runPipeline } from '../pipeline.js';
+import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
 
 const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
 const runIt = ENABLED ? it : it.skip;
@@ -35,6 +36,23 @@ const MIN_TOOL_IDS = 8000;
 /** 301 adjacent-pair inversions measured; 362 derived turns. Bounded, never pinned. */
 const MIN_INVERSIONS = 100;
 const MIN_DERIVED_TURNS = 100;
+
+/** Task 3.2's bounds. 15,220 pairs, 218 async agents and 61 spill claims measured. */
+const MIN_TOOL_PAIRS = 8000;
+const MIN_ASYNC_AGENTS = 100;
+const MIN_SPILL_CLAIMS = 25;
+/**
+ * ⚠️ Rests on the SINGLE over-cap input measured — 68,782 B on a `Write` call,
+ * which is also the corpus maximum. It cannot go higher, and if that file ever
+ * leaves the mirror this is the one line to move. The deterministic proof of the
+ * arm is `large-output.jsonl`, never the corpus.
+ */
+const MIN_LINE_REF_INPUTS = 1;
+
+/** What an async `Agent` result says instead of the agent's answer. */
+const LAUNCH_MARKER = 'Async agent launched successfully.';
+/** What a spilled result says instead of the payload. */
+const PERSISTED_MARKER = '<persisted-output>';
 
 /** The one shape `epochMs` slices and every ordering compare rests on. */
 const FIXED_WIDTH_Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -248,6 +266,149 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
       expect(derivedTurns).toBeGreaterThanOrEqual(MIN_DERIVED_TURNS);
       // At least one archived file is not a session transcript at all.
       expect(emptyFiles).toBeGreaterThanOrEqual(0);
+    },
+    600000,
+  );
+});
+
+describe('Task 3.2 — the tool join over the whole archive, as properties', () => {
+  runIt(
+    'joins every result, and strands an unjoined call only on its file’s LAST EMITTING line',
+    () => {
+      const files = archiveJsonlFiles(ARCHIVE_ROOT);
+      expect(files.length).toBeGreaterThanOrEqual(MIN_FILES);
+
+      let pairs = 0;
+      let asyncAgents = 0;
+      let spillClaims = 0;
+      let lineRefInputs = 0;
+      let inlineOutputs = 0;
+
+      const orphans: string[] = [];
+      const strandedMidFile: string[] = [];
+      const parentageMismatches: string[] = [];
+      const launchBoilerplate: string[] = [];
+      const publishedMarkers: string[] = [];
+      const badAgentStatus: string[] = [];
+      const badInputStorage: string[] = [];
+      const badTextBytes: string[] = [];
+
+      for (const file of files) {
+        const lines = parsedLines(file);
+        const { events } = runPipeline(lines, { session_id: file, drift: new DriftCounter() });
+
+        // The harness names below are read HERE, in a test, which the one door
+        // exempts by path — the cross-check has to see the raw field to be a
+        // cross-check at all.
+        const callLine = new Map<string, ParsedLine>();
+        const resultIds: { id: string; parent: unknown }[] = [];
+        for (const line of lines) {
+          if (line.uuid === undefined) continue;
+          for (const block of contentBlocks(line)) {
+            if (block.kind === 'tool_use' && block.id !== '') callLine.set(block.id, line);
+            if (block.kind === 'tool_result') {
+              resultIds.push({ id: block.tool_call_id, parent: line.raw.sourceToolAssistantUUID });
+            }
+          }
+        }
+
+        // ⚠️ The LAST EMITTING line, not the file's last line. Measured
+        // 2026-08-19 on a session being archived mid-call: the in-flight `Agent`
+        // sat on line 1,007 of 1,012, and all 5 lines after it were uuid-LESS
+        // control lines (`last-prompt`, `ai-title`, `mode`) that project no row
+        // at all. A control line appended behind a pending call does not make
+        // the call less in flight, so the projection's own last row is the
+        // honest anchor — and it stays a tripwire, because a broken join strands
+        // calls with many emitting lines after them.
+        const lastEmitting = events.reduce(
+          (at, event) => (event.src_offset > at ? event.src_offset : at),
+          -1,
+        );
+
+        for (const { id, parent } of resultIds) {
+          const call = callLine.get(id);
+          if (call === undefined) {
+            orphans.push(`${file}: ${id}`);
+            continue;
+          }
+          pairs += 1;
+          // An INDEPENDENT parentage signal: the harness's own back-pointer must
+          // agree with the id join, or one of the two is wrong.
+          if (parent !== undefined && parent !== call.uuid) {
+            parentageMismatches.push(`${file}: ${id}`);
+          }
+        }
+
+        for (const event of events) {
+          if (event.kind !== 'tool_call') continue;
+
+          if (event.result_offset === undefined) {
+            // ⚠️ The COUNT of these is deliberately not asserted: the mirror is
+            // live, and the same walk read 1 at 03:28 — an in-flight
+            // `AskUserQuestion` on line 956 of 956 — and 0 minutes later. The
+            // SHAPE is the stronger tripwire anyway, because a harness change
+            // that breaks the join strands calls MID-file.
+            if (event.src_offset !== lastEmitting) strandedMidFile.push(`${file}: ${event.id}`);
+            continue;
+          }
+
+          if (event.name === 'Agent' && event.text?.startsWith(LAUNCH_MARKER) === true) {
+            launchBoilerplate.push(`${file}: ${event.id}`);
+          }
+          if (event.agent_status !== undefined) {
+            asyncAgents += 1;
+            // The OBSERVED subset, never `schema.ts`'s full enum: `killed` is
+            // witnessed once in the whole corpus, on a `Bash` notification and
+            // never on an Agent row, so asserting all four arms appear reds.
+            if (!['completed', 'failed', 'running'].includes(event.agent_status)) {
+              badAgentStatus.push(`${file}: ${event.agent_status}`);
+            }
+          }
+          if (event.output_storage === 'spill') spillClaims += 1;
+          if (event.input_storage === 'line_ref') lineRefInputs += 1;
+
+          // The storage label must agree with the size it was decided from.
+          const overCap = (event.input_bytes ?? 0) > INLINE_MAX;
+          if (event.input_storage === 'line_ref' ? !overCap : overCap) {
+            badInputStorage.push(`${file}: ${event.id}`);
+          }
+          if (event.input_storage === 'line_ref' && Buffer.byteLength(event.input!) > PREVIEW_MAX) {
+            badInputStorage.push(`${file}: ${event.id} preview over budget`);
+          }
+
+          if (event.output_storage === 'inline') {
+            inlineOutputs += 1;
+            if (event.text_bytes !== Buffer.byteLength(event.text!)) {
+              badTextBytes.push(`${file}: ${event.id}`);
+            }
+          }
+          if ((event.text_bytes === undefined) !== (event.output_storage === 'absent')) {
+            badTextBytes.push(`${file}: ${event.id} disagrees with its storage`);
+          }
+        }
+
+        for (const event of events) {
+          if (event.text?.startsWith(PERSISTED_MARKER) === true) {
+            publishedMarkers.push(`${file}: ${event.id}`);
+          }
+        }
+      }
+
+      expect(orphans.slice(0, 10)).toEqual([]);
+      expect(strandedMidFile.slice(0, 10)).toEqual([]);
+      expect(parentageMismatches.slice(0, 10)).toEqual([]);
+      expect(launchBoilerplate.slice(0, 10)).toEqual([]);
+      expect(publishedMarkers.slice(0, 10)).toEqual([]);
+      expect(badAgentStatus.slice(0, 10)).toEqual([]);
+      expect(badInputStorage.slice(0, 10)).toEqual([]);
+      expect(badTextBytes.slice(0, 10)).toEqual([]);
+
+      // Lower bounds, so no limb above can pass by selecting nothing.
+      expect(pairs).toBeGreaterThanOrEqual(MIN_TOOL_PAIRS);
+      expect(asyncAgents).toBeGreaterThanOrEqual(MIN_ASYNC_AGENTS);
+      expect(spillClaims).toBeGreaterThanOrEqual(MIN_SPILL_CLAIMS);
+      expect(lineRefInputs).toBeGreaterThanOrEqual(MIN_LINE_REF_INPUTS);
+      expect(inlineOutputs).toBeGreaterThanOrEqual(MIN_TOOL_PAIRS);
     },
     600000,
   );
