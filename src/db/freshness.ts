@@ -35,13 +35,34 @@ export interface ArchiveFold {
 }
 
 const TRANSCRIPT_EXT = '.jsonl';
+const SEALED_SUFFIX = '.zst';
 
 /**
  * Fold `max(child mtime)` and `sum(child size)` over a transcript and every file
  * below its sibling directory. `undefined` when the transcript itself is gone.
+ *
+ * ★ THE PARENT STAT FALLS BACK HOT -> SEALED, and it has to. `statSafe` on the
+ * logical path of a sealed session answers ENOENT, so without this limb the fold
+ * is `undefined`, the Tier-A row has no `file_mtime_ms`/`file_size` to bind, and
+ * `ensureProjected` answers `'failed'` forever — the session lists blank or not
+ * at all. Two of the archive's top-level transcripts are sealed today. No TOCTOU
+ * stat is needed for the same reason `read.ts:100-103` needs none: the
+ * transition is MONOTONIC, the mirror never appends to a sealed archive and
+ * nothing un-seals.
+ *
+ * For a sealed file the fold's `size` is the COMPRESSED size, not the logical
+ * one. That is correct: the fold is a freshness KEY, never a byte count
+ * (`sidecars.ts:242-245` — the pread takes `reader.size`). Sealing invalidates
+ * the row once, which reprojects idempotently, and sealed bytes are immutable
+ * after, so the key is stable forever.
+ *
+ * ⚠️ `walk`'s `sidecar_count` limb below still tests `.jsonl`, which is false for
+ * a sealed `agent-*.jsonl.zst` child. Zero such files exist today. Widening it
+ * moves the live-tail epoch for every session, so it belongs with whoever owns
+ * `fingerprint`.
  */
 export function foldArchive(archivePath: string): ArchiveFold | undefined {
-  const parent = statSafe(archivePath);
+  const parent = statSafe(archivePath) ?? statSafe(`${archivePath}${SEALED_SUFFIX}`);
   if (parent === undefined) return undefined;
 
   const fold: ArchiveFold = {

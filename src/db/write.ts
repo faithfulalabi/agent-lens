@@ -275,8 +275,11 @@ function writeProjection(
   db.prepare(WRITE_HEADER_SQL).run({
     // `project_path` is READ off the row the sweep wrote and never derived: the
     // archive stores the ENCODED project name while this column is the session's
-    // own cwd, and the two disagree for 38 of the 290 files that carry one. The
-    // COALESCE leaves the sweep's value when the fold supplied no cwd.
+    // own cwd, and the encoding maps `/` to `-` with no escaping, so decoding is
+    // lossy and a minority of files disagree with their own slug. This COALESCE
+    // is what corrects the sweep's best-effort seed; it leaves the seed in place
+    // when the fold supplied no cwd. (A ratio was quoted here and rotted within
+    // a week — the corpus grows hourly. The PROPERTY is what holds.)
     project_path: header.project_path ?? null,
     git_branch: header.git_branch ?? null,
     model: header.model ?? null,
@@ -510,10 +513,10 @@ interface RollupRow {
  * COALESCEd because `SUM`/`COUNT` over zero children returns NULL into a NOT
  * NULL column.
  *
- * The `sub_*` columns and `rollup_state` stay at their DDL defaults. The linkage
- * they sum over now exists — `parent_session_id` and `events.child_session_id`
- * are written above — but summing it belongs to task 4.1's second wave, which
- * owns projecting every child before a parent's total can mean anything.
+ * The `sub_*` columns and `rollup_state` stay at their DDL defaults here.
+ * `recomputeSubagentRollups` below owns them, and the corpus sweep's second wave
+ * calls it only after every child of `id` is projected — a parent's total means
+ * nothing before that.
  */
 export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
   // HUMAN turns only. The plain count is ~19x high: 101 human prompts against
@@ -537,4 +540,39 @@ export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
     cache_write: row.tokens_cache_write,
   });
   db.prepare('UPDATE sessions SET est_cost = ? WHERE id = ?').run(cost, id);
+}
+
+// TRANSITIVE: every aggregate sums each child's OWN column plus that child's own
+// `sub_*`, so a depth-2 grandchild reaches the top-level total. A direct-children
+// sum silently drops them, and the UI shows one number per top-level session.
+// This is why the sweep must project children before parents.
+//
+// `sub_est_cost` is deliberately NOT `COALESCE`d to 0. It mirrors `est_cost`,
+// whose DDL says "NULL = unpriceable model, NEVER 0"; the WHERE limb is what
+// keeps a tree of entirely unpriceable children NULL instead of a confident
+// zero. It sums the children's own costs rather than re-pricing summed tokens,
+// because children routinely run a different model from their parent.
+const SUBAGENT_ROLLUP_SQL = `UPDATE sessions SET
+    agent_count            = COALESCE((SELECT sum(1 + c.agent_count)                                FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_tool_call_count    = COALESCE((SELECT sum(c.tool_call_count    + c.sub_tool_call_count)     FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_error_count        = COALESCE((SELECT sum(c.error_count        + c.sub_error_count)         FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_tokens_in          = COALESCE((SELECT sum(c.tokens_in          + c.sub_tokens_in)           FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_tokens_out         = COALESCE((SELECT sum(c.tokens_out         + c.sub_tokens_out)          FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_tokens_cache_read  = COALESCE((SELECT sum(c.tokens_cache_read  + c.sub_tokens_cache_read)   FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_tokens_cache_write = COALESCE((SELECT sum(c.tokens_cache_write + c.sub_tokens_cache_write)  FROM sessions c WHERE c.parent_session_id = :id), 0),
+    sub_est_cost           =          (SELECT sum(COALESCE(c.est_cost, 0) + COALESCE(c.sub_est_cost, 0))
+                                         FROM sessions c
+                                        WHERE c.parent_session_id = :id
+                                          AND (c.est_cost IS NOT NULL OR c.sub_est_cost IS NOT NULL))
+  WHERE id = :id`;
+
+/**
+ * Recompute the sub-agent aggregates of one session from its child rows.
+ *
+ * A recompute, never delta arithmetic, so running it twice changes nothing. It
+ * does NOT touch `rollup_state` — flipping that is the sweep's statement that
+ * the whole descendant fixpoint was reached, which this function cannot know.
+ */
+export function recomputeSubagentRollups(db: DatabaseSync, id: string): void {
+  db.prepare(SUBAGENT_ROLLUP_SQL).run({ id });
 }
