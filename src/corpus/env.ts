@@ -13,7 +13,7 @@ import type { ProjectionEnv } from '../db/write.js';
 import { DriftCounter } from '../transcript/drift.js';
 import { classifyLine, type ParsedLine } from '../transcript/line.js';
 import type { ResolveEnv } from '../transcript/spill.js';
-import { sessionDirOf } from './paths.js';
+import { sessionRootOf } from './paths.js';
 
 /**
  * Split a transcript into classified lines carrying BYTE offsets.
@@ -65,7 +65,10 @@ export function createProjectionEnv(reader: ArchiveReader = createArchiveReader(
       // has been sealed exists only under that name, and probing the logical
       // path alone reports every sealed spill missing.
       exists: (path) => existsSync(path) || existsSync(`${path}.zst`),
-      sessionRoot: sessionDirOf(archivePath),
+      // `sessionRootOf`, not `sessionDirOf`: a sidecar's spills live in its
+      // GRANDPARENT. The bug was masked because every declared source path still
+      // exists, so `resolvePersistedOutput` never reached the re-anchor.
+      sessionRoot: sessionRootOf(archivePath),
     }),
 
     sidecars: (archivePath, sourcePath, toolUseIds) =>

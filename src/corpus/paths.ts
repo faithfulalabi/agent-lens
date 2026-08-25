@@ -92,8 +92,27 @@ export function subagentsDirOf(archivePath: string): string {
   return join(sessionDirOf(archivePath), SUBAGENTS_DIR);
 }
 
+/**
+ * The session directory a transcript's `tool-results/` hangs off. For a SIDECAR
+ * this is the grandparent, not the sibling: `spill.ts:80-81` states the rule and
+ * `discover.ts:11` enforces it, mirroring `tool-results/` only under
+ * `<slug>/<stem>/`. Measured 2026-08-25 over 53 structured spill references: 34
+ * sit in `subagents/agent-*.jsonl` and 0 of 65 archive `tool-results/` files sit
+ * under `subagents/`, so `sessionDirOf` alone re-anchors 19 of 53 and this
+ * re-anchors 53 of 53.
+ *
+ * The cut is on the LAST `/subagents/`, so the `subagents/workflows/wf_<id>/`
+ * pocket lands on the same root as a flat sidecar.
+ */
+export function sessionRootOf(archivePath: string): string {
+  const cut = archivePath.lastIndexOf(`/${SUBAGENTS_DIR}/`);
+  return cut === -1 ? sessionDirOf(archivePath) : archivePath.slice(0, cut);
+}
+
+/** Where a transcript's spilled tool results are mirrored. Anchored at
+ *  {@link sessionRootOf}, so a sidecar resolves to its parent's directory. */
 export function toolResultsDirOf(archivePath: string): string {
-  return join(sessionDirOf(archivePath), TOOL_RESULTS_DIR);
+  return join(sessionRootOf(archivePath), TOOL_RESULTS_DIR);
 }
 
 /**

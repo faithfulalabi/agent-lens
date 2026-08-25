@@ -168,8 +168,14 @@ export interface EventRow {
 }
 
 /**
- * The coordinates `GET /api/events/:id/content` dispatches on. No join: the
- * archive path is derivable from `session_id`, which task 4.4 resolves.
+ * The coordinates `GET /api/events/:id/content` dispatches on. No join, so the
+ * archive path is a SECOND read — {@link readEventArchivePath}, keyed on
+ * `session_id`.
+ *
+ * CORRECTED 2026-08-25 (task 4.4): this comment previously said the archive path
+ * was "derivable from `session_id`". It is not. A top-level archive path is
+ * `<root>/<slug>/<id>.jsonl` and the slug is not recoverable from the id;
+ * `corpus/paths.ts` has `rowIdOf` and no inverse.
  */
 export interface EventContentRow {
   id: string;
@@ -493,6 +499,27 @@ export function readEventContentRow(
   return db
     .prepare(`SELECT ${EVENT_CONTENT_COLUMNS} FROM events WHERE id = ?`)
     .get(event_id) as unknown as EventContentRow | undefined;
+}
+
+/** Where a session's bytes live, and whose sidecar it is. */
+export interface EventArchive {
+  archive_path: string;
+  /** Non-null on a sidecar. It names the session whose `tool-results/` holds the
+   *  spills, which is what a sidecar's own directory never does. */
+  parent_session_id: string | null;
+}
+
+/**
+ * The archive path an `events.src_offset` is relative to. A sidecar IS a
+ * `sessions` row (`schema.ts:44`), so one lookup answers for both.
+ */
+export function readEventArchivePath(
+  db: DatabaseSync,
+  session_id: string,
+): EventArchive | undefined {
+  return db
+    .prepare(`SELECT archive_path, parent_session_id FROM sessions WHERE id = ?`)
+    .get(session_id) as unknown as EventArchive | undefined;
 }
 
 // --- Search ----------------------------------------------------------------

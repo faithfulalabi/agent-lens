@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   countUnprojected,
   readDriftRows,
+  readEventArchivePath,
   readEventContentRow,
   readEventPage,
   readProjects,
@@ -300,6 +301,25 @@ describe('AC1 — the eight query families return the spec shapes', () => {
     expect(keysOf(row)).toEqual(EVENT_CONTENT_KEYS);
     expect(row.input_storage).toBe('inline');
     expect(readEventContentRow(db, 'no-such-event')).toBeUndefined();
+  });
+
+  it('6b. readEventArchivePath answers for a session, a sidecar, and nothing else', () => {
+    const id = seedFull();
+    const parent = readEventArchivePath(db, id)!;
+    expect(keysOf(parent)).toEqual(['archive_path', 'parent_session_id']);
+    expect(parent.archive_path).toBe(join('/Users/dev/.agent-lens/archive', `${id}.jsonl`));
+    // A top-level session is the row with no parent — the `idx_sessions_recent`
+    // predicate the list depends on.
+    expect(parent.parent_session_id).toBeNull();
+
+    // A sidecar IS a `sessions` row, so one lookup answers for both.
+    const kid = seedSidecarRow(db, id, { id: 'kid-session' });
+    expect(readEventArchivePath(db, kid)).toEqual({
+      archive_path: join('/Users/dev/.agent-lens/archive', `${kid}.jsonl`),
+      parent_session_id: id,
+    });
+
+    expect(readEventArchivePath(db, 'no-such-session')).toBeUndefined();
   });
 
   it('7. searchEvents returns SearchHit rows joined to their session (:349-354)', () => {
