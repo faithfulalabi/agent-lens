@@ -3,7 +3,7 @@
 // `__tests__/sql-one-door.test.ts` is what makes that a fact rather than a
 // comment.
 //
-// **This module never projects.** `ensureProjected` (`freshness.ts:129`) does
+// **This module never projects.** `ensureProjectedFold` (`freshness.ts:163`) does
 // `readdirSync` + `statSync` and can trigger a full reprojection; the caller
 // must have run it before `readSessionHeader`/`readEventPage`/`readTurns`.
 // `spec/data-model-v2.md:295` puts that gate on the route. Nothing here opens a
@@ -556,6 +556,45 @@ export function readDriftRows(db: DatabaseSync): DriftRow[] {
        WHERE projection_state = 'ready'`,
     )
     .all() as unknown as DriftRow[];
+}
+
+// --- Health ----------------------------------------------------------------
+
+/** The three `GET /api/health` numbers that are counted rather than stored. */
+export interface HealthCounts {
+  sessions_indexed: number;
+  sessions_projected: number;
+  db_bytes: number;
+}
+
+/**
+ * `projected` is the exact complement of {@link countUnprojected}, so the two
+ * always sum to `sessions_indexed`. `db_bytes` comes from the page counters
+ * rather than a `statSync`, which keeps `fs` as well as SQL out of the route.
+ */
+export function readHealthCounts(db: DatabaseSync): HealthCounts {
+  const sessions = db
+    .prepare(
+      `SELECT count(*) AS sessions_indexed,
+       coalesce(sum(projection_state IN ('ready', 'empty')), 0) AS sessions_projected
+     FROM sessions`,
+    )
+    .get() as unknown as Omit<HealthCounts, 'db_bytes'>;
+  const pages = db.prepare('PRAGMA page_count').get() as unknown as { page_count: number };
+  const size = db.prepare('PRAGMA page_size').get() as unknown as { page_size: number };
+  return { ...sessions, db_bytes: pages.page_count * size.page_size };
+}
+
+/**
+ * Events in one session's projection, for what `POST .../reproject` reports it
+ * wrote. There is no counterpart for turns because `sessions.turn_count` is a
+ * column the projection already stamps.
+ */
+export function readEventCount(db: DatabaseSync, session_id: string): number {
+  const row = db
+    .prepare('SELECT count(*) AS n FROM events WHERE session_id = ?')
+    .get(session_id) as unknown as { n: number };
+  return row.n;
 }
 
 // --- Corpus sweep ----------------------------------------------------------

@@ -3,6 +3,7 @@
 // socket. The DB handle, token, and broadcaster are injected by `startServer`.
 
 import { Hono } from 'hono';
+import type { ErrorHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { DatabaseSync } from 'node:sqlite';
 import { deadLetterRaw, getAllEventsOrdered, ingestHealth } from '../db/index.js';
@@ -11,6 +12,7 @@ import { hostGuard, resolveBindHosts } from './middleware/host-guard.js';
 import { tokenAuth } from './middleware/token-auth.js';
 import { ingestEnvelope, isValidEnvelopeShape } from './ingest.js';
 import { jsonNotFound, registerReadApi } from './read-api.js';
+import { jsonNotFound as apiNotFound, registerApi, type ApiDeps } from './api.js';
 import { Broadcaster } from './sse.js';
 import { DeltaPublisher } from './deltas.js';
 import { registerStreamApi } from './stream-api.js';
@@ -178,6 +180,87 @@ export function buildApp(deps: AppDeps): Hono {
     }
     return c.text('Internal Server Error', 500);
   });
+
+  return app;
+}
+
+/**
+ * An uncaught throw would otherwise be hono's `500 text/plain`, which every
+ * `/api/*` contract forbids. Scoped to `/api/` so `/` keeps today's behaviour;
+ * `onError` is a hook, so where it is registered does not matter.
+ *
+ * `buildApp` carries its own identical copy inline rather than calling this one:
+ * that function is Task 4.5's to delete whole, and reaching into it to share a
+ * helper is the in-place rewrite this task exists to avoid.
+ */
+const jsonErrorOnApiPaths: ErrorHandler = (err, c) => {
+  if ('getResponse' in err) {
+    const res = err.getResponse();
+    return c.newResponse(res.body, res);
+  }
+  console.error(err);
+  if (c.req.path.startsWith('/api/')) {
+    return c.json({ error: 'internal error' }, 500);
+  }
+  return c.text('Internal Server Error', 500);
+};
+
+/** Wiring the v2 app needs. `ApiDeps.env` is required and stays required. */
+export interface ApiAppDeps extends ApiDeps {
+  token: string;
+  /** Configured bind host; a non-loopback value widens the Host allowlist. */
+  host?: string;
+  /** `ui/dist` override; defaults to `resolveUiDir()`. Tests inject a fake bundle. */
+  uiDir?: string;
+}
+
+/**
+ * The v2 app: the ten routes of `api.ts`, the same middleware, the same order.
+ *
+ * ★ IT LANDS ALONGSIDE `buildApp`, WHICH IS UNTOUCHED. RFC 002:375-378 is
+ * explicit that this is not incremental — build the new surface with no callers,
+ * switch the UI, then delete. Rewriting `buildApp` in place would break
+ * `start.ts:241` and every test under `server/__tests__/`, all of which boot the
+ * plan-001 schema. Task 4.5 deletes `buildApp` and this comment with it.
+ *
+ * ★ REGISTRATION ORDER IS THE LOAD-BEARING PART, and every step below was
+ * re-probed on hono 4.12.31. Hono matches in registration order, first match
+ * wins. Each position carries its reason at the line that depends on it.
+ *
+ * The routes deleted in v2 — `POST /api/ingest`, `GET /api/events`, the legacy
+ * broadcaster stream and every hook-facing route (spec:398-399) — are simply
+ * never registered, so they reach the JSON-404 terminator like any other
+ * unclaimed API path.
+ */
+export function buildApiApp(deps: ApiAppDeps): Hono {
+  const { token, host, uiDir } = deps;
+  const app = new Hono();
+
+  // App-wide host allowlist, before anything else.
+  app.use('*', hostGuard(host === undefined ? [] : resolveBindHosts(host)));
+
+  // The index with the token bootstrap injected: deliberately NOT token-guarded,
+  // and registered ahead of `tokenAuth` so it stays that way.
+  app.get('/', makeServeIndex({ token, uiDir }));
+
+  // Everything under /api/* is token-guarded.
+  app.use('/api/*', tokenAuth(token));
+
+  registerApi(app, deps);
+
+  // Terminator, and its position is load-bearing: an `app.all('/api/*')` placed
+  // before `/api/stream` shadows it and 404s the SSE endpoint (probed). Last
+  // among the `/api` routes, it turns an unmatched API path into a JSON 404 and
+  // stops it falling through to the SPA fallback registered just below.
+  app.all('/api/*', apiNotFound);
+
+  // The UI, LAST. `registerUi` ends in a catch-all `app.get('*')`, so every
+  // `/api` route above — terminator included — must be claimed before it, and
+  // nothing may be registered after `buildApiApp` returns, not even a specific
+  // path (`static-serving.test.ts` Test 13 pins that for `buildApp`).
+  registerUi(app, { token, uiDir });
+
+  app.onError(jsonErrorOnApiPaths);
 
   return app;
 }

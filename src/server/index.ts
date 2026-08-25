@@ -7,8 +7,8 @@ export { ingestEnvelope, ingestBatch, isValidEnvelopeShape, BATCH_SIZE } from '.
 export type { IngestResult, IngestBatchItem, IngestBatchOptions } from './ingest.js';
 export { Broadcaster } from './sse.js';
 export type { Subscriber } from './sse.js';
-export { buildApp } from './app.js';
-export type { AppDeps } from './app.js';
+export { buildApp, buildApiApp } from './app.js';
+export type { AppDeps, ApiAppDeps } from './app.js';
 export { registerReadApi, jsonNotFound } from './read-api.js';
 export {
   DeltaPublisher,

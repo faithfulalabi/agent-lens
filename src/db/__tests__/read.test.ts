@@ -557,6 +557,16 @@ describe('AC4 — has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
       present: false,
       why: 'Q4 rules the harness_versions tally into the MAPPER, so this selects raw rows and holds no count today. Present:false is the guard — a GROUP BY harness_version landing here must flip this flag, which is the review.',
     },
+    {
+      fragment: 'readHealthCounts',
+      present: true,
+      why: 'GET /api/health reports sessions_indexed and sessions_projected by name (data-model-v2.md:394-396). Both are corpus totals over `sessions`, not a page total, and sessions_projected is the exact complement of countUnprojected.',
+    },
+    {
+      fragment: 'readEventCount',
+      present: true,
+      why: 'POST /api/sessions/:id/reproject reports event_count (data-model-v2.md:373-375). An exact total over one session on the session index — the LIMIT n+1 probe cannot answer a total, and paging every event into the route to length it would be worse. Turns need no twin: sessions.turn_count is a stamped column.',
+    },
   ];
 
   /**
