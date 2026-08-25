@@ -21,6 +21,13 @@
 // over — once for the parent and once per child — and repeats it on every live
 // tick, because `freshness.ts` invalidates the parent whenever any child grows.
 // Measured: 3.97 MB / 130 reads / 3.6 ms warm, per repetition.
+//
+// ★ TWO ENVELOPE READERS OVER ONE GROWTH POLICY. `windows` takes the two preads
+// at a given size; `headTail` decodes the two end lines and `readSessionEnvelope`
+// folds every whole line in both windows. They differ ONLY in what makes the
+// window big enough — end-line wholeness for a sidecar, envelope completeness
+// for a top-level session, which opens with a control line carrying neither
+// `cwd` nor `timestamp`. The policy is shared so the two cannot drift.
 
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,7 +35,7 @@ import { createArchiveReader, type ArchiveReader } from '../archive/read.js';
 import type { SidecarDescriptor, SidecarEnvelope } from '../project/subagents.js';
 import { parseAgentMeta } from '../transcript/agents.js';
 import { DriftCounter } from '../transcript/drift.js';
-import { classifyLine, foldSessionEnvelope } from '../transcript/line.js';
+import { classifyLine, foldSessionEnvelope, type ParsedLine } from '../transcript/line.js';
 import { foldArchive } from './freshness.js';
 
 const SUBAGENTS_DIR = 'subagents';
@@ -115,6 +122,28 @@ function lastLine(buf: Buffer, base: number, whole: boolean): WindowLine | undef
   return whole ? { text: buf.subarray(0, end).toString('utf8'), byteOffset: base } : undefined;
 }
 
+/** Both ends of a file at one window size. The tail always ends at EOF. */
+interface Windows {
+  head: Buffer;
+  tail: Buffer;
+  /** Byte offset the tail window starts at. */
+  base: number;
+  /** The window covers the whole file, so both buffers are the file. */
+  whole: boolean;
+}
+
+/** One growth step: the two positional reads, undecoded. */
+function windows(reader: ArchiveReader, path: string, size: number, window: number): Windows {
+  const span = window >= size ? size : window;
+  const base = size - span;
+  return {
+    head: reader.read(path, 0, span),
+    tail: reader.read(path, base, span),
+    base,
+    whole: span === size,
+  };
+}
+
 /**
  * The transcript's first and last lines, by two positional reads that grow until
  * both are whole.
@@ -122,6 +151,10 @@ function lastLine(buf: Buffer, base: number, whole: boolean): WindowLine | undef
  * Undefined when the cap is reached with either end still unterminated: a
  * truncated head is a guessed span, and a guessed span is exactly what
  * `duration_source` exists to make impossible.
+ *
+ * ★ KEYED ON END-LINE WHOLENESS, which is right for a SIDECAR and wrong for a
+ * top-level session — see `readSessionEnvelope`. Unchanged behaviour, now built
+ * on `windows` so the growth policy exists once.
  */
 function headTail(
   reader: ArchiveReader,
@@ -131,15 +164,128 @@ function headTail(
   if (size === 0) return undefined;
 
   for (let window = START_WINDOW; ; window *= 2) {
-    const span = window >= size ? size : window;
-    const whole = span === size;
-    const base = size - span;
-
-    const head = firstLine(reader.read(path, 0, span), whole);
-    const tail = lastLine(reader.read(path, base, span), base, whole);
+    const at = windows(reader, path, size, window);
+    const head = firstLine(at.head, at.whole);
+    const tail = lastLine(at.tail, at.base, at.whole);
     if (head !== undefined && tail !== undefined) return [head, tail];
-    if (whole || window >= MAX_WINDOW) return undefined;
+    if (at.whole || window >= MAX_WINDOW) return undefined;
   }
+}
+
+/**
+ * Every newline-terminated line in a window, with archive-relative byte offsets.
+ *
+ * A leading partial is dropped unless the window starts at byte 0, and a
+ * trailing partial unless the window ends the file — which the tail window
+ * always does.
+ */
+function wholeLines(buf: Buffer, base: number, atEof: boolean): WindowLine[] {
+  const lines: WindowLine[] = [];
+  const push = (from: number, to: number): void => {
+    let end = to;
+    while (end > from && (buf[end - 1] === NEWLINE || buf[end - 1] === CARRIAGE_RETURN)) end -= 1;
+    if (end > from) {
+      lines.push({ text: buf.subarray(from, end).toString('utf8'), byteOffset: base + from });
+    }
+  };
+
+  let start = 0;
+  if (base > 0) {
+    const at = buf.indexOf(NEWLINE);
+    if (at === -1) return lines;
+    start = at + 1;
+  }
+  for (;;) {
+    const at = buf.indexOf(NEWLINE, start);
+    if (at === -1) break;
+    push(start, at);
+    start = at + 1;
+  }
+  if (atEof) push(start, buf.length);
+  return lines;
+}
+
+/**
+ * The three NOT NULL session columns, folded from every WHOLE line in both
+ * windows rather than from the two end lines.
+ *
+ * ★ THE GROWTH LOOP KEYS ON ENVELOPE COMPLETENESS, not end-line wholeness, and
+ * that is the whole difference from `headTail`. All 26 hot top-level transcripts
+ * open with a `type:"mode"` control line carrying neither `cwd` nor `timestamp`,
+ * so the two-end fold gets `started_at` right 0 times out of 26 and `cwd` 7. The
+ * windowed fold gets `project_path` and `last_activity_at` exact 26/26. A
+ * wholeness-keyed loop would return the moment both ends parse and never grow
+ * for a missing `cwd`, so a transcript whose first cwd-bearing line moved past
+ * 16 KB would fold to `project_path === undefined` and be dropped silently.
+ * Today's maximum such offset is 660 B, a 24.8x margin — thin enough to defend.
+ *
+ * `projectPathSeed` is consulted ONLY at the cap, and only when both timestamps
+ * folded. It is the encoded directory name decoded back, which is lossy by
+ * construction — a seed, not an answer, and `WRITE_HEADER_SQL`'s COALESCE
+ * replaces it with the header's own `cwd` at the first projection. Consulting it
+ * earlier would stop the loop growing and defeat the completeness key. Omit it
+ * and the reader is all-three-or-nothing.
+ *
+ * Undefined at the cap with no seed, or with either timestamp missing — the two
+ * timestamps have no fallback anywhere. That is a REPORTED outcome for the
+ * caller, never a silent skip: `SweepReport.envelope_incomplete` records the path.
+ */
+export function readSessionEnvelope(
+  reader: ArchiveReader,
+  path: string,
+  projectPathSeed?: string,
+): SidecarEnvelope | undefined {
+  // The whole read is inside the catch, for the reason `readEnvelope` states.
+  try {
+    const size = reader.size(path);
+    if (size === 0) return undefined;
+
+    for (let window = START_WINDOW; ; window *= 2) {
+      const at = windows(reader, path, size, window);
+      const lines = at.whole
+        ? wholeLines(at.head, 0, true)
+        : [...wholeLines(at.head, 0, false), ...wholeLines(at.tail, at.base, true)];
+
+      const { project_path, started_at, last_activity_at } = foldSessionEnvelope(
+        parseWindow(lines),
+      );
+      const atCap = at.whole || window >= MAX_WINDOW;
+
+      if (started_at !== undefined && last_activity_at !== undefined) {
+        if (project_path !== undefined) return { project_path, started_at, last_activity_at };
+        if (atCap && projectPathSeed !== undefined) {
+          return { project_path: projectPathSeed, started_at, last_activity_at };
+        }
+      }
+      if (atCap) return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Classify a window's lines through one throwaway counter. A line that is not
+ * JSON is skipped rather than fatal: over a window, one malformed line must not
+ * cost the other 200 their envelope.
+ */
+function parseWindow(lines: readonly WindowLine[]): ParsedLine[] {
+  const drift = new DriftCounter();
+  const parsed: ParsedLine[] = [];
+  for (const line of lines) {
+    try {
+      parsed.push(
+        classifyLine(JSON.parse(line.text), {
+          byteOffset: line.byteOffset,
+          byteLength: Buffer.byteLength(line.text, 'utf8'),
+          drift,
+        }),
+      );
+    } catch {
+      continue;
+    }
+  }
+  return parsed;
 }
 
 /**

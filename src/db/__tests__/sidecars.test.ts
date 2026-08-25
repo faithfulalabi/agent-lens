@@ -10,8 +10,10 @@ import { rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
 import { createArchiveReader, type ArchiveReader } from '../../archive/read.js';
-import { foldSessionEnvelope } from '../../transcript/line.js';
-import { enclosingSubagentsDir, readSidecars } from '../sidecars.js';
+import { classifyLine, foldSessionEnvelope } from '../../transcript/line.js';
+import { DriftCounter } from '../../transcript/drift.js';
+import type { SidecarEnvelope } from '../../project/subagents.js';
+import { enclosingSubagentsDir, readSessionEnvelope, readSidecars } from '../sidecars.js';
 import {
   bytesRead,
   countingReader,
@@ -403,5 +405,207 @@ describe('AC3 — the resolver preads only the sidecars this session launched', 
     expect(found[0]!.source_path).toBe(
       join(sb().sourceRoot, 'fanout', 'subagents', 'agent-B3.jsonl'),
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 4.1 — the `headTail` split, and the session envelope reader built on it.
+
+/**
+ * `headTail` + `readEnvelope` EXACTLY as they were before the `windows` split.
+ *
+ * Kept here so the refactor is checkable by differential rather than by reading:
+ * the two implementations must agree on every input, or the split changed
+ * behaviour the sidecar path depends on for 269 of 269 real files.
+ */
+const OLD_START_WINDOW = 16 * 1024;
+const OLD_MAX_WINDOW = 1024 * 1024;
+
+function oldEnvelope(reader: ArchiveReader, path: string): SidecarEnvelope | undefined {
+  try {
+    const size = reader.size(path);
+    if (size === 0) return undefined;
+
+    let ends:
+      [{ text: string; byteOffset: number }, { text: string; byteOffset: number }] | undefined;
+    for (let window = OLD_START_WINDOW; ; window *= 2) {
+      const span = window >= size ? size : window;
+      const whole = span === size;
+      const base = size - span;
+
+      const headBuf = reader.read(path, 0, span);
+      const tailBuf = reader.read(path, base, span);
+      const head = oldFirstLine(headBuf, whole);
+      const tail = oldLastLine(tailBuf, base, whole);
+      if (head !== undefined && tail !== undefined) {
+        ends = [head, tail];
+        break;
+      }
+      if (whole || window >= OLD_MAX_WINDOW) return undefined;
+    }
+
+    const drift = new DriftCounter();
+    const envelope = foldSessionEnvelope(
+      ends.map((end) =>
+        classifyLine(JSON.parse(end.text) as Record<string, unknown>, {
+          byteOffset: end.byteOffset,
+          byteLength: Buffer.byteLength(end.text, 'utf8'),
+          drift,
+        }),
+      ),
+    );
+    const { project_path, started_at, last_activity_at } = envelope;
+    if (project_path === undefined) return undefined;
+    if (started_at === undefined || last_activity_at === undefined) return undefined;
+    return { project_path, started_at, last_activity_at };
+  } catch {
+    return undefined;
+  }
+}
+
+function oldFirstLine(
+  buf: Buffer,
+  whole: boolean,
+): { text: string; byteOffset: number } | undefined {
+  const at = buf.indexOf(0x0a);
+  if (at !== -1) return { text: buf.subarray(0, at).toString('utf8'), byteOffset: 0 };
+  return whole ? { text: buf.toString('utf8'), byteOffset: 0 } : undefined;
+}
+
+function oldLastLine(
+  buf: Buffer,
+  base: number,
+  whole: boolean,
+): { text: string; byteOffset: number } | undefined {
+  let end = buf.length;
+  while (end > 0 && (buf[end - 1] === 0x0a || buf[end - 1] === 0x0d)) end -= 1;
+  const at = buf.subarray(0, end).lastIndexOf(0x0a);
+  if (at !== -1) {
+    return { text: buf.subarray(at + 1, end).toString('utf8'), byteOffset: base + at + 1 };
+  }
+  return whole ? { text: buf.subarray(0, end).toString('utf8'), byteOffset: base } : undefined;
+}
+
+/** Enough `type:"mode"` control lines to push the next line past `bytes`. */
+function padToOffset(bytes: number): unknown[] {
+  const filler = { type: 'mode', mode: 'x'.repeat(200) };
+  const each = JSON.stringify(filler).length + 1;
+  return Array.from({ length: Math.ceil(bytes / each) }, () => filler);
+}
+
+/**
+ * The shape fact 4 says is dropped silently today: BOTH end lines are whole and
+ * carry neither `cwd` nor `timestamp`, and the only lines that carry them sit
+ * past the 16 KB start window at either end.
+ */
+function buriedEnvelopeRecords(): unknown[] {
+  return [...padToOffset(20 * 1024), ...sidecarRecords(1, 9), ...padToOffset(20 * 1024)];
+}
+
+describe('BLOCKING 2 — the headTail split is behaviour-preserving', () => {
+  it('agrees with the pre-refactor reader on every sidecar shape', () => {
+    const tree = plantTree('differential');
+    const reader = createArchiveReader();
+
+    const shapes: [string, readonly unknown[] | string][] = [
+      ['normal', sidecarRecords(1, 9)],
+      ['one-line', [humanLine('solo', TS(3))]],
+      ['no-trailing-newline', jsonl([humanLine('a', TS(1)), humanLine('b', TS(2))]).slice(0, -1)],
+      ['no-cwd', [{ type: 'mode', mode: 'default' }]],
+      ['unterminated-giant', `{"type":"user","x":"${'y'.repeat(200000)}"`],
+      ['empty', ''],
+      ['big-head', padToOffset(20 * 1024).concat(sidecarRecords(1, 9))],
+    ];
+
+    for (const [name, content] of shapes) {
+      const path = writeSidecarTranscript(tree.subagents, name, content);
+      expect(readEnvelopeVia(reader, path), `${name} disagreed`).toEqual(oldEnvelope(reader, path));
+    }
+  });
+});
+
+/** `readEnvelope` is module-private; `readSidecars` is the only way in. */
+function readEnvelopeVia(reader: ArchiveReader, path: string): SidecarEnvelope | undefined {
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  const stem = path.slice(dir.length + 1, -'.jsonl'.length);
+  const agentId = stem.slice('agent-'.length);
+  writeSidecarMeta(dir, agentId, { toolUseId: `probe-${agentId}`, agentType: 'Explore' });
+
+  const parent = join(dir.slice(0, dir.lastIndexOf('/subagents')) + '.jsonl');
+  const found = readSidecars(parent, parent, new Set([`probe-${agentId}`]), reader);
+  return found[0]?.envelope;
+}
+
+describe('BLOCKING 3 — the growth loop keys on ENVELOPE COMPLETENESS', () => {
+  it('finds a cwd that begins past the 16 KB start window', () => {
+    const tree = plantTree('completeness');
+    // End lines whole at every window size, but the first cwd-bearing line sits
+    // past START_WINDOW — the shape `headTail` cannot defend, because it returns
+    // the moment both ends parse.
+    const path = writeSidecarTranscript(tree.subagents, 'deepcwd', buriedEnvelopeRecords());
+
+    const reader = createArchiveReader();
+    const envelope = readSessionEnvelope(reader, path);
+    expect(envelope?.project_path).toBe(CWD);
+    expect(envelope?.started_at).toBe(TS(1));
+    expect(envelope?.last_activity_at).toBe(TS(9));
+  });
+
+  it('mutation control: the wholeness-keyed loop returns undefined on the same file', () => {
+    const tree = plantTree('control');
+    const path = writeSidecarTranscript(tree.subagents, 'deepcwd', buriedEnvelopeRecords());
+
+    // The defence is NEW. `oldEnvelope` is the pre-refactor loop verbatim, and
+    // it drops this file: both end lines are whole at 16 KB, so it never grows,
+    // and neither end carries a cwd.
+    expect(oldEnvelope(createArchiveReader(), path)).toBeUndefined();
+  });
+
+  it('reports a file whose cwd never arrives, rather than guessing one', () => {
+    const tree = plantTree('nocwd');
+    const path = writeSidecarTranscript(tree.subagents, 'nocwd', [
+      { type: 'mode', mode: 'default', timestamp: TS(1) },
+      { type: 'mode', mode: 'plan', timestamp: TS(9) },
+    ]);
+
+    // No seed: all three or nothing, which is what the sidecar path needs.
+    expect(readSessionEnvelope(createArchiveReader(), path)).toBeUndefined();
+
+    // With a seed, the two timestamps still decide it — and the seed is the
+    // value WRITE_HEADER_SQL's COALESCE replaces at the first projection.
+    const seeded = readSessionEnvelope(createArchiveReader(), path, '/seeded/path');
+    expect(seeded).toEqual({
+      project_path: '/seeded/path',
+      started_at: TS(1),
+      last_activity_at: TS(9),
+    });
+  });
+
+  it('never invents a timestamp — those have no seed anywhere', () => {
+    const tree = plantTree('nots');
+    const path = writeSidecarTranscript(tree.subagents, 'nots', [
+      { type: 'mode', mode: 'default', cwd: CWD },
+    ]);
+    expect(readSessionEnvelope(createArchiveReader(), path, '/seeded/path')).toBeUndefined();
+  });
+
+  it('folds the whole window, so a session opening on a control line still resolves', () => {
+    const tree = plantTree('modehead');
+    const path = writeSidecarTranscript(tree.subagents, 'modehead', [
+      { type: 'mode', mode: 'default' },
+      ...sidecarRecords(2, 8),
+    ]);
+
+    const windowed = readSessionEnvelope(createArchiveReader(), path);
+    const twoEnds = oldEnvelope(createArchiveReader(), path);
+
+    expect(windowed).toEqual({
+      project_path: CWD,
+      started_at: TS(2),
+      last_activity_at: TS(8),
+    });
+    // The two-end fold reads the control line as the head, so `started_at` is
+    // the LATER of the two ends rather than the file's first timestamp.
+    expect(twoEnds?.started_at).not.toBe(windowed?.started_at);
   });
 });
