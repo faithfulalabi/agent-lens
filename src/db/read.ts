@@ -557,3 +557,48 @@ export function readDriftRows(db: DatabaseSync): DriftRow[] {
     )
     .all() as unknown as DriftRow[];
 }
+
+// --- Corpus sweep ----------------------------------------------------------
+// Not wire shapes: these four serve `src/corpus/`, which walks the archive and
+// diffs it against the rows below. They live here for the same reason the rest
+// does — the one door.
+
+/** The three freshness columns of one indexed session. */
+export interface IndexedRow {
+  archive_path: string;
+  file_mtime_ms: number;
+  file_size: number;
+}
+
+/** The whole Tier-A index in one query, keyed the way the walk diffs it. */
+export function readIndexedFolds(db: DatabaseSync): Map<string, IndexedRow> {
+  const rows = db
+    .prepare('SELECT archive_path, file_mtime_ms, file_size FROM sessions')
+    .all() as unknown as IndexedRow[];
+  return new Map(rows.map((row) => [row.archive_path, row]));
+}
+
+/** One `meta` value. `undefined` when the key was never written. */
+export function readMeta(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+    { value: string } | undefined;
+  return row?.value;
+}
+
+const TREE_ROOTS_SQL = `SELECT id FROM sessions
+  WHERE parent_session_id IS NULL AND rollup_state = 'own'
+  ORDER BY last_activity_at DESC, id DESC`;
+
+/** Top-level trees no sweep has rolled up yet, newest first. */
+export function readTreeRoots(db: DatabaseSync): string[] {
+  const rows = db.prepare(TREE_ROOTS_SQL).all() as unknown as { id: string }[];
+  return rows.map((row) => row.id);
+}
+
+/** The direct children of one session — wave 2's breadth-first frontier. */
+export function readChildSessionIds(db: DatabaseSync, session_id: string): string[] {
+  const rows = db
+    .prepare('SELECT id FROM sessions WHERE parent_session_id = ?')
+    .all(session_id) as unknown as { id: string }[];
+  return rows.map((row) => row.id);
+}

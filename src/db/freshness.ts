@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { statSafe } from '../archive/paths.js';
 import { PROJECTOR_VERSION } from '../transcript/version.js';
 import { SCHEMA_VERSION } from './schema.js';
-import { projectSession, type ProjectionEnv } from './write.js';
+import { projectSession, writeMeta, type ProjectionEnv } from './write.js';
 
 /** One session tree, folded. The three parts of the live-tail epoch string. */
 export interface ArchiveFold {
@@ -125,9 +125,8 @@ export function fingerprint(fold: ArchiveFold): string {
  * REPORT, never a gate: the gate is the per-row `projector_version` stamp.
  */
 export function seedMeta(db: DatabaseSync): void {
-  const write = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
-  write.run('schema_version', String(SCHEMA_VERSION));
-  write.run('projector_version', String(PROJECTOR_VERSION));
+  writeMeta(db, 'schema_version', String(SCHEMA_VERSION));
+  writeMeta(db, 'projector_version', String(PROJECTOR_VERSION));
 }
 
 /** What the gate did. `unindexed` means the corpus sweep has not seen the file. */
