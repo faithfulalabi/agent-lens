@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import type { Span } from '@shared/entities.ts';
-import type { Page, SessionDetail } from '@shared/api.ts';
+import type { SessionDetailBody } from '../api';
 
 import {
   SPAN_CAP,
@@ -16,7 +15,16 @@ import {
 } from '../session-data';
 import { buildTreeModel, flatten } from '../span-tree';
 import { initialNavState, navReducer } from '../tree-nav';
-import { atSecond, makePage, makeSession, makeSpan, makeTrace, stubApiClient } from './fixtures';
+import {
+  atSecond,
+  makeDetail,
+  makeEventRow,
+  makeSession,
+  makeSpan,
+  makeTrace,
+  makeTurnRow,
+  stubApiClient,
+} from './fixtures';
 
 /*
  * Task 5.3b's loading half — every decision the session page module would
@@ -32,49 +40,37 @@ import { atSecond, makePage, makeSession, makeSpan, makeTrace, stubApiClient } f
  *     selection/focus split was built to prevent.
  */
 
-/** A `SessionDetail` with the turns given and nothing surprising around them. */
-function detailOf(traceCount: number, hasMore = false): SessionDetail {
-  return {
-    session: makeSession(),
-    traces: makePage(
-      Array.from({ length: traceCount }, (_, i) =>
-        makeTrace({ id: `seed-s0:${i}`, turn_seq: i, prompt_preview: `turn ${i}` }),
-      ),
-      { has_more: hasMore },
+/** A detail body carrying `turnCount` turns and one page of `count` events. */
+function detailOf(
+  turnCount: number,
+  { events = 0, from = 0, hasMore = false, turnId = 'seed-s0:0' } = {},
+): SessionDetailBody {
+  return makeDetail({
+    turns: Array.from({ length: turnCount }, (_, i) =>
+      makeTurnRow({ id: `seed-s0:${i}`, seq: i, title: `turn ${i}` }),
     ),
-  };
-}
-
-/** A page of spans, all under one turn, ids and stamps derived from `offset`. */
-function spanPage(
-  count: number,
-  offset: number,
-  hasMore: boolean,
-  traceId = 'seed-s0:0',
-): Page<Span> {
-  return makePage(
-    Array.from({ length: count }, (_, i) =>
-      makeSpan({
-        id: `sp-${offset + i}`,
-        trace_id: traceId,
-        started_at: atSecond(offset + i),
-        ended_at: atSecond(offset + i + 1),
+    events: Array.from({ length: events }, (_, i) =>
+      makeEventRow({
+        id: `sp-${from + i}`,
+        turn_id: turnId,
+        seq: from + i,
+        ts: atSecond(from + i),
       }),
     ),
-    { has_more: hasMore },
-  );
+    next_seq: from + events,
+    has_more: hasMore,
+  });
 }
 
 /* ------------------------------------------- Test 17 — the page is real --- */
 
 describe('the span page is fetched at the session’s real size', () => {
-  it('states a limit far above the read API’s 100-row default', async () => {
+  it('states a limit far above the read API’s default', async () => {
     const queries: unknown[] = [];
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(1)),
-      listSpans: (_id, query) => {
+      getSession: (_id, query) => {
         queries.push(query);
-        return Promise.resolve(spanPage(3, 0, false));
+        return Promise.resolve(detailOf(1, { events: 3 }));
       },
     });
 
@@ -83,40 +79,33 @@ describe('the span page is fetched at the session’s real size', () => {
     expect(
       queries,
       'an omitted limit is not a loud failure — the server clamps rather than ' +
-        'rejecting, so a 5,000-span session would load its first 100 spans and ' +
-        'the tree would render a truncated session that looks whole.',
-    ).toEqual([{ limit: SPAN_PAGE, offset: 0 }]);
-    expect(SPAN_PAGE).toBeGreaterThan(100);
+        'rejecting, so a 5,000-event session would load its first page and the ' +
+        'tree would render a truncated session that looks whole.',
+    ).toEqual([{ limit: SPAN_PAGE }]);
+    expect(SPAN_PAGE).toBeGreaterThan(1000);
   });
 
-  it('asks for the turns at a stated limit too', async () => {
-    const pages: unknown[] = [];
+  it('follows has_more onto the next page using next_seq as the cursor', async () => {
+    const queries: { limit?: number; from_seq?: number }[] = [];
     const api = stubApiClient({
-      getSession: (_id, page) => {
-        pages.push(page);
-        return Promise.resolve(detailOf(2));
-      },
-      listSpans: () => Promise.resolve(spanPage(0, 0, false)),
-    });
-
-    await loadSessionSpans(api, 'seed-s0');
-    expect(pages).toEqual([{ limit: TRACE_PAGE }]);
-  });
-
-  it('follows has_more onto the next page and offsets by what it already holds', async () => {
-    const offsets: (number | undefined)[] = [];
-    const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(1)),
-      listSpans: (_id, query) => {
-        offsets.push(query?.offset);
-        const first = offsets.length === 1;
-        return Promise.resolve(spanPage(first ? 4 : 2, first ? 0 : 4, first));
+      getSession: (_id, query) => {
+        queries.push(query ?? {});
+        const first = queries.length === 1;
+        return Promise.resolve(
+          first
+            ? detailOf(1, { events: 4, from: 0, hasMore: true })
+            : detailOf(1, { events: 2, from: 4, hasMore: false }),
+        );
       },
     });
 
     const data = await loadSessionSpans(api, 'seed-s0');
 
-    expect(offsets, 'the second request starts where the first one stopped').toEqual([0, 4]);
+    // ★ A CURSOR, NOT AN OFFSET. The second request names the seq the first one
+    // stopped at; an offset scheme renumbers its whole page when the file grows
+    // mid-scroll, which is the state a live tail is in by definition.
+    expect(queries).toEqual([{ limit: SPAN_PAGE }, { limit: SPAN_PAGE, from_seq: 4 }]);
+    expect(queries[1], 'offset paging was replaced by the cursor').not.toHaveProperty('offset');
     expect(data.shown).toBe(6);
     expect(data.truncated).toBe(false);
   });
@@ -124,31 +113,42 @@ describe('the span page is fetched at the session’s real size', () => {
   it('stops rather than spinning when a page claims more but serves nothing', async () => {
     let calls = 0;
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(1)),
-      listSpans: () => {
+      getSession: () => {
         calls += 1;
         // A server bug, not a client one — and an unbounded loop here is a
         // frozen tab rather than an error anybody can read.
-        return Promise.resolve(spanPage(0, 0, true));
+        return Promise.resolve(detailOf(1, { events: 0, hasMore: true }));
       },
     });
 
     const data = await loadSessionSpans(api, 'seed-s0');
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
     expect(data.shown).toBe(0);
+  });
+
+  it('stops rather than spinning when next_seq fails to advance', async () => {
+    // The other non-termination a cursor can hit, and the one an offset loop
+    // could not: a server that answers `has_more` while repeating its cursor.
+    let calls = 0;
+    const api = stubApiClient({
+      getSession: () => {
+        calls += 1;
+        return Promise.resolve(detailOf(1, { events: 2, from: 0, hasMore: true }));
+      },
+    });
+
+    const data = await loadSessionSpans(api, 'seed-s0');
+    expect(calls).toBe(2);
+    expect(data.shown).toBe(2);
   });
 
   it('passes the abort signal through to every request it makes', async () => {
     const controller = new AbortController();
     const seen: unknown[] = [];
     const api = stubApiClient({
-      getSession: (_id, _page, options) => {
+      getSession: (_id, _query, options) => {
         seen.push(options?.signal);
-        return Promise.resolve(detailOf(1));
-      },
-      listSpans: (_id, _query, options) => {
-        seen.push(options?.signal);
-        return Promise.resolve(spanPage(1, 0, false));
+        return Promise.resolve(detailOf(1, { events: 1, hasMore: true }));
       },
     });
 
@@ -159,16 +159,20 @@ describe('the span page is fetched at the session’s real size', () => {
 
 /* --------------------------------------- the caller buckets by trace_id --- */
 
-describe('every span lands under its own trace_id', () => {
-  it('buckets a mixed page by the turn each span names', async () => {
-    const spans = [
-      makeSpan({ id: 'a1', trace_id: 'seed-s0:0' }),
-      makeSpan({ id: 'b1', trace_id: 'seed-s0:1' }),
-      makeSpan({ id: 'a2', trace_id: 'seed-s0:0' }),
-    ];
+describe('every event lands under the turn it names', () => {
+  it('buckets a mixed page by turn_id', async () => {
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(2)),
-      listSpans: () => Promise.resolve(makePage(spans)),
+      getSession: () =>
+        Promise.resolve(
+          makeDetail({
+            turns: [makeTurnRow({ id: 'seed-s0:0', seq: 0 }), makeTurnRow({ id: 'seed-s0:1', seq: 1 })],
+            events: [
+              makeEventRow({ id: 'a1', turn_id: 'seed-s0:0', seq: 0 }),
+              makeEventRow({ id: 'b1', turn_id: 'seed-s0:1', seq: 1 }),
+              makeEventRow({ id: 'a2', turn_id: 'seed-s0:0', seq: 2 }),
+            ],
+          }),
+        ),
     });
 
     const { spansByTrace } = await loadSessionSpans(api, 'seed-s0');
@@ -180,13 +184,15 @@ describe('every span lands under its own trace_id', () => {
 
   it('hands buildTreeModel a map it can use without any further sorting', async () => {
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(2)),
-      listSpans: () =>
+      getSession: () =>
         Promise.resolve(
-          makePage([
-            makeSpan({ id: 'a1', trace_id: 'seed-s0:0' }),
-            makeSpan({ id: 'b1', trace_id: 'seed-s0:1' }),
-          ]),
+          makeDetail({
+            turns: [makeTurnRow({ id: 'seed-s0:0', seq: 0 }), makeTurnRow({ id: 'seed-s0:1', seq: 1 })],
+            events: [
+              makeEventRow({ id: 'a1', turn_id: 'seed-s0:0', seq: 0 }),
+              makeEventRow({ id: 'b1', turn_id: 'seed-s0:1', seq: 1 }),
+            ],
+          }),
         ),
     });
 
@@ -197,22 +203,41 @@ describe('every span lands under its own trace_id', () => {
     expect(model.unmatchedSpanCount).toBe(0);
   });
 
-  it('counts spans whose turn fell off the trace page rather than dropping them', async () => {
+  it('counts events whose turn fell off the turn page rather than dropping them', async () => {
     const api = stubApiClient({
-      // One turn on the page; the span names a second turn that is not on it.
-      getSession: () => Promise.resolve(detailOf(1, true)),
-      listSpans: () =>
+      getSession: () =>
         Promise.resolve(
-          makePage([
-            makeSpan({ id: 'a1', trace_id: 'seed-s0:0' }),
-            makeSpan({ id: 'z1', trace_id: 'seed-s0:99' }),
-          ]),
+          makeDetail({
+            turns: [makeTurnRow({ id: 'seed-s0:0', seq: 0 })],
+            events: [
+              makeEventRow({ id: 'a1', turn_id: 'seed-s0:0', seq: 0 }),
+              makeEventRow({ id: 'z1', turn_id: 'seed-s0:99', seq: 1 }),
+            ],
+          }),
         ),
     });
 
     const data = await loadSessionSpans(api, 'seed-s0');
-    expect(data.tracesTruncated).toBe(true);
     expect(buildTreeModel(data.traces, data.spansByTrace).unmatchedSpanCount).toBe(1);
+  });
+
+  it('reports tracesTruncated once the turn array passes TRACE_PAGE', async () => {
+    // The detail route returns EVERY turn in one array — there is no turn
+    // cursor — so the cap is the client's and the notice strip is how it says so.
+    const api = stubApiClient({
+      getSession: () =>
+        Promise.resolve(
+          makeDetail({
+            turns: Array.from({ length: TRACE_PAGE + 1 }, (_, i) =>
+              makeTurnRow({ id: `seed-s0:${i}`, seq: i }),
+            ),
+          }),
+        ),
+    });
+
+    const data = await loadSessionSpans(api, 'seed-s0');
+    expect(data.traces).toHaveLength(TRACE_PAGE);
+    expect(data.tracesTruncated).toBe(true);
   });
 });
 
@@ -222,24 +247,22 @@ describe('the client cap is reported, never silently applied (Test 18a)', () => 
   it('reports truncated with the count it actually holds once the cap is passed', async () => {
     let calls = 0;
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(1)),
-      listSpans: () => {
+      getSession: () => {
         calls += 1;
-        return Promise.resolve(spanPage(4, (calls - 1) * 4, true));
+        return Promise.resolve(detailOf(1, { events: 4, from: (calls - 1) * 4, hasMore: true }));
       },
     });
 
     const data = await loadSessionSpans(api, 'seed-s0', { cap: 8, limit: 4 });
 
-    expect(data.truncated, 'more spans exist and the reader has to be told').toBe(true);
+    expect(data.truncated, 'more events exist and the reader has to be told').toBe(true);
     expect(data.shown).toBe(8);
     expect(calls, 'the cap stops the loop rather than merely labelling it').toBe(2);
   });
 
   it('reports untruncated when the session ended before the cap', async () => {
     const api = stubApiClient({
-      getSession: () => Promise.resolve(detailOf(1)),
-      listSpans: () => Promise.resolve(spanPage(3, 0, false)),
+      getSession: () => Promise.resolve(detailOf(1, { events: 3 })),
     });
 
     const data = await loadSessionSpans(api, 'seed-s0', { cap: 8, limit: 4 });
@@ -385,7 +408,7 @@ describe('the navigation state restarts on the session that ARRIVED (needsReseed
 
 describe('a session opens on its latest turn', () => {
   it('opens the last turn and leaves the older ones closed', () => {
-    const traces = detailOf(3).traces.items;
+    const traces = detailOf(3).turns.map((turn) => makeTrace({ id: turn.id }));
     expect([...initialExpanded(traces)]).toEqual(['seed-s0:2']);
   });
 
@@ -394,7 +417,7 @@ describe('a session opens on its latest turn', () => {
   });
 
   it('puts real span rows on screen, which an empty expansion set would not', () => {
-    const traces = detailOf(2).traces.items;
+    const traces = detailOf(2).turns.map((turn) => makeTrace({ id: turn.id }));
     const spansByTrace = new Map([
       ['seed-s0:0', [makeSpan({ id: 'old', trace_id: 'seed-s0:0' })]],
       ['seed-s0:1', [makeSpan({ id: 'new', trace_id: 'seed-s0:1' })]],
@@ -409,7 +432,7 @@ describe('a session opens on its latest turn', () => {
 /* ---------------------------------- the rows-changed action's own contract --- */
 
 describe('rowsChangedAction carries the model’s ids, not the on-screen ones', () => {
-  const traces = detailOf(2).traces.items;
+  const traces = detailOf(2).turns.map((turn) => makeTrace({ id: turn.id }));
   const spansByTrace = new Map([
     ['seed-s0:0', [makeSpan({ id: 'old', trace_id: 'seed-s0:0' })]],
     ['seed-s0:1', [makeSpan({ id: 'new', trace_id: 'seed-s0:1' })]],

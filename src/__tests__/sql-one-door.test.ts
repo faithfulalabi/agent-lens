@@ -1,12 +1,12 @@
-// AC1's other half: **zero SQL outside `src/db/`**. That invariant is stated at
-// `db/index.ts:18` ("the ONLY module that touches SQL") and, until this file, was
-// a comment and nothing else — grepped `src/*.test.ts` and `src/__tests__/`, no
-// test enforced it. The route layer stays thin enough to be worth testing only
-// while it holds.
+// AC1's other half: **zero SQL outside `src/db/`**. That invariant was stated in
+// plan 001's `db/index.ts` ("the ONLY module that touches SQL") and, until this
+// file, was a comment and nothing else — no test enforced it. The route layer
+// stays thin enough to be worth testing only while it holds.
 //
-// Sibling of `one-door.test.ts` and deliberately the same shape: a text grep, a
-// quarantine keyed by FILE, and non-vacuity controls that drive the same helpers
-// the real assertions call.
+// Sibling of `one-door.test.ts` and deliberately the same shape: a text grep and
+// non-vacuity controls that drive the same helpers the real assertions call.
+// Task 4.5 deleted the single-entry `LEGACY_SQL` quarantine with the module it
+// named, so the scan is now unconditional over every file outside `src/db/`.
 //
 // ★ MULTI-WORD PATTERNS ONLY, AND THE SET IS NOT PROSE-PROOF. Bare keywords are
 // unusable — `schema.ts:50` says "Claude Code DELETES this" in English. Even the
@@ -52,22 +52,6 @@ interface Hit {
   line: number;
   text: string;
 }
-
-/** A whole module quarantined by path until Task 4.5 deletes it. */
-interface LegacyEntry {
-  file: string;
-  why: string;
-}
-
-// Keyed on the FILE, never on line numbers — they move. This file is on Task
-// 4.5's published deletion list, so the stale check below fires the moment 4.5
-// deletes it and the quarantine dismantles itself.
-const LEGACY_SQL: readonly LegacyEntry[] = [
-  {
-    file: 'server/ingest.ts',
-    why: 'the /api/ingest transaction verbs (TXN_TOP/TXN_NESTED/TXN_ROLLUP) plus three prose comments about them. RFC 002 closes the hook path; Task 4.5 deletes this module with the route (task-4.5-cutover.md:19).',
-  },
-];
 
 /** Every non-test `.ts` under `src/`, OUTSIDE the one SQL door. */
 function sourceFiles(): string[] {
@@ -115,42 +99,20 @@ function describeHit(hit: Hit): string {
 /** Unreviewed SQL, plus the rot direction of the quarantine. */
 function unreviewed(
   hits: readonly Hit[] = scanAll(),
-  legacy: readonly LegacyEntry[] = LEGACY_SQL,
-): { unexpected: string[]; staleLegacy: string[] } {
-  const quarantined = new Set(legacy.map((entry) => entry.file));
-  return {
-    unexpected: hits
-      .filter((hit) => !quarantined.has(hit.file))
-      .map(describeHit)
-      .sort(),
-    staleLegacy: legacy
-      .filter((entry) => !hits.some((hit) => hit.file === entry.file))
-      .map((entry) => entry.file)
-      .sort(),
-  };
+): { unexpected: string[] } {
+  return { unexpected: hits.map(describeHit).sort() };
 }
 
 describe('AC1 — src/db is the only module that touches SQL', () => {
   it('finds no SQL outside src/db/', () => {
-    const { unexpected, staleLegacy } = unreviewed();
+    const { unexpected } = unreviewed();
 
     expect(
       unexpected,
       'SQL outside src/db/. The one legal response is to move the query into a ' +
         'src/db/ module and export a typed reader — db/read.ts for a SELECT, ' +
-        'db/write.ts for anything else. Never add a file to LEGACY_SQL.',
+        'db/write.ts for anything else. There is no quarantine to add it to.',
     ).toEqual([]);
-
-    expect(
-      staleLegacy,
-      'task 4.5 deleted this — delete the quarantine entry. LEGACY_SQL only ever shrinks.',
-    ).toEqual([]);
-  });
-
-  it('every quarantine entry carries a written reason', () => {
-    for (const entry of LEGACY_SQL) {
-      expect(entry.why.length, `${entry.file} needs a justification`).toBeGreaterThan(0);
-    }
   });
 });
 
@@ -164,19 +126,18 @@ describe('the door reds when the property it protects is broken', () => {
   it('(a) the scan reaches a real tree', () => {
     expect(sourceFiles().length).toBeGreaterThan(20);
 
-    // Every quarantined file is reachable, so a filter that quietly dropped one
-    // would red here instead of passing vacuously.
-    const scanned = new Set(sourceFiles());
-    for (const entry of LEGACY_SQL) {
-      expect(scanned.has(entry.file), `${entry.file} is quarantined but never scanned`).toBe(true);
-    }
+    // …and the tree it reaches is the whole of `src/` outside `src/db/`, with no
+    // module excused by path. Task 4.5 deleted the one-entry quarantine along
+    // with `server/ingest.ts`, so an exclusion list no longer exists to hide in.
+    expect(sourceFiles().some((file) => file.startsWith('server/'))).toBe(true);
   });
 
-  it('(b) the same patterns find ≥ 100 hits INSIDE src/db/', () => {
+  it('(b) the same patterns find ≥ 80 hits INSIDE src/db/', () => {
     // ★ The limb that catches a pattern set accidentally softened to match
     // nothing — without it every assertion above is trivially green. A FLOOR,
-    // never today's number (212), so a new query in src/db/ never reds this.
-    expect(scanAll(dbFiles()).length).toBeGreaterThanOrEqual(100);
+    // never today's number: 212 before task 4.5 deleted four plan-001 modules,
+    // re-measured at 98 after, so a new query in src/db/ never reds this.
+    expect(scanAll(dbFiles()).length).toBeGreaterThanOrEqual(80);
     expect(dbFiles().length).toBeGreaterThan(3);
     expect(scanFile('db/read.ts').length).toBeGreaterThan(0);
   });
@@ -236,15 +197,6 @@ describe('the door reds when the property it protects is broken', () => {
 
     // …and the exemption removes REAL matches rather than being vacuous.
     expect(scanFile('db/write.ts').length).toBeGreaterThan(0);
-  });
-
-  it('a stale quarantine reds — the coverage-restoration hook for 4.5', () => {
-    const hits = scanFile(SCRATCH, 'const q = `SELECT 1`;\n');
-
-    expect(unreviewed(hits, [{ file: 'server/ingest.ts', why: 'control' }]).staleLegacy).toEqual([
-      'server/ingest.ts',
-    ]);
-    expect(unreviewed(hits, [{ file: SCRATCH, why: 'control' }]).staleLegacy).toEqual([]);
   });
 
   it('test files are out of scope, both ways', () => {

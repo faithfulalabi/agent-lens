@@ -1,29 +1,14 @@
-// AC3 test 14: the inactivity sweep is injectable AND provably torn down. A
-// surviving interval that fires after `db.close()` throws inside a timer
-// callback, where nothing can catch it — so `clearInterval` must precede the
-// close, and this test proves it rather than trusting `.unref()`.
+// The boot path: the corpus sweep is wired, provably torn down, and its first
+// tick lands BEFORE the socket binds. A surviving interval that fires after the
+// database is closed throws inside a timer callback where nothing can catch it,
+// so `sweep.close()` must precede the close and these tests prove it rather than
+// trusting `.unref()`.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  appendFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SweepResult } from '../../capture/inactivity.js';
-import type { TailResult } from '../../capture/tailer.js';
-import { openDb, upsertSession } from '../../db/index.js';
-import {
-  bootTestServer,
-  cleanupDir,
-  openTestDb,
-  TOKEN_HEADER,
-  type TestServer,
-} from './helpers.js';
+import { bootTestServer, cleanupDir, openTestDb, TOKEN_HEADER, type TestServer } from './helpers.js';
 
 let server: TestServer | undefined;
 
@@ -35,95 +20,35 @@ afterEach(async () => {
   }
 });
 
-/** Resolve once `predicate` holds, or reject after `timeoutMs`. */
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
-}
-
-describe('startServer — inactivity sweep lifecycle', () => {
-  it('runs the sweep on an interval and stops it before closing the DB', async () => {
-    const results: SweepResult[] = [];
-    const booted = await bootTestServer({
-      sweepIntervalMs: 5,
-      onSweep: (r) => results.push(r),
-    });
-
-    await waitFor(() => results.length >= 1);
-    const uncaught: unknown[] = [];
-    const spy = (err: unknown): number => uncaught.push(err);
-    process.on('uncaughtException', spy);
-
-    try {
-      await booted.handle.close();
-      const countAtClose = results.length;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // The interval is gone: no sweep ran after close, and nothing blew up
-      // trying to query a closed database from a timer callback.
-      expect(results.length).toBe(countAtClose);
-      expect(uncaught).toEqual([]);
-    } finally {
-      process.off('uncaughtException', spy);
-      cleanupDir(booted.dataDir);
-    }
-  });
-
-  it('sweepIntervalMs: 0 disables the sweep entirely', async () => {
-    let swept = 0;
-    server = await bootTestServer({ sweepIntervalMs: 0, onSweep: () => (swept += 1) });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(swept).toBe(0);
-  });
-});
-
-// --- Task 3.1: transcript tailer wiring ------------------------------------
-
 const SLUG = '-Users-dev-proj';
+const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 
-/** Write a transcript inside a root, creating its project slug directory. */
-function writeTranscript(
-  root: string,
-  session: string,
-  lines: readonly string[],
-  slug = SLUG,
-): string {
-  mkdirSync(join(root, slug), { recursive: true });
-  const path = join(root, slug, `${session}.jsonl`);
-  writeFileSync(path, lines.map((l) => `${l}\n`).join(''));
-  return path;
-}
-
-function transcriptLine(i: number): string {
-  return JSON.stringify({
-    type: 'assistant',
-    uuid: `u-${i}`,
-    sessionId: 'sess-boot',
-    timestamp: new Date(Date.UTC(2026, 6, 26, 0, 0, i)).toISOString(),
+function transcriptLine(i: number): unknown {
+  return {
+    type: 'user',
+    uuid: `${String(i).padStart(8, '0')}-1111-4111-8111-000000000000`,
+    parentUuid: null,
+    sessionId: SESSION,
+    version: '2.1.212',
     cwd: '/Users/dev/proj',
-  });
+    gitBranch: 'main',
+    timestamp: new Date(Date.UTC(2026, 7, 14, 9, 0, i)).toISOString(),
+    promptId: `p${i}`,
+    origin: { kind: 'human' },
+    message: { role: 'user', content: `line ${i}` },
+  };
 }
 
-/** Tell a data dir's DB about a session before the server ever opens it. */
-function seedSession(dataDir: string, sessionId: string, transcriptPath: string): void {
-  const db = openDb(dataDir);
-  try {
-    upsertSession(db, {
-      id: sessionId,
-      harness: 'claude-code',
-      project_path: '/Users/dev/proj',
-      started_at: '2026-07-26T00:00:00.000Z',
-      status: 'live',
-      capture_mode: 'full',
-      transcript_path: transcriptPath,
-    });
-  } finally {
-    db.close();
-  }
+/** One archived transcript, in the mirror's `<slug>/<stem>.jsonl` layout. */
+function seedArchive(dataDir: string, session = SESSION, lines = 2): string {
+  const slug = join(dataDir, 'archive', SLUG);
+  mkdirSync(slug, { recursive: true });
+  const path = join(slug, `${session}.jsonl`);
+  writeFileSync(
+    path,
+    Array.from({ length: lines }, (_, i) => `${JSON.stringify(transcriptLine(i))}\n`).join(''),
+  );
+  return path;
 }
 
 function countRows(dataDir: string, sql: string): number {
@@ -135,266 +60,148 @@ function countRows(dataDir: string, sql: string): number {
   }
 }
 
-describe('startServer — transcript catch-up on boot', () => {
-  it('ingests a transcript that grew entirely while the server was down', async () => {
+async function listedIds(s: TestServer): Promise<string[]> {
+  const body = (await (
+    await fetch(s.url('/api/sessions'), { headers: { [TOKEN_HEADER]: s.token } })
+  ).json()) as { items: { id: string }[] };
+  return body.items.map((item) => item.id);
+}
+
+describe('startServer — corpus sweep on boot', () => {
+  it('indexes the archive before the socket binds, so the FIRST request sees it', async () => {
+    // The successor to the plan-001 boot catch-up test, and the same claim: the
+    // pass runs in the before-bind slot, so no client can observe an empty index
+    // that is about to fill.
     const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-'));
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
-    const path = writeTranscript(root, 'sess-boot', [transcriptLine(0)]);
-    seedSession(dataDir, 'sess-boot', path);
+    seedArchive(dataDir);
+    // A long period, not a short one: the FIRST tick is synchronous and runs
+    // before `bind()`, so the assertion is about that pass and never about a
+    // timer firing in time.
+    server = await bootTestServer({ dataDir, sweepIntervalMs: 60_000 });
 
-    try {
-      // Boot once so the file has a committed offset, then shut down.
-      const first = await bootTestServer({ dataDir, transcriptRoot: root, tailIntervalMs: 60_000 });
-      await first.close();
-      const afterFirst = countRows(
-        dataDir,
-        `SELECT COUNT(*) AS n FROM raw_events WHERE source = 'transcript'`,
-      );
-
-      // The session writes four more lines while nothing is listening.
-      appendFileSync(
-        path,
-        [1, 2, 3, 4].map((i) => `${transcriptLine(i)}\n`).join(''),
-      );
-
-      const second = await bootTestServer({
-        dataDir,
-        transcriptRoot: root,
-        tailIntervalMs: 60_000,
-      });
-      server = second;
-      // The catch-up runs in the same before-bind slot as spool replay, so the
-      // VERY FIRST request already sees the recovered lines.
-      const response = await fetch(second.url('/api/events'), {
-        headers: { [TOKEN_HEADER]: second.token },
-      });
-      const events = (await response.json()) as { source: string }[];
-      expect(events.filter((e) => e.source === 'transcript')).toHaveLength(afterFirst + 4);
-    } finally {
-      cleanupDir(dataDir);
-      cleanupDir(root);
-    }
-  });
-});
-
-describe('startServer — boot hermeticity', () => {
-  it('defaults to a fresh empty transcript root, never the real ~/.claude/projects', async () => {
-    server = await bootTestServer({ tailIntervalMs: 60_000 });
-
-    // The default root is a throwaway temp dir, so no local session history can
-    // change what this (or any other) server test means.
-    expect(server.transcriptRoot.startsWith(tmpdir())).toBe(true);
-    expect(server.transcriptRoot.includes(join(homedir(), '.claude'))).toBe(false);
-    expect(readdirSync(server.transcriptRoot)).toEqual([]);
-    expect(countRows(server.dataDir, 'SELECT COUNT(*) AS n FROM tailer_offsets')).toBe(0);
-    expect(
-      countRows(
-        server.dataDir,
-        `SELECT COUNT(*) AS n FROM raw_events WHERE source = 'transcript'`,
-      ),
-    ).toBe(0);
+    expect(await listedIds(server)).toEqual([SESSION]);
   });
 
-  it('first-sights an unknown-session transcript instead of ingesting it', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
-    const lines = Array.from({ length: 500 }, (_, i) => transcriptLine(i));
-    const path = writeTranscript(root, 'sess-stranger', lines);
-    const passes: TailResult[] = [];
-
-    try {
-      server = await bootTestServer({
-        transcriptRoot: root,
-        tailIntervalMs: 60_000,
-        onTail: (r) => passes.push(r),
-      });
-      expect(passes[0]!.files).toHaveLength(1);
-      expect(passes[0]!.files[0]).toMatchObject({ reset: 'first-sight', ingested: 0 });
-      expect(
-        countRows(
-          server.dataDir,
-          `SELECT COUNT(*) AS n FROM raw_events WHERE source = 'transcript'`,
-        ),
-      ).toBe(0);
-      const offset = openTestDb(server.dataDir);
-      try {
-        const row = offset.prepare('SELECT * FROM tailer_offsets').get() as {
-          committed_offset: number;
-        };
-        expect(Number(row.committed_offset)).toBe(statSync(path).size);
-      } finally {
-        offset.close();
-      }
-    } finally {
-      cleanupDir(root);
-    }
-  });
-
-  // Goes RED if `firstSight` / `projects` are threaded by restructuring
-  // `runTailPass`'s `tailOnce(...)` call rather than added to the already-bound
-  // options object: `options.onTail?.(tailOnce(...))` short-circuits its own
-  // argument, so the tailer would only run for tests that observe it.
-  it('forwards firstSight: backfill and projects into the boot catch-up pass', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
-    const lines = Array.from({ length: 12 }, (_, i) => transcriptLine(i));
-    const path = writeTranscript(root, 'sess-stranger', lines);
-    const other = writeTranscript(root, 'sess-elsewhere', lines, '-Users-dev-other');
-    const passes: TailResult[] = [];
-
-    try {
-      server = await bootTestServer({
-        transcriptRoot: root,
-        firstSight: 'backfill',
-        projects: [SLUG],
-        tailIntervalMs: 60_000,
-        onTail: (r) => passes.push(r),
-      });
-      // Backfilled, not first-sighted: read from zero on a file no session named.
-      expect(passes[0]!.files).toHaveLength(1);
-      expect(passes[0]!.files[0]).toMatchObject({
-        reset: 'none',
-        bytesRead: statSync(path).size,
-      });
-      expect(passes[0]!.ingested).toBe(lines.length);
-      // …and the slug filter kept the other project out entirely.
-      expect(passes[0]!.files[0]!.path).not.toBe(other);
-      expect(countRows(server.dataDir, 'SELECT COUNT(*) AS n FROM tailer_offsets')).toBe(1);
-    } finally {
-      cleanupDir(root);
-    }
-  });
-
-  it('reads a KNOWN session transcript from zero', async () => {
+  it('reports what the sweep walked on /api/health', async () => {
+    // `files_indexed` lives only in the sweep's in-memory report, so a non-null
+    // number here is the proof that `ApiDeps.sweep` is actually wired — it reads
+    // null when it is not.
     const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-'));
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
-    const path = writeTranscript(root, 'sess-boot', [transcriptLine(0), transcriptLine(1)]);
-    seedSession(dataDir, 'sess-boot', path);
+    seedArchive(dataDir);
+    server = await bootTestServer({ dataDir, sweepIntervalMs: 60_000 });
 
-    try {
-      server = await bootTestServer({ dataDir, transcriptRoot: root, tailIntervalMs: 60_000 });
-      expect(
-        countRows(
-          dataDir,
-          `SELECT COUNT(*) AS n FROM raw_events WHERE source = 'transcript'`,
-        ),
-      ).toBe(2);
-    } finally {
-      cleanupDir(root);
-    }
+    const health = (await (
+      await fetch(server.url('/api/health'), { headers: { [TOKEN_HEADER]: server.token } })
+    ).json()) as { files_indexed: number | null };
+    expect(health.files_indexed).toBe(1);
   });
 
-  it('tailIntervalMs: 0 performs no boot catch-up at all', async () => {
-    // An off switch that still runs one full scan is not an off switch. Zero
-    // OFFSET ROWS is the assertion — an absent timer would not prove it.
+  it('sweepIntervalMs: 0 performs no pass at all', async () => {
+    // An off switch that still runs one full walk is not an off switch. Zero
+    // SESSION ROWS is the assertion — an absent timer would not prove it.
     const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-'));
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
-    const path = writeTranscript(root, 'sess-boot', [transcriptLine(0)]);
-    seedSession(dataDir, 'sess-boot', path);
+    seedArchive(dataDir);
+    server = await bootTestServer({ dataDir, sweepIntervalMs: 0 });
 
-    try {
-      server = await bootTestServer({ dataDir, transcriptRoot: root, tailIntervalMs: 0 });
-      expect(countRows(dataDir, 'SELECT COUNT(*) AS n FROM tailer_offsets')).toBe(0);
-    } finally {
-      cleanupDir(root);
-    }
+    expect(countRows(dataDir, 'SELECT COUNT(*) AS n FROM sessions')).toBe(0);
   });
 
-  it('never tails a session transcript that lives outside the root', async () => {
-    // Existing suites seed real-looking paths (`src/db/seed.ts` writes
-    // `/tmp/agent-lens/transcripts/<id>.jsonl`). If such a path happens to exist
-    // on the machine, an unbounded tailer would read it into a test DB — a
-    // machine-dependent failure this pins shut.
+  it('walks the archive under its own data dir and nothing else', async () => {
+    // A transcript elsewhere on the machine is structurally unreachable: the
+    // sweep is anchored on `resolveArchiveRoot(dataDir)`, never on a path a row
+    // supplies. Pinned rather than left to a code reading — the plan-001 tailer
+    // took its paths off session rows and needed a confinement check for it.
     const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-'));
-    const root = mkdtempSync(join(tmpdir(), 'agent-lens-transcripts-'));
     const outside = mkdtempSync(join(tmpdir(), 'agent-lens-outside-'));
-    const stray = join(outside, 'stray.jsonl');
-    writeFileSync(stray, `${transcriptLine(0)}\n${transcriptLine(1)}\n`);
-    seedSession(dataDir, 'sess-boot', stray);
+    writeFileSync(join(outside, 'stray.jsonl'), `${JSON.stringify(transcriptLine(0))}\n`);
 
     try {
-      server = await bootTestServer({ dataDir, transcriptRoot: root, tailIntervalMs: 60_000 });
-      expect(countRows(dataDir, 'SELECT COUNT(*) AS n FROM tailer_offsets')).toBe(0);
-      expect(
-        countRows(
-          dataDir,
-          `SELECT COUNT(*) AS n FROM raw_events WHERE source = 'transcript'`,
-        ),
-      ).toBe(0);
+      server = await bootTestServer({ dataDir, sweepIntervalMs: 60_000 });
+      expect(countRows(dataDir, 'SELECT COUNT(*) AS n FROM sessions')).toBe(0);
     } finally {
-      cleanupDir(root);
       cleanupDir(outside);
     }
   });
 });
 
-describe('startServer — tail timer lifecycle', () => {
-  it('runs the tail on an interval and stops it before closing the DB', async () => {
-    const passes: TailResult[] = [];
-    const booted = await bootTestServer({ tailIntervalMs: 5, onTail: (r) => passes.push(r) });
+describe('startServer — sweep timer lifecycle', () => {
+  it('stops the interval before closing the database', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'agent-lens-'));
+    seedArchive(dataDir);
+    const booted = await bootTestServer({ dataDir, sweepIntervalMs: 5 });
 
-    await waitFor(() => passes.length >= 2);
     const uncaught: unknown[] = [];
     const spy = (err: unknown): number => uncaught.push(err);
     process.on('uncaughtException', spy);
 
     try {
       await booted.handle.close();
-      const countAtClose = passes.length;
+      // Ten interval periods with the handle closed. Without `sweep.close()` a
+      // tick lands on a closed database and throws where no caller can catch it.
       await new Promise((resolve) => setTimeout(resolve, 50));
-
-      expect(passes.length).toBe(countAtClose);
       expect(uncaught).toEqual([]);
     } finally {
       process.off('uncaughtException', spy);
-      cleanupDir(booted.dataDir);
-      cleanupDir(booted.transcriptRoot);
+      cleanupDir(dataDir);
       cleanupDir(booted.uiDir);
+      cleanupDir(booted.transcriptRoot);
     }
   });
+});
 
-  it('tailIntervalMs: 0 disables the tail timer entirely', async () => {
-    let tailed = 0;
-    server = await bootTestServer({ tailIntervalMs: 0, onTail: () => (tailed += 1) });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(tailed).toBe(0);
+describe('startServer — boot hermeticity', () => {
+  it('defaults to a fresh empty transcript root, never the real ~/.claude/projects', async () => {
+    server = await bootTestServer({ sweepIntervalMs: 60_000 });
+
+    // The default root is a throwaway temp dir, so no local session history can
+    // change what this (or any other) server test means.
+    expect(server.transcriptRoot.startsWith(tmpdir())).toBe(true);
+    expect(server.transcriptRoot.includes(join(homedir(), '.claude'))).toBe(false);
+    expect(readdirSync(server.transcriptRoot)).toEqual([]);
+    expect(countRows(server.dataDir, 'SELECT COUNT(*) AS n FROM sessions')).toBe(0);
   });
 });
 
 /**
- * Task 0.4 / AC2b — the legacy `/api/stream`'s twin of `stream-deltas.test.ts`
- * Test 11, which pins exactly this for the delta routes and stops at their edge.
+ * Task 0.4 / AC2b — the bounded-exit guard, and after the cutover it is the ONLY
+ * thing standing between `agent-lens start` and a shutdown that hangs forever.
  *
- * Every other `/api/stream` test cancels the client BEFORE the server closes
- * (`helpers.ts:213`'s `finally { await reader.cancel() }`, routed through by
- * four suites; `stream-deltas.test.ts:485-489` opens the legacy stream only to
- * cancel it). The production sequence is the inverse — the server goes down with
- * a browser tab still attached — and it had never been exercised, which is why
- * `handle.close()` hanging forever went unnoticed.
+ * `/api/stream` (`api.ts:514`) is a `while (!aborted && !closed)` heartbeat loop
+ * that holds its response body open, and `server.close()` waits on every open
+ * connection. Plan 001 drained its stream through `broadcaster.shutdown()`; that
+ * is deleted, and the founder ruled the replacement is the native
+ * `server.closeAllConnections()` in `startServer.close()` — see the `ponytail:`
+ * ceiling comment there, and Task 6.1 for the registry that supersedes it.
+ *
+ * Every other stream test cancels the client BEFORE the server closes. The
+ * production sequence is the inverse — the server goes down with a browser tab
+ * still attached — which is exactly the case that once hung.
  */
-describe('startServer — closing with a legacy /api/stream client attached (AC2b)', () => {
+describe('startServer — closing with an /api/stream client attached (AC2b)', () => {
   it('ends the attached body immediately and never waits on it forever', async () => {
     const booted = await bootTestServer({ sweepIntervalMs: 0 });
     const res = await fetch(booted.url('/api/stream'), {
       headers: { [TOKEN_HEADER]: booted.token },
     });
     expect(res.status).toBe(200);
-    // Deliberately NOT cancelled before the close. `fetch` having resolved is
-    // proof enough that the subscription exists: hono's `streamSSE` runs the
-    // route callback synchronously before returning the Response, and
-    // `broadcaster.subscribe` is its first statement.
+    // Deliberately NOT cancelled before the close.
     const reader = res.body!.getReader();
 
     try {
       // Drain in the background so the body's END can be timestamped: that
-      // instant, not the `close()` callback, is the direct evidence that
-      // `broadcaster.shutdown()` ran.
-      const decoder = new TextDecoder();
-      let body = '';
+      // instant, not the `close()` callback, is the direct evidence that the
+      // connection was dropped rather than waited on. A killed connection surfaces
+      // as a rejected read, not as `done`, so both endings land here.
       let endedAt = 0;
       const drained = (async () => {
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          body += decoder.decode(value, { stream: true });
+        try {
+          for (;;) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+        } catch {
+          // `closeAllConnections` destroys the socket mid-body: an aborted read
+          // is the expected ending, not a failure.
         }
         endedAt = Date.now();
       })();
@@ -403,21 +210,10 @@ describe('startServer — closing with a legacy /api/stream client attached (AC2
       const closing = booted.handle.close();
 
       await drained;
-      // The tight assertion, and the one that inverts cleanly: without
-      // `broadcaster.shutdown()` this body never ends at all. Measured at ~3ms.
+      // The tight assertion, and the one that inverts cleanly: with no drain at
+      // all this body never ends and `close()` never resolves.
       expect(endedAt - started).toBeLessThan(3000);
-      expect(body).toContain('event: stream_end');
-      expect(body).toContain('{"reason":"server_shutdown"}');
 
-      // And the close itself completes. **Deliberately not < 3000ms**, which
-      // would be a false pin: ending the body makes the connection idle, but
-      // `server.close()` sweeps idle connections only ONCE, at call time
-      // (`httpServerPreClose`), and the drain lands a few ms later. The socket
-      // is then reaped on the server's own `keepAliveTimeout` — measured
-      // `close cb ≈ keepAliveTimeout + ~1s`, so ~6s at the 5s default, and
-      // ~4s here because undici drops the idle socket first. The bound is
-      // server-owned, so a browser cannot extend it; before the drain it was
-      // unbounded and this test timed out instead.
       await closing;
       expect(Date.now() - started).toBeLessThan(15_000);
     } finally {

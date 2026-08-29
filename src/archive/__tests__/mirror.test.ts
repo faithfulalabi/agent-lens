@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { archiveOnce, createMirrorContext, mirrorFile } from '../mirror.js';
 import { createArchiveReader } from '../read.js';
 import { discover } from '../discover.js';
-import { resolveDataDir, resolveTranscriptRoot, canonicalizeTranscriptPath } from '../paths.js';
+import { canonicalizeTranscriptPath } from '../paths.js';
 import {
   archivePath,
   bytesEqual,
@@ -519,41 +519,6 @@ describe('--verify catches what the per-pass probe cannot (Test 24)', () => {
     // A quiet pass reads only the head and seam probes, never the whole body.
     expect(plain.bytesRead).toBeLessThan(64 * 1024);
     expect(verified.bytesRead).toBeGreaterThanOrEqual(body.length);
-  });
-});
-
-describe('path helpers agree with the originals they will outlive (Test 21)', () => {
-  // Guards the copies in `paths.ts` against drift. Delete with `capture/tailer.ts`.
-  it('resolveTranscriptRoot, canonicalizeTranscriptPath and resolveDataDir match', async () => {
-    const tailer = await import('../../capture/tailer.js');
-    const spool = await import('../../capture/spool.js');
-    const s = sb();
-
-    expect(resolveTranscriptRoot('/explicit/root')).toBe(
-      tailer.resolveTranscriptRoot('/explicit/root'),
-    );
-    expect(resolveTranscriptRoot()).toBe(tailer.resolveTranscriptRoot());
-    expect(resolveDataDir('/explicit/data')).toBe(spool.resolveDataDir('/explicit/data'));
-    expect(resolveDataDir()).toBe(spool.resolveDataDir());
-
-    const real = writeSource(s, SESSION, jsonLines(1));
-    expect(canonicalizeTranscriptPath(real)).toBe(tailer.canonicalizeTranscriptPath(real));
-    const missing = join(s.sourceRoot, 'does', 'not', 'exist.jsonl');
-    expect(canonicalizeTranscriptPath(missing)).toBe(tailer.canonicalizeTranscriptPath(missing));
-
-    const prevRoot = process.env.AGENT_LENS_TRANSCRIPT_ROOT;
-    const prevDir = process.env.AGENT_LENS_DIR;
-    try {
-      process.env.AGENT_LENS_TRANSCRIPT_ROOT = '/env/root';
-      process.env.AGENT_LENS_DIR = '/env/data';
-      expect(resolveTranscriptRoot()).toBe(tailer.resolveTranscriptRoot());
-      expect(resolveDataDir()).toBe(spool.resolveDataDir());
-    } finally {
-      if (prevRoot === undefined) delete process.env.AGENT_LENS_TRANSCRIPT_ROOT;
-      else process.env.AGENT_LENS_TRANSCRIPT_ROOT = prevRoot;
-      if (prevDir === undefined) delete process.env.AGENT_LENS_DIR;
-      else process.env.AGENT_LENS_DIR = prevDir;
-    }
   });
 });
 

@@ -1,13 +1,16 @@
+// Restart persistence, for a cache.db that is explicitly disposable.
+//
+// What survives a restart is TIER A — the session index the corpus sweep builds
+// from the archive. Tier B is lazy and rebuilt on demand, and the whole file is
+// deleted outright on a `SCHEMA_VERSION` bump, so "the rows are still there" is
+// only interesting when nothing re-derived them: the second boot runs with the
+// sweep OFF, and the session is listed anyway.
+
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DB_FILE } from '../../db/index.js';
-import {
-  bootTestServer,
-  cleanupDir,
-  makeTestEnvelope,
-  TOKEN_HEADER,
-} from './helpers.js';
+import { CACHE_DB_FILE } from '../../db/open.js';
+import { bootTestServer, cleanupDir, TOKEN_HEADER } from './helpers.js';
 
 let dataDir: string;
 
@@ -15,35 +18,56 @@ afterEach(() => {
   if (dataDir) cleanupDir(dataDir);
 });
 
-describe('restart persistence', () => {
-  it('re-hydrates prior events after close + reopen on the same data dir', async () => {
-    const first = await bootTestServer();
-    dataDir = first.dataDir;
+const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 
-    for (const id of ['sess-1:hook:PreToolUse:a', 'sess-1:hook:PreToolUse:b']) {
-      const res = await fetch(first.url('/api/ingest'), {
-        method: 'POST',
-        headers: { [TOKEN_HEADER]: first.token, 'content-type': 'application/json' },
-        body: JSON.stringify(makeTestEnvelope({ event_id: id })),
-      });
-      expect(res.status).toBe(200);
-    }
+/** One archived transcript, in the mirror's `<slug>/<stem>.jsonl` layout. */
+function seedArchive(dir: string): void {
+  const slug = join(dir, 'archive', '-Users-dev-proj');
+  mkdirSync(slug, { recursive: true });
+  const line = {
+    type: 'user',
+    uuid: '11111111-1111-4111-8111-111111111111',
+    parentUuid: null,
+    sessionId: SESSION,
+    version: '2.1.212',
+    cwd: '/Users/dev/proj',
+    gitBranch: 'main',
+    timestamp: '2026-08-14T09:00:00.000Z',
+    promptId: 'p1',
+    origin: { kind: 'human' },
+    message: { role: 'user', content: 'hello' },
+  };
+  writeFileSync(join(slug, `${SESSION}.jsonl`), `${JSON.stringify(line)}\n`);
+}
+
+async function listedIds(url: (path: string) => string, token: string): Promise<string[]> {
+  const body = (await (
+    await fetch(url('/api/sessions'), { headers: { [TOKEN_HEADER]: token } })
+  ).json()) as { items: { id: string }[] };
+  return body.items.map((item) => item.id);
+}
+
+describe('restart persistence', () => {
+  it('keeps the swept session index across close + reopen on the same data dir', async () => {
+    const first = await bootTestServer({ sweepIntervalMs: 0 });
+    dataDir = first.dataDir;
+    seedArchive(dataDir);
+    // One pass, driven rather than timed: the assertion is about what persists,
+    // not about how long a 1 Hz interval takes to fire.
+    expect(await listedIds(first.url, first.token)).toEqual([]);
     await first.close();
 
-    expect(existsSync(join(dataDir, DB_FILE))).toBe(true);
+    const swept = await bootTestServer({ dataDir, sweepIntervalMs: 60_000 });
+    expect(await listedIds(swept.url, swept.token)).toEqual([SESSION]);
+    await swept.close();
 
-    const second = await bootTestServer(dataDir);
+    expect(existsSync(join(dataDir, CACHE_DB_FILE))).toBe(true);
+
+    // The sweep is OFF here, so nothing re-derives the row. It is listed because
+    // it was persisted, which is the whole claim.
+    const second = await bootTestServer({ dataDir, sweepIntervalMs: 0 });
     try {
-      const events = (await (
-        await fetch(second.url('/api/events'), {
-          headers: { [TOKEN_HEADER]: second.token },
-        })
-      ).json()) as { event_id: string }[];
-      expect(events).toHaveLength(2);
-      expect(events.map((e) => e.event_id)).toEqual([
-        'sess-1:hook:PreToolUse:a',
-        'sess-1:hook:PreToolUse:b',
-      ]);
+      expect(await listedIds(second.url, second.token)).toEqual([SESSION]);
     } finally {
       await second.close();
     }

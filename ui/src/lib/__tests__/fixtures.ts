@@ -10,10 +10,16 @@
  * Tasks 5.2b and 5.3a EXTEND this module rather than starting rivals to it.
  */
 
-import type { Message, Session, Span, SpanStatus, Trace, TraceTrigger } from '@shared/entities.ts';
+import type { Session, Span, SpanStatus, Trace, TraceTrigger } from '@shared/entities.ts';
 import type { Page } from '@shared/api.ts';
 
-import type { ApiClient } from '../api.js';
+import type {
+  ApiClient,
+  EventRow,
+  SessionDetailBody,
+  SessionListRow,
+  TurnRow,
+} from '../api.js';
 import { buildTreeModel, flatten, type Row, type TreeModel } from '../span-tree.js';
 
 /** A complete, plausible session. Every field is overridable. */
@@ -47,23 +53,107 @@ export function makePage<T>(items: T[], overrides: Partial<Page<T>> = {}): Page<
   return { items, limit: 100, offset: 0, has_more: false, ...overrides };
 }
 
+/* ------------------------------------------------- the v2 wire shapes --- */
+
+/** A complete, plausible `GET /api/sessions` row. Every field is overridable. */
+export function makeSessionRow(overrides: Partial<SessionListRow> = {}): SessionListRow {
+  return {
+    id: 'seed-s0',
+    title: 'seed session',
+    preview: 'seed session',
+    project_path: '/tmp/agent-lens/project-0',
+    git_branch: 'main',
+    model: 'claude-sonnet-5',
+    started_at: '2026-07-29T09:00:00.000Z',
+    last_activity_at: '2026-07-29T09:30:00.000Z',
+    turn_count: 2,
+    tool_call_count: 2,
+    error_count: 0,
+    tokens_in: 1000,
+    tokens_out: 200,
+    est_cost: 0.0123,
+    agent_count: 0,
+    has_drift: false,
+    live: false,
+    ...overrides,
+  };
+}
+
+/** One row of the detail response's `turns` array. */
+export function makeTurnRow(overrides: Partial<TurnRow> = {}): TurnRow {
+  return {
+    id: 'seed-s0:1',
+    seq: 1,
+    kind: 'human',
+    title: 'add a span tree',
+    started_at: atSecond(0),
+    ended_at: atSecond(60),
+    duration_ms: 60_000,
+    tokens_in: 1000,
+    tokens_out: 200,
+    tokens_cache_read: 50,
+    tokens_cache_write: 10,
+    est_cost: 0.0123,
+    tool_call_count: 2,
+    error_count: 0,
+    first_seq: 0,
+    last_seq: 9,
+    ...overrides,
+  };
+}
+
+/** One row of the detail response's `events` array — a folded tool call. */
+export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
+  return {
+    id: 'ev-1',
+    turn_id: 'seed-s0:1',
+    seq: 0,
+    kind: 'tool_call',
+    ts: atSecond(0),
+    name: 'Read',
+    status: 'ok',
+    duration_ms: 1000,
+    text: 'stdout',
+    text_bytes: 6,
+    output_storage: 'inline',
+    model: 'claude-sonnet-5',
+    tokens_in: null,
+    tokens_out: null,
+    est_cost: null,
+    child_session_id: null,
+    agent_type: null,
+    raw_type: 'assistant',
+    ...overrides,
+  };
+}
+
+/** A `GET /api/sessions/:id` body with the cursor fields at their quiet values. */
+export function makeDetail(overrides: Partial<SessionDetailBody> = {}): SessionDetailBody {
+  return {
+    session: { ...makeSessionRow(), projection: { state: 'ready' } },
+    turns: [],
+    events: [],
+    next_seq: 0,
+    has_more: false,
+    fingerprint: '1:2:3',
+    ...overrides,
+  };
+}
+
 /**
  * An `ApiClient` whose methods a test replaces one at a time.
  *
- * The unstubbed list routes answer with an empty page; the two single-entity
- * routes reject by name, because a caller reaching one it did not stub is a
- * test bug worth a loud message rather than an empty object.
+ * The list route answers with an empty page; the detail route rejects by name,
+ * because a caller reaching one it did not stub is a test bug worth a loud
+ * message rather than an empty object.
  */
 export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   const unstubbed = (method: string) => (): Promise<never> =>
     Promise.reject(new Error(`stubApiClient: ${method} was called but never stubbed`));
 
   return {
-    listSessions: () => Promise.resolve(makePage<Session>([])),
-    listSpans: () => Promise.resolve(makePage<Span>([])),
-    listMessages: () => Promise.resolve(makePage<Message>([])),
+    listSessions: () => Promise.resolve(makePage<SessionListRow>([])),
     getSession: unstubbed('getSession'),
-    getPayload: unstubbed('getPayload'),
     ...overrides,
   };
 }

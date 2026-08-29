@@ -16,7 +16,28 @@
 // `data-model.md:269`, which survives a mid-database pricing bump.
 
 import { createHash } from 'node:crypto';
-import { canonicalJson } from './event-id.js';
+
+/**
+ * Canonical JSON: recursively key-sorted, whitespace-free. `PRICING_VERSION`
+ * below is a hash of it, so determinism depends entirely on this — object key
+ * insertion order must not change the output.
+ *
+ * Lives here rather than in a shared module because this is its only caller.
+ */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeys(value));
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) sorted[key] = sortKeys(source[key]);
+    return sorted;
+  }
+  return value;
+}
 
 /** Rates for one model family, all in USD per 1,000,000 tokens. */
 export interface ModelPrice {

@@ -5,23 +5,18 @@
 // version would be the "sophistication that becomes a hole" the door exists to
 // avoid, and a name in a comment is exactly the kind of drift worth seeing.
 //
-// MEASURED ON `main` @0903699. 402 hit lines across 50 files: 152 production,
-// 250 test. Production splits 132 (12 quarantined files, by path) + 20
-// (reviewed suppressions, in 8 surviving files).
-//
-// Those three totals count DISTINCT LINES, deduplicated across terms — that is
-// what makes 132 + 20 = 152 exact. The scanner below emits one hit per term, so
-// it reports 136 for the same 12 quarantined files: 4 of their lines carry two
-// different terms each. The suppression count is 20 either way, because no line
-// in the 8 surviving files carries two terms. Neither number is wrong; do not
-// "fix" one to match the other.
+// MEASURED ON `main` @0903699, before the cutover: 402 hit lines across 50
+// files — 152 production (132 quarantined by path + 20 reviewed) and 250 test.
+// Task 4.5 deleted the 12 quarantined modules, dismantled `LEGACY_TREES`
+// outright, and brought the test tree INTO scope, which is why the only
+// allowlist left is `SUPPRESSIONS` and why it now covers both trees.
 //
 // A HIT IS ONE MATCHING LINE PER TERM. A line carrying the same term twice is
 // one hit, and the ordinal counts over matching lines, never over occurrences.
-// Counting occurrences instead gives 440/163/277 and 22 suppressions, and it
-// breaks the key: two entries on one line would store an identical line, and
-// the re-binding assertion below could not tell them apart. The two real cases
-// are `render-gate/report.ts:166` and `server/start.ts:162`.
+// Counting occurrences instead breaks the key: two entries on one line would
+// store an identical line, and the re-binding assertion below could not tell
+// them apart. `render-gate/report.ts:166` is the surviving real case — the
+// second, `server/start.ts:162`, sat inside a doc comment task 4.5 deleted.
 //
 // THE KEY IS `<file>#<term>#<ordinal>`, never `<file>:<line>` —
 // `fs-write-sites.test.ts:1-6` already recorded that a line key "would red on
@@ -40,20 +35,25 @@
 // a reviewed artifact with a written reason, and that is the only legal way to
 // quiet a hit.
 //
-// TEST FILES ARE OUT OF SCOPE, by the repo's own precedent (`sourceFiles()`,
-// `fs-write-sites.test.ts:388-394`) and by a forcing case: Task 3.1's AC2
-// requires a differential test against the `parentUuid` ancestor walk, a test
-// that must name `parentUuid` outside the door by design. In scope, 3.1 is
-// born red at its own acceptance criteria. That removes 250 of 402 hits, and
-// Task 4.5 owns re-examining the exemption once the plan-001 test tree is
-// ported.
+// ★ TEST FILES ARE IN SCOPE, as of Task 4.5, and the exemption is NOT permanent.
+// Task 2.5 excused them on volume (250 of 402 hits) and on a forcing case:
+// Task 3.1's AC2 requires a differential against the `parentUuid` ancestor walk,
+// a test that must name `parentUuid` outside the door by design. Both reasons
+// shrank with the plan-001 test tree. The forcing case is now ONE file —
+// `project/__tests__/segmentation.differential.test.ts`, 4 hits — which is four
+// reviewed suppressions, not a reason to excuse a whole tree. AC6 of task 4.5
+// required either this or a written statement that the exemption stands forever;
+// this is the answer it chose.
 //
-// NEW SUPPRESSIONS IN PHASE 4 ARE EXPECTED, NOT MISCALIBRATION. `data-model-v2`
-// puts `<project>/<sessionId>/…` path math in `src/corpus/paths.ts`, which
-// trips `sessionId` when Task 4.1 lands. A filename stem read from the corpus
-// IS harness-supplied, so the gate is doing its job; review the read and add an
-// entry. NEVER add a file to `LEGACY_TREES`: that list is closed, only ever
-// shrinks, and Task 4.5 deletes it outright.
+// The two guards that scan the tree are excluded from their OWN scan by name, in
+// `sourceFiles()` below. That clause exists only because tests came in scope:
+// this file stores every term it polices as data, and `projector-version.test.ts`
+// names them while explaining itself, so each would otherwise report itself.
+//
+// NEW SUPPRESSIONS ARE EXPECTED, NOT MISCALIBRATION. A filename stem read from
+// the corpus IS harness-supplied, so the gate is doing its job; review the read
+// and add an entry. There is no path quarantine to add a file to — `LEGACY_TREES`
+// was deleted with the modules it covered.
 
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -94,12 +94,6 @@ interface Hit {
   text: string;
 }
 
-/** A whole plan-001 module, quarantined by path until Task 4.5 deletes it. */
-interface LegacyEntry {
-  file: string;
-  why: string;
-}
-
 /** One reviewed hit. `line` is the trimmed source text the review looked at. */
 interface Suppression {
   key: string;
@@ -107,69 +101,28 @@ interface Suppression {
   why: string;
 }
 
-// Quarantine by PATH, not by line: a 132-entry line-keyed list is a second copy
-// of the codebase, not a review artifact. Every file here is on Task 4.5's
-// published deletion list (`task-4.5-cutover.md:19`), so the stale check below
-// fires the moment 4.5 deletes one and the block dismantles itself.
-const LEGACY_TREES: readonly LegacyEntry[] = [
-  {
-    file: 'db/index.ts',
-    why: 'plan-001 SQLite schema and writers for raw_events/spans/messages, which take harness fields straight off the hook envelope. Task 4.5 deletes the module and those tables.',
-  },
-  {
-    file: 'capture/merge.ts',
-    why: 'plan-001 transcript/hook merge. The Phase 3 projector replaces it wholesale; Task 4.5 deletes it and ports its truncation, tool-join and is_error assertions.',
-  },
-  {
-    file: 'cli/hook.ts',
-    why: 'the hook entry point itself. RFC 002 closes the hook path; Task 4.5 deletes this module.',
-  },
-  {
-    file: 'capture/normalizer.ts',
-    why: 'turns hook envelopes into spans, so every harness name in it is a genuine read of the path RFC 002 closes. Task 4.5 deletes it.',
-  },
-  {
-    file: 'db/reads.ts',
-    why: 'plan-001 read queries over the tables db/index.ts owns. Task 4.5 deletes it with them.',
-  },
-  {
-    file: 'db/seed.ts',
-    why: 'demo seeding for the plan-001 schema. Task 4.5 deletes it.',
-  },
-  {
-    file: 'capture/tailer.ts',
-    why: 'plan-001 JSONL tailer, carrying its own line classification. `src/transcript/line.ts` supersedes that half; Task 4.5 deletes the module.',
-  },
-  {
-    file: 'server/ingest.ts',
-    why: 'the /api/ingest envelope path. Task 4.5 deletes it with the route.',
-  },
-  {
-    file: 'capture/spool.ts',
-    why: 'spools hook envelopes when the server is down — hook-path only. Task 4.5 deletes it.',
-  },
-  {
-    file: 'capture/transcript-line.ts',
-    why: "plan-001's transcript line shape, superseded by `src/transcript/raw-types.ts`. Task 4.5 deletes it.",
-  },
-  {
-    file: 'db/rollups.ts',
-    why: 'per-session rollups over the plan-001 tables. Task 4.5 deletes it.',
-  },
-  {
-    file: 'shared/event-id.ts',
-    why: 'derives event ids from harness envelope fields. Task 4.5 deletes it.',
-  },
-];
-
-// The 25 production hits in files Task 4.5 does NOT delete, so none may be
-// quarantined by path. Nineteen are homonyms — the archive's own failure
-// provenance, the render gate's own report, the browser sense of "origin". Five
-// are SQL comments inside `db/schema.ts`, which is a verbatim TRANSPORT of the
-// v2 DDL and reads nothing at all; the spec predicts the false positive itself
-// (`data-model-v2.md:415-416`). Stripping those comments to quiet the grep would
-// delete the measured provenance the DDL exists to carry. One entry is neither
-// case, and says so.
+// Every reviewed hit, in BOTH trees. Measured after task 4.5: 76 hits in 22
+// files — 23 production and 53 test.
+//
+// Production (23): homonyms, almost all of them — the archive's own failure
+// provenance, the render gate's own report of what it read out of a browser, the
+// browser sense of "origin". Five are SQL comments inside `db/schema.ts`, which
+// is a verbatim TRANSPORT of the v2 DDL and reads nothing at all; the spec
+// predicts that false positive itself (`data-model-v2.md:415-416`), and stripping
+// the comments to quiet the grep would delete the measured provenance the DDL
+// exists to carry. The two entries that were NOT homonyms — the `/api/ingest`
+// dead-letter read at `server/app.ts` and the sweep-origin doc comment at
+// `server/start.ts` — went with the code task 4.5 deleted.
+//
+// Test (53): three honest categories, and the largest is new. A FIXTURE BUILDER
+// CONSTRUCTS harness-shaped input rather than reading it, which is the opposite
+// of what the door governs: the door decides who may INTERPRET a harness name,
+// and a builder supplies the input `src/transcript/` then interprets. The rest
+// are the same homonyms as production, plus four hits in ONE file —
+// `project/__tests__/segmentation.differential.test.ts` — which is Task 3.1's
+// forcing case: its AC2 requires an independent ancestor walk outside the door,
+// because a differential that imported the door's implementation would be
+// comparing the door with itself.
 const SUPPRESSIONS: readonly Suppression[] = [
   {
     key: 'archive/mirror.ts#origin#1',
@@ -277,24 +230,294 @@ const SUPPRESSIONS: readonly Suppression[] = [
     why: "renders that same report field into the gate's HTML contact sheet",
   },
   {
-    key: 'server/app.ts#sessionId#1',
-    line: "sessionId: readString(body, 'session_id'),",
-    why: 'GENUINE HARNESS READ, not a homonym — the one entry here that is not a naming coincidence. It reads session_id off a hook envelope on the `invalid envelope shape` dead-letter path. It is suppressed only because it had no removal owner: RFC 002 closes the hook path, and TASK 4.5 OWNS DELETING THIS BLOCK (task-4.5-cutover.md:49-58) along with /api/ingest and server/ingest.ts. Not legitimate, just scheduled.',
-  },
-  {
     key: 'server/middleware/token-auth.ts#origin#1',
     line: '// applied to the static page (which bootstraps the token same-origin instead).',
     why: 'the browser sense of origin, in a comment about same-origin token bootstrap',
   },
   {
-    key: 'server/start.ts#origin#1',
-    line: '* sweep-origin and ingest-origin deltas are one code path.',
-    why: 'doc comment naming two delta sources. One hit, not two: the line matches `origin` twice and a hit is one matching LINE per term',
-  },
-  {
     key: 'shared/entities.ts#tool_use_id#1',
     line: '/** `tool_use_id` where available, else derived from the opening raw event. */',
-    why: 'doc comment on Span.id describing where the id comes from; the read itself lives in the plan-001 modules quarantined above',
+    why: 'doc comment on Span.id. REASON REWRITTEN BY TASK 4.5 — it used to say "the read itself lives in the plan-001 modules quarantined above", and those modules are gone, so the sentence became false while the ordinal still bound and nothing went red. That is exactly the rot this list\'s stale check cannot catch. What is true now: `Span`/`Trace`/`Message` survive because six UI files still import them, nothing reads the field, and Task 5.1 deletes the types when the UI stops',
+  },
+  {
+    key: 'archive/__tests__/source-readonly.test.ts#origin#1',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: asserts ArchiveError.origin, the archive\'s own failure-provenance enum (source/archive/log). Same sense as the reviewed cli/commands/archive.ts entries',
+  },
+  {
+    key: 'archive/__tests__/source-readonly.test.ts#origin#2',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: the same ArchiveError.origin assertion on a second refusal path',
+  },
+  {
+    key: 'archive/__tests__/source-readonly.test.ts#origin#3',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: the same ArchiveError.origin assertion on a third refusal path',
+  },
+  {
+    key: 'archive/__tests__/source-readonly.test.ts#origin#4',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: the same ArchiveError.origin assertion on a fourth refusal path',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#1',
+    line: 'origin: ArchiveResult[\'errors\'][number][\'origin\'],',
+    why: 'homonym: the parameter type of a local error builder, taken off ArchiveResult — the archive-local enum, never a harness value',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#2',
+    line: 'return { path, message: `Error: ${origin} failed`, origin };',
+    why: 'homonym: that builder constructing an ArchiveError from the local enum',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#3',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: asserts the exit-code predicate saw an `archive`-side failure',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#4',
+    line: 'expect(result.errors[0]?.origin).toBe(\'log\');',
+    why: 'homonym: the same assertion for the `log` side',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#5',
+    line: 'expect(result.errors[0]?.origin).toBe(\'source\');',
+    why: 'homonym: the same assertion for the `source` side',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#6',
+    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    why: 'homonym: the same assertion on the spawned-binary arm',
+  },
+  {
+    key: 'cli/__tests__/archive.test.ts#origin#7',
+    line: 'expect([leafRun.result.errors[0]?.origin, logRun.result.errors[0]?.origin]).toEqual([',
+    why: 'homonym: the two-population divergence assertion, over the same archive-local enum',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#sessionId#1',
+    line: 'sessionId: SESSION_ID,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. This one builds the session id of a synthetic transcript line',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The null root link of that same synthetic line',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#toolUseResult#1',
+    line: 'toolUseResult: { persistedOutputPath: DECLARED, persistedOutputSize: 999 },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the structured spill pointer the resolver is asked to follow',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#toolUseResult#2',
+    line: 'toolUseResult: { persistedOutputPath: spill },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The same pointer for the resolvable-spill arm',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#toolUseResult#3',
+    line: 'toolUseResult: { persistedOutputPath: declared },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The same pointer for the missing-spill arm',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#tool_use_id#1',
+    line: 'tool_use_id: callId,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the result block that joins to a call id',
+  },
+  {
+    key: 'content/__tests__/resolve.test.ts#requestId#1',
+    line: 'requestId: `req-${callId}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the assistant response group id',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#sessionId#1',
+    line: 'sessionId: SESSION_ID,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The shared envelope builder for the db write and freshness suites',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The null root link that same builder emits',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#promptId#1',
+    line: 'promptId: `p-${serial}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The prompt group of a synthetic human line',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#promptId#2',
+    line: 'promptId: `m-${serial}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The prompt group of a synthetic machinery line, which is what makes it segment',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#tool_use_id#1',
+    line: 'message: { role: \'user\', content: [{ type: \'tool_result\', tool_use_id: callId, content }] },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds a tool_result block bound to a call id',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#requestId#1',
+    line: 'requestId: `req-${serial}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the assistant response group id',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#origin#1',
+    line: '/** A human prompt. `origin.kind` is what `isHumanPrompt` reads first. */',
+    why: 'doc comment on the human-prompt builder, naming the field the projector reads first. Prose about a read, never a read',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#origin#2',
+    line: 'origin: { kind: \'human\' },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Emits the marker that makes a synthetic line a human prompt',
+  },
+  {
+    key: 'db/__tests__/fixtures/index.ts#origin#3',
+    line: '* because that is the one variable turn segmentation moves on, and no `origin`,',
+    why: 'doc comment on the machinery-line builder, explaining that omitting the field is what makes the line machinery. Prose about a read',
+  },
+  {
+    key: 'db/__tests__/sidecars-corpus.test.ts#tool_use_id#1',
+    line: 'for (const block of blocks as { type?: string; id?: string; tool_use_id?: string }[]) {',
+    why: 'an opt-in corpus DIAGNOSTIC (AGENT_LENS_REAL_CORPUS=1) that measures the elapsed launch gap a sidecar span replaces. It walks raw blocks because the measurement is about what the projector does NOT use; nothing it reads reaches a column',
+  },
+  {
+    key: 'db/__tests__/sidecars-corpus.test.ts#tool_use_id#2',
+    line: 'if (block.type === \'tool_result\' && block.tool_use_id === callId) result ??= line.timestamp;',
+    why: 'the second half of that same diagnostic walk, matching the result block to its call',
+  },
+  {
+    key: 'db/__tests__/sidecars-corpus.test.ts#message.content#1',
+    line: 'const blocks = Array.isArray(line.message?.content) ? line.message.content : [];',
+    why: 'the block list that walk iterates, in the same opt-in diagnostic',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#toolUseResult#1',
+    line: 'toolUseResult: {',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the spill claim a projection then resolves',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#toolUseResult#2',
+    line: 'toolUseResult: { isAsync: true, agentId },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds the async sub-agent launch marker',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#promptId#1',
+    line: '// No `cwd` on any line, and no `origin`/`promptId` either: a bare uuid line.',
+    why: 'comment naming the two fields a deliberately bare fixture line omits. Prose about a read',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#origin#1',
+    line: '// No `cwd` on any line, and no `origin`/`promptId` either: a bare uuid line.',
+    why: 'the same comment, matched a second time under a different term. One line, two terms, two hits',
+  },
+  {
+    key: 'dev/__tests__/dev-server.test.ts#sessionId#1',
+    line: 'sessionId: \'sess-dev\',',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The session id of the one archived line the dev-server suite indexes',
+  },
+  {
+    key: 'project/__tests__/idempotency.property.test.ts#tool_use_id#1',
+    line: 'content: [{ type: \'tool_result\', tool_use_id: callId, content, is_error: true }],',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The generated failing result block, which must carry `is_error` on the BLOCK where the status ladder reads it',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#promptId#1',
+    line: 'const id: unknown = line.raw.promptId;',
+    why: 'reads the raw group off a classified line to prove turn segmentation used it. `ParsedLine.raw` is the door’s own published escape hatch for exactly this, and the assertion is about the projector, so it cannot live inside it',
+  },
+  {
+    key: 'project/__tests__/segmentation.differential.test.ts#parentUuid#1',
+    line: '// `parentUuid` ancestor walk, and this file is the proof that let the walker be',
+    why: 'the FORCING CASE task 2.5 excused the whole test tree for, now reduced to one file. Prose: names the ancestor walk this differential retired',
+  },
+  {
+    key: 'project/__tests__/segmentation.differential.test.ts#parentUuid#2',
+    line: 'uuid = rawString(at, \'parentUuid\');',
+    why: '★ Task 3.1\'s AC2 REQUIRES this read outside the door. The test re-implements the ancestor walk independently and asserts it agrees with prompt-group segmentation on the real corpus; an implementation that imported the door\'s would be comparing the door with itself',
+  },
+  {
+    key: 'project/__tests__/segmentation.differential.test.ts#promptId#1',
+    line: 'const group = rawString(line, \'promptId\');',
+    why: 'the prompt-group side of that same differential',
+  },
+  {
+    key: 'project/__tests__/segmentation.differential.test.ts#promptId#2',
+    line: 'const group = rawString(at, \'promptId\');',
+    why: 'the prompt-group side, read at the ancestor being walked',
+  },
+  {
+    key: 'project/__tests__/tools.test.ts#tool_use_id#1',
+    line: 'const parsed: { message?: { content?: { tool_use_id?: unknown }[] } } = JSON.parse(slice);',
+    why: 'reads the RESULT LINE BACK OUT of the fixture bytes at the (result_offset, result_len) the projector stored, to prove the coordinate addresses the right line. The read is the assertion — a projected column checked against the source it names — and moving it behind the door would mean the door asserting its own output',
+  },
+  {
+    key: 'project/__tests__/tools.test.ts#tool_use_id#2',
+    line: 'expect(parsed.message?.content?.[call.result_block!]?.tool_use_id).toBe(id);',
+    why: 'the assertion on the block that read resolved to',
+  },
+  {
+    key: 'render-gate/__tests__/render-gate.test.ts#sessionId#1',
+    line: 'sessionId: \'sess-1\',',
+    why: 'homonym: the render gate\'s own Observations record of what it read out of the browser, matching the three reviewed render-gate/index.ts entries',
+  },
+  {
+    key: 'server/__tests__/persistence.test.ts#sessionId#1',
+    line: 'sessionId: SESSION,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The session id of the one archived line this suite seeds',
+  },
+  {
+    key: 'server/__tests__/persistence.test.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line’s null root link',
+  },
+  {
+    key: 'server/__tests__/persistence.test.ts#promptId#1',
+    line: 'promptId: \'p1\',',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line’s prompt group',
+  },
+  {
+    key: 'server/__tests__/persistence.test.ts#origin#1',
+    line: 'origin: { kind: \'human\' },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes the seeded line a human prompt, so the session gets a turn',
+  },
+  {
+    key: 'server/__tests__/start.test.ts#sessionId#1',
+    line: 'sessionId: SESSION,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The session id of the archived lines this suite seeds for the sweep',
+  },
+  {
+    key: 'server/__tests__/start.test.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Those lines’ null root link',
+  },
+  {
+    key: 'server/__tests__/start.test.ts#promptId#1',
+    line: 'promptId: `p${i}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Their prompt groups',
+  },
+  {
+    key: 'server/__tests__/start.test.ts#origin#1',
+    line: 'origin: { kind: \'human\' },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes them human prompts',
+  },
+  {
+    key: 'server/__tests__/static-bootstrap.test.ts#origin#1',
+    line: '// AC3 (same-origin token bootstrap): the served page must carry the token so',
+    why: 'homonym: the browser sense, in a comment about same-origin token bootstrap. Same sense as the reviewed server/middleware/token-auth.ts entry',
+  },
+  {
+    key: 'dev/__tests__/dev-server.test.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The null root link of the archived line the dev suite seeds.',
+  },
+  {
+    key: 'dev/__tests__/dev-server.test.ts#promptId#1',
+    line: 'promptId: `p${i}`,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line\'s prompt group.',
+  },
+  {
+    key: 'dev/__tests__/dev-server.test.ts#origin#1',
+    line: 'origin: { kind: \'human\' },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes it a human prompt, so the session gets a turn to list.',
   },
 ];
 
@@ -304,12 +527,20 @@ const SUPPRESSIONS: readonly Suppression[] = [
 // reads as an argument-free call: there is no call-site expression for a future
 // `.filter(...)` to hide in.
 
-/** Every non-test `.ts` under `src/`, outside the door. Repo-relative, sorted. */
+/**
+ * Every `.ts` under `src/`, outside the door. Repo-relative, sorted.
+ *
+ * ★ TESTS ARE IN SCOPE (task 4.5), which is why the two self-exclusions below
+ * exist. This file stores all eleven terms as data and `projector-version.test.ts`
+ * names several while explaining itself, so each would report ITSELF as an
+ * unreviewed read of every term it polices — a guard that must suppress its own
+ * source is not policing anything. Nothing else is excused by name.
+ */
 function sourceFiles(): string[] {
   return readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.d.ts'))
     .map((name) => name.split('\\').join('/'))
-    .filter((name) => !name.endsWith('.test.ts') && !name.includes('__tests__/'))
+    .filter((name) => !name.includes('one-door') && !name.includes('projector-version'))
     .filter((name) => !name.startsWith('transcript/'))
     .sort();
 }
@@ -355,7 +586,7 @@ function fileOf(entry: Suppression): string {
 }
 
 /**
- * Every unreviewed hit, plus both rot directions of the two allowlists.
+ * Every unreviewed hit, plus the rot direction of the allowlist.
  * A suppression exempts a hit only when the KEY and the STORED LINE both match:
  * checking the key alone would let a read inserted above a suppressed one
  * inherit its ordinal while only the stale limb reds.
@@ -363,38 +594,31 @@ function fileOf(entry: Suppression): string {
 function unreviewed(
   hits: readonly Hit[] = scanAll(),
   suppressions: readonly Suppression[] = SUPPRESSIONS,
-  legacy: readonly LegacyEntry[] = LEGACY_TREES,
-): { unexpected: string[]; staleSuppressions: string[]; staleLegacy: string[] } {
-  const quarantined = new Set(legacy.map((entry) => entry.file));
-  const policed = hits.filter((hit) => !quarantined.has(hit.file));
+): { unexpected: string[]; staleSuppressions: string[] } {
   const stored = new Map(suppressions.map((entry) => [entry.key, entry.line]));
 
   return {
-    unexpected: policed
+    unexpected: hits
       .filter((hit) => stored.get(hit.key) !== hit.text)
       .map(describeHit)
       .sort(),
     staleSuppressions: suppressions
-      .filter((entry) => !policed.some((hit) => hit.key === entry.key && hit.text === entry.line))
+      .filter((entry) => !hits.some((hit) => hit.key === entry.key && hit.text === entry.line))
       .map((entry) => entry.key)
-      .sort(),
-    staleLegacy: legacy
-      .filter((entry) => !hits.some((hit) => hit.file === entry.file))
-      .map((entry) => entry.file)
       .sort(),
   };
 }
 
 describe('RFC §7 — harness fields are read behind the one door', () => {
   it('finds no unreviewed harness read outside src/transcript/', () => {
-    const { unexpected, staleSuppressions, staleLegacy } = unreviewed();
+    const { unexpected, staleSuppressions } = unreviewed();
 
     expect(
       unexpected,
       'harness-supplied name(s) read outside src/transcript/. Two legal responses: move the ' +
         'read into src/transcript/, or add a reviewed SUPPRESSIONS entry with a written reason. ' +
         'The file:line:term printed above is PROSE, not the key — the key is <file>#<term>#<ordinal> ' +
-        'and the entry must also store the trimmed line. Never add a file to LEGACY_TREES.',
+        'and the entry must also store the trimmed line.',
     ).toEqual([]);
 
     expect(
@@ -404,10 +628,6 @@ describe('RFC §7 — harness fields are read behind the one door', () => {
         'both, do not just renumber.',
     ).toEqual([]);
 
-    expect(
-      staleLegacy,
-      'task 4.5 deleted this — delete the quarantine entry. LEGACY_TREES only ever shrinks.',
-    ).toEqual([]);
   });
 
   it('the scan is not silently empty', () => {
@@ -430,21 +650,10 @@ describe('RFC §7 — harness fields are read behind the one door', () => {
     expect(scanAll().length).toBeGreaterThanOrEqual(SUPPRESSIONS.length);
   });
 
-  it('every allowlist entry carries a written reason, and the two lists are disjoint', () => {
+  it('every allowlist entry carries a written reason', () => {
     for (const entry of SUPPRESSIONS) {
       expect(entry.why.length, `${entry.key} needs a justification`).toBeGreaterThan(0);
       expect(entry.line.length, `${entry.key} must store the matched line`).toBeGreaterThan(0);
-    }
-    for (const entry of LEGACY_TREES) {
-      expect(entry.why.length, `${entry.file} needs a justification`).toBeGreaterThan(0);
-    }
-
-    // An overlap would hide a suppression's staleness behind the path quarantine.
-    const quarantined = new Set(LEGACY_TREES.map((entry) => entry.file));
-    for (const entry of SUPPRESSIONS) {
-      expect(quarantined.has(fileOf(entry)), `${entry.key} is already quarantined by path`).toBe(
-        false,
-      );
     }
   });
 
@@ -494,15 +703,18 @@ describe('the door reds when the property it protects is broken', () => {
     expect(scanFile('transcript/accessors.ts').length).toBeGreaterThan(0);
   });
 
-  it('test files are out of scope, both ways', () => {
+  it('test files are IN scope, and only the two guards excuse themselves', () => {
+    // The inversion task 4.5 made, asserted in both directions so the exemption
+    // cannot quietly come back.
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(20);
-    expect(files.filter((file) => file.endsWith('.test.ts'))).toEqual([]);
-    expect(files.filter((file) => file.includes('__tests__/'))).toEqual([]);
+    expect(files.filter((file) => file.endsWith('.test.ts')).length).toBeGreaterThan(20);
+    expect(files.filter((file) => file.includes('__tests__/')).length).toBeGreaterThan(20);
     expect(files.filter((file) => file.endsWith('.d.ts'))).toEqual([]);
 
-    // Both guards live at src/__tests__/*.test.ts, so the filter above already
-    // removes them — no separate self-exclusion clause exists or is needed.
+    // The self-exclusion clause `sourceFiles()` now carries, and nothing beyond
+    // it: a guard that stores every term it polices would otherwise report
+    // itself, which polices nothing.
     expect(files.filter((file) => file.includes('one-door'))).toEqual([]);
     expect(files.filter((file) => file.includes('projector-version'))).toEqual([]);
   });
@@ -522,7 +734,7 @@ describe('the door reds when the property it protects is broken', () => {
     expect(staleSuppressions).toEqual([]);
   });
 
-  it('a stale suppression and a stale quarantine both red', () => {
+  it('a stale suppression reds', () => {
     const hits = scanFile(SCRATCH, 'const a = origin;\n');
 
     const gone: Suppression = {
@@ -531,11 +743,9 @@ describe('the door reds when the property it protects is broken', () => {
       why: 'control',
     };
     expect(unreviewed(hits, [gone]).staleSuppressions).toEqual([`${SCRATCH}#origin#9`]);
-
-    // The coverage-restoration hook: 4.5 deletes the file, the entry reds.
-    const deleted: LegacyEntry = { file: 'db/index.ts', why: 'control' };
-    expect(unreviewed(hits, [], [deleted]).staleLegacy).toEqual(['db/index.ts']);
-    expect(unreviewed(hits, [], [{ file: SCRATCH, why: 'control' }]).staleLegacy).toEqual([]);
+    // …and a live one does not, so the limb above discriminates.
+    const live: Suppression = { key: `${SCRATCH}#origin#1`, line: 'const a = origin;', why: 'c' };
+    expect(unreviewed(hits, [live]).staleSuppressions).toEqual([]);
   });
 
   it('an inserted read cannot inherit the suppression above it', () => {

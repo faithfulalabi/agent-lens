@@ -3,8 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Message, Session, Span } from '@shared/entities.ts';
-import type { Page, PayloadSlice, SessionDetail } from '@shared/api.ts';
+import type { Page } from '@shared/api.ts';
 
 import {
   AuthError,
@@ -13,6 +12,8 @@ import {
   createApiClient,
   isAuthError,
   type ApiClient,
+  type SessionDetailBody,
+  type SessionListRow,
 } from '../api';
 import type { Bootstrap } from '../bootstrap';
 
@@ -79,13 +80,6 @@ const METHODS: readonly { name: string; path: string; call: (c: ApiClient) => Pr
   [
     { name: 'listSessions', path: '/api/sessions', call: (c) => c.listSessions() },
     { name: 'getSession', path: '/api/sessions/s1', call: (c) => c.getSession('s1') },
-    { name: 'listSpans', path: '/api/sessions/s1/spans', call: (c) => c.listSpans('s1') },
-    {
-      name: 'listMessages',
-      path: '/api/traces/s1%3A0/messages',
-      call: (c) => c.listMessages('s1:0'),
-    },
-    { name: 'getPayload', path: '/api/payloads/p1', call: (c) => c.getPayload('p1') },
   ];
 
 describe('the API client authenticates by header', () => {
@@ -109,8 +103,8 @@ describe('the API client authenticates by header', () => {
     const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
     const client = createApiClient({ fetchImpl, bootstrap: BOOTSTRAP });
     for (const { call } of METHODS) await call(client);
-    await client.listSessions({ project: 'p', from: '2026-01-01', limit: 5, offset: 10 });
-    await client.getPayload('p1', '1024-');
+    await client.listSessions({ project: 'p', q: 'needle', limit: 5, offset: 10 });
+    await client.getSession('s1', { limit: 5, from_seq: 200 });
 
     expect(calls.length).toBeGreaterThan(METHODS.length);
     for (const { url } of calls) {
@@ -232,82 +226,73 @@ describe('the API client distinguishes its three failure classes', () => {
 });
 
 describe('the API client returns the shared wire shapes', () => {
-  const SESSION: Session = {
+  const ROW: SessionListRow = {
     id: 's1',
-    harness: 'claude-code',
+    title: 'add a span tree',
+    preview: 'add a span tree',
     project_path: '/repo',
+    git_branch: 'main',
+    model: 'claude-sonnet-5',
     started_at: '2026-07-29T10:00:00.000Z',
-    status: 'live',
-    capture_mode: 'full',
-    total_tokens: 12,
-    tokens_in: 8,
-    tokens_out: 4,
-    tokens_cache_read: 0,
-    tokens_cache_write: 0,
-    est_cost: 0.01,
+    last_activity_at: '2026-07-29T10:05:00.000Z',
+    turn_count: 1,
     tool_call_count: 1,
     error_count: 0,
-    trace_count: 1,
+    tokens_in: 8,
+    tokens_out: 4,
+    est_cost: 0.01,
+    agent_count: 0,
+    has_drift: false,
+    live: true,
   };
 
-  it('listSessions returns Page<Session>', async () => {
-    const body: Page<Session> = { items: [SESSION], limit: 100, offset: 0, has_more: true };
+  it('listSessions returns Page<SessionListRow>', async () => {
+    const body: Page<SessionListRow> = { items: [ROW], limit: 100, offset: 0, has_more: true };
     const { fetchImpl } = recordingFetch(() => json(body));
     // The type annotation IS the assertion — `tsc --noEmit` is the other half
     // of this test, and the reason `npm run typecheck` runs beside `npm test`.
-    const page: Page<Session> = await createApiClient({
+    const page: Page<SessionListRow> = await createApiClient({
       fetchImpl,
       bootstrap: BOOTSTRAP,
     }).listSessions();
 
     expect(page.has_more).toBe(true);
-    expect(page.items[0]?.harness).toBe('claude-code');
+    // `live` is stamped by the server and is not a column, which is exactly the
+    // field a `Session`-typed client could not carry.
+    expect(page.items[0]?.live).toBe(true);
     expect(page, 'the envelope deliberately has no total').not.toHaveProperty('total');
   });
 
-  it('getSession returns SessionDetail with a nested Page<Trace>', async () => {
-    const body: SessionDetail = {
-      session: SESSION,
-      traces: { items: [], limit: 100, offset: 0, has_more: false },
+  it('getSession returns the detail body, cursor fields included', async () => {
+    const body: SessionDetailBody = {
+      session: { ...ROW, projection: { state: 'ready' } },
+      turns: [],
+      events: [],
+      next_seq: 0,
+      has_more: false,
+      fingerprint: '1:2:3',
     };
     const { fetchImpl } = recordingFetch(() => json(body));
-    const detail: SessionDetail = await createApiClient({
+    const detail: SessionDetailBody = await createApiClient({
       fetchImpl,
       bootstrap: BOOTSTRAP,
     }).getSession('s1');
 
     expect(detail.session.id).toBe('s1');
-    expect(detail.traces.has_more).toBe(false);
+    expect(detail.has_more).toBe(false);
+    // The live-tail epoch rides on the detail response, not on a second route.
+    expect(detail.fingerprint).toBe('1:2:3');
   });
 
-  it('listSpans and listMessages return their own page types', async () => {
-    const { fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
-    const client = createApiClient({ fetchImpl, bootstrap: BOOTSTRAP });
-    const spans: Page<Span> = await client.listSpans('s1', { trace: 's1:0' });
-    const messages: Page<Message> = await client.listMessages('s1:0');
+  it('getSession sends from_seq as a cursor, never an offset', async () => {
+    const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
+    await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).getSession('s1', {
+      limit: 500,
+      from_seq: 1200,
+    });
 
-    expect(spans.items).toEqual([]);
-    expect(messages.items).toEqual([]);
-  });
-
-  it('getPayload passes ?range through verbatim and returns PayloadSlice', async () => {
-    const body: PayloadSlice = {
-      id: 'p1',
-      byte_size: 4096,
-      range: { start: 1024, end: 4095 },
-      content: 'sliced',
-      truncated: true,
-    };
-    const { calls, fetchImpl } = recordingFetch(() => json(body));
-    // `1024-` (open-ended) is legal per read-api.ts's RANGE regex.
-    const slice: PayloadSlice = await createApiClient({
-      fetchImpl,
-      bootstrap: BOOTSTRAP,
-    }).getPayload('p1', '1024-');
-
-    expect(calls[0]?.url).toBe('/api/payloads/p1?range=1024-');
-    expect(slice.truncated).toBe(true);
-    expect(slice.range.end).toBe(4095);
+    expect(calls[0]?.url).toBe('/api/sessions/s1?limit=500&from_seq=1200');
+    expect(calls[0]?.url, 'offset paging was replaced by the cursor').not.toContain('offset');
   });
 
   it.each([

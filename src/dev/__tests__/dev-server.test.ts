@@ -40,25 +40,47 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
+/** Six real-shaped transcript lines for `sess-dev`. */
+function transcriptLines(): string {
+  return Array.from({ length: 6 }, (_, i) =>
+    JSON.stringify({
+      type: 'user',
+      uuid: `0000000${i}-1111-4111-8111-000000000000`,
+      parentUuid: null,
+      sessionId: 'sess-dev',
+      version: '2.1.212',
+      cwd: '/Users/dev/proj',
+      gitBranch: 'main',
+      timestamp: new Date(Date.UTC(2026, 6, 26, 0, 0, i)).toISOString(),
+      promptId: `p${i}`,
+      origin: { kind: 'human' },
+      message: { role: 'user', content: `line ${i}` },
+    }),
+  )
+    .map((l) => `${l}\n`)
+    .join('');
+}
+
 /** A transcript root holding one slug directory with one real-shaped transcript. */
 function makeCorpus(slug = SLUG): string {
   const root = tempDir('agent-lens-dev-tr-');
   mkdirSync(join(root, slug), { recursive: true });
-  writeFileSync(
-    join(root, slug, 'sess-dev.jsonl'),
-    Array.from({ length: 6 }, (_, i) =>
-      JSON.stringify({
-        type: 'assistant',
-        uuid: `u-${i}`,
-        sessionId: 'sess-dev',
-        timestamp: new Date(Date.UTC(2026, 6, 26, 0, 0, i)).toISOString(),
-        cwd: '/Users/dev/proj',
-      }),
-    )
-      .map((l) => `${l}\n`)
-      .join(''),
-  );
+  writeFileSync(join(root, slug, 'sess-dev.jsonl'), transcriptLines());
   return root;
+}
+
+/**
+ * The same transcript, in the ARCHIVE the corpus sweep actually reads.
+ *
+ * Task 4.5 replaced the tailer with a sweep over `<dataDir>/archive`, so a
+ * transcript root alone no longer produces a session row — `agent-lens archive`
+ * is what mirrors one into place. The dev suite seeds both: the root is what
+ * `startDevServer` measures and reports, the archive is what gets indexed.
+ */
+function seedArchive(dataDir: string, slug = SLUG): void {
+  const dir = join(dataDir, 'archive', slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'sess-dev.jsonl'), transcriptLines());
 }
 
 afterAll(() => {
@@ -75,12 +97,15 @@ describe('startDevServer — the real stack', { timeout: 15_000 }, () => {
 
   beforeAll(async () => {
     dataDir = tempDir('agent-lens-dev-data-');
+    seedArchive(dataDir);
     dev = await startDevServer({
       dataDir,
       transcriptRoot: makeCorpus(),
       projects: [SLUG],
-      // The boot catch-up already ran by the time `startDevServer` resolves.
-      tailIntervalMs: 60_000,
+      // A long period, not a short one: the sweep's FIRST tick is synchronous
+      // and runs before the socket binds, so `sess-dev` is indexed by the time
+      // `startDevServer` resolves and no assertion waits on a timer.
+      sweepIntervalMs: 60_000,
     });
     token = readToken(dataDir)!;
     vitePort = Number(new URL(dev.viteUrl).port);
@@ -262,7 +287,7 @@ describe('startDevServer — refuses rather than boots wrong', { timeout: 15_000
       dataDir,
       transcriptRoot,
       projects: [SLUG],
-      tailIntervalMs: 60_000,
+      sweepIntervalMs: 0,
     });
     expect(booted.collectorPort).toBeGreaterThan(0);
   }, 60_000);
@@ -278,11 +303,11 @@ describe('startDevServer — refuses rather than boots wrong', { timeout: 15_000
         transcriptRoot: makeCorpus(),
         projects: [SLUG],
         uiDir,
-        tailIntervalMs: 60_000,
+        sweepIntervalMs: 0,
       }),
     ).rejects.toThrow();
 
-    // Without the try/catch, the socket, DB and tail interval leak into this worker.
+    // Without the try/catch, the socket, DB and sweep interval leak into this worker.
     expect(readConfig(dataDir)).toBeNull();
   }, 60_000);
 });

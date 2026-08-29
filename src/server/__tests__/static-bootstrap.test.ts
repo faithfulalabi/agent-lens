@@ -3,7 +3,7 @@
 // in the `x-agentlens-token` request header.
 //
 // The Task 1.3 version of this file asserted the SHAPE OF THE SOURCE (`[HEADER]:
-// TOKEN`, `fetch('/api/events'`). Those assertions could be satisfied by
+// TOKEN`, a literal fetch call). Those assertions could be satisfied by
 // rewriting a string and said nothing about what a browser would do. Every
 // invariant is preserved here, re-expressed against the served document:
 // the scripts are executed in a `vm` sandbox and the result is inspected.

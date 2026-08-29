@@ -284,10 +284,9 @@ describe('AC4 — watching is a poll, and no fs.watch call site exists in src/',
   /**
    * Every CALL whose callee resolves to `node:fs`'s watcher family.
    *
-   * ★ AN AST SCAN, NEVER A GREP. `capture/tailer.ts:246` names `fs.watch` in a
-   * doc comment explaining why this codebase does not use it, and it is the only
-   * textual occurrence under `src/` — a text search is born red on the very
-   * comment that records the decision.
+   * ★ AN AST SCAN, NEVER A GREP. `corpus/watch.ts:3` names `fs.watch` in a doc
+   * comment explaining why this codebase does not use it — a text search is born
+   * red on the very comment that records the decision.
    */
   function watchSites(file: string, text = readFileSync(join(SRC_DIR, file), 'utf8')): string[] {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
@@ -358,10 +357,12 @@ describe('AC4 — watching is a poll, and no fs.watch call site exists in src/',
 
   it('the doc comment naming fs.watch is present, and does NOT red the scan', () => {
     // The false positive a grep would trip on, asserted so the AST requirement
-    // cannot be quietly downgraded later.
-    const tailer = readFileSync(join(SRC_DIR, 'capture/tailer.ts'), 'utf8');
-    expect(tailer).toContain('fs.watch');
-    expect(watchSites('capture/tailer.ts', tailer)).toEqual([]);
+    // cannot be quietly downgraded later. Re-pointed from the deleted
+    // `capture/tailer.ts` to the module under test, which carries the same
+    // mention and — like the original — no call site.
+    const watcher = readFileSync(join(SRC_DIR, 'corpus/watch.ts'), 'utf8');
+    expect(watcher).toContain('fs.watch');
+    expect(watchSites('corpus/watch.ts', watcher)).toEqual([]);
   });
 });
 

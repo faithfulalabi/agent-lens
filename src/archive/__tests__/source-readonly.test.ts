@@ -905,13 +905,15 @@ describe('agent-lens archive never loads node:sqlite (Test 20)', () => {
 
   it('(a-control) the same probe DOES report sqlite for a known-dirty entry point', async () => {
     // Without this, a probe that silently loaded nothing would pass vacuously.
+    // Re-pointed from the deleted `db/index.ts` to `db/open.ts`, which is the
+    // surviving `node:sqlite` loader and a WRITE_SITES carrier in its own right.
     const s = sb();
     const probe = writeProbe(s.root);
     const outDir = join(s.root, 'probe-control');
     mkdirSync(outDir, { recursive: true });
 
     const { modules } = await probedRun(
-      ['--import', 'tsx', '-e', "import('./src/db/index.ts')"],
+      ['--import', 'tsx', '-e', "import('./src/db/open.ts')"],
       probe,
       outDir,
     );

@@ -1,9 +1,9 @@
 // The sweep. A 1 Hz `setInterval` running two waves over one archive walk.
 //
 // A POLL, NOT `fs.watch`. Recursive watching is platform-divergent and
-// event-lossy — the reasoning `capture/tailer.ts:246` already recorded — and the
-// walk it replaces is a few milliseconds, so a watcher buys nothing measurable
-// and costs a whole class of missed events.
+// event-lossy — the reasoning plan 001's tailer already recorded, before task
+// 4.5 deleted it — and the walk it replaces is a few milliseconds, so a watcher
+// buys nothing measurable and costs a whole class of missed events.
 //
 // ★ TWO WAVES, BECAUSE THE UNIT OF WORK IS NOT THE UNIT OF PAINT. Wave 1 folds,
 // reads a window and upserts a Tier-A row: ~20 ms for today's corpus, and every

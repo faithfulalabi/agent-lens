@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import type { Session } from '@shared/entities.ts';
 import type { Page } from '@shared/api.ts';
-import type { SessionsQuery } from '../api.js';
+import type { SessionListRow, SessionsQuery } from '../api.js';
 import { createRouter } from '../router.js';
 import {
   LIST_LIMIT,
@@ -18,7 +18,7 @@ import {
   type SessionListData,
 } from '../session-list.js';
 import { fakeHistoryPort } from './helpers.js';
-import { makePage, makeSession, stubApiClient } from './fixtures.js';
+import { makePage, makeSession, makeSessionRow, stubApiClient } from './fixtures.js';
 
 /*
  * Task 5.2b, the domain half — every branch AC1/AC2/AC3 care about, driven as a
@@ -28,8 +28,30 @@ import { makePage, makeSession, stubApiClient } from './fixtures.js';
 
 const NOW = Date.parse('2026-07-29T12:00:00.000Z');
 
-/** `n` sessions, newest first, one hour apart, ending at `NOW`. */
-function ladder(n: number, overrides: (i: number) => Partial<Session> = () => ({})): Session[] {
+/** `n` wire rows, newest first, one hour apart, ending at `NOW`. */
+function ladder(
+  n: number,
+  overrides: (i: number) => Partial<SessionListRow> = () => ({}),
+): SessionListRow[] {
+  return Array.from({ length: n }, (_, i) =>
+    makeSessionRow({
+      id: `s${i}`,
+      started_at: new Date(NOW - i * 3_600_000).toISOString(),
+      last_activity_at: new Date(NOW - i * 3_600_000 + 60_000).toISOString(),
+      ...overrides(i),
+    }),
+  );
+}
+
+/**
+ * The same ladder in the shape the pure functions take.
+ *
+ * Task 4.5 moved the WIRE to `SessionListRow` while `selectRows`, `emptyStateOf`
+ * and `volumeBuckets` still operate on `SessionListData.sessions`, which the
+ * loader adapts. Two ladders is the honest way to say that: one per side of the
+ * adapter, rather than one type pretending to be both.
+ */
+function sessionLadder(n: number, overrides: (i: number) => Partial<Session> = () => ({})): Session[] {
   return Array.from({ length: n }, (_, i) =>
     makeSession({
       id: `s${i}`,
@@ -41,7 +63,7 @@ function ladder(n: number, overrides: (i: number) => Partial<Session> = () => ({
 }
 
 /** A recorder around `listSessions`, so a test can read back every query sent. */
-function recordingApi(pages: Page<Session>[]) {
+function recordingApi(pages: Page<SessionListRow>[]) {
   const queries: SessionsQuery[] = [];
   let call = 0;
   const api = stubApiClient({
@@ -49,7 +71,7 @@ function recordingApi(pages: Page<Session>[]) {
       queries.push(query);
       const page = pages[Math.min(call, pages.length - 1)];
       call += 1;
-      return Promise.resolve(page ?? makePage<Session>([]));
+      return Promise.resolve(page ?? makePage<SessionListRow>([]));
     },
   });
   return { api, queries, calls: () => call };
@@ -93,17 +115,21 @@ describe('rangeBounds turns a range into the server bound', () => {
   });
 });
 
-describe('loadSessionList sends the range and an explicit limit (Test 1)', () => {
-  it('sends `from` and an explicit limit on the hot path', async () => {
+describe('loadSessionList sends an explicit limit and no range (Test 1)', () => {
+  it('sends the limit, and NOT a range the server would ignore', async () => {
     const { api, queries, calls } = recordingApi([makePage(ladder(4))]);
 
     const data = await loadSessionList(api, { range: '3d', now: NOW });
 
     expect(calls(), 'the probe must not fire when the in-range page has rows').toBe(1);
-    expect(queries[0]).toEqual({
-      from: new Date(NOW - 3 * 86_400_000).toISOString(),
-      limit: LIST_LIMIT,
-    });
+    // ★ NO `from`. `src/server/api.ts` reads only limit/offset/sort/project/q and
+    // ignores an unknown param rather than 400-ing, so a range sent here would be
+    // a filter the user set and the server silently never applied. Ruled at the
+    // phase-4 gate: removed, so the gap is visible to whoever restores it.
+    expect(queries[0]).toEqual({ limit: LIST_LIMIT });
+    expect(queries[0], 'a silently-ignored filter is worse than a removed one').not.toHaveProperty(
+      'from',
+    );
     expect(
       LIST_LIMIT,
       'the server defaults `?limit` to 100, so an implicit limit silently ' +
@@ -118,7 +144,7 @@ describe('loadSessionList sends the range and an explicit limit (Test 1)', () =>
     const api = stubApiClient({
       listSessions: (_query, options) => {
         seen.push(options?.signal);
-        return Promise.resolve(makePage<Session>([]));
+        return Promise.resolve(makePage<SessionListRow>([]));
       },
     });
     const controller = new AbortController();
@@ -139,7 +165,7 @@ describe('the unfiltered probe fires only on an empty in-range page (Test 10)', 
 
   it('fires, unfiltered, when the in-range page is empty', async () => {
     const { api, queries, calls } = recordingApi([
-      makePage<Session>([]),
+      makePage<SessionListRow>([]),
       makePage(ladder(7), { has_more: true }),
     ]);
 
@@ -160,7 +186,7 @@ describe('the unfiltered probe fires only on an empty in-range page (Test 10)', 
   });
 
   it('short-circuits the probe for `all`, where both requests would be identical', async () => {
-    const { api, calls } = recordingApi([makePage<Session>([])]);
+    const { api, calls } = recordingApi([makePage<SessionListRow>([])]);
 
     const data = await loadSessionList(api, { range: 'all', now: NOW });
 
@@ -252,7 +278,7 @@ describe('projectsIn feeds the narrowing control', () => {
 
 describe('volumeBuckets (Test 7)', () => {
   it('returns a constant number of buckets whatever the input', () => {
-    for (const sessions of [[], ladder(1), ladder(40)]) {
+    for (const sessions of [[], sessionLadder(1), sessionLadder(40)]) {
       expect(volumeBuckets(sessions, { range: '7d', now: NOW, bucketCount: 24 })).toHaveLength(24);
     }
   });
@@ -263,7 +289,7 @@ describe('volumeBuckets (Test 7)', () => {
   });
 
   it('counts every in-range session exactly once, boundaries included', () => {
-    const buckets = volumeBuckets(ladder(48), { range: '3d', now: NOW, bucketCount: 12 });
+    const buckets = volumeBuckets(sessionLadder(48), { range: '3d', now: NOW, bucketCount: 12 });
     const total = buckets.reduce((sum, b) => sum + b.count, 0);
     expect(total, '48 hourly sessions all sit inside a 3-day window').toBe(48);
   });
@@ -278,12 +304,12 @@ describe('volumeBuckets (Test 7)', () => {
 
   it('excludes sessions outside the window', () => {
     const old = makeSession({ started_at: new Date(NOW - 40 * 86_400_000).toISOString() });
-    const buckets = volumeBuckets([old, ...ladder(3)], { range: '3d', now: NOW, bucketCount: 12 });
+    const buckets = volumeBuckets([old, ...sessionLadder(3)], { range: '3d', now: NOW, bucketCount: 12 });
     expect(buckets.reduce((sum, b) => sum + b.count, 0)).toBe(3);
   });
 
   it('spans oldest-to-now for `all`, so the bars are not all in the last bucket', () => {
-    const spread = ladder(3, (i) => ({
+    const spread = sessionLadder(3, (i) => ({
       started_at: new Date(NOW - i * 30 * 86_400_000).toISOString(),
     }));
     const buckets = volumeBuckets(spread, { range: 'all', now: NOW, bucketCount: 3 });
@@ -292,7 +318,7 @@ describe('volumeBuckets (Test 7)', () => {
   });
 
   it('gives every bucket a start before its end, contiguously', () => {
-    const buckets = volumeBuckets(ladder(5), { range: '7d', now: NOW, bucketCount: 8 });
+    const buckets = volumeBuckets(sessionLadder(5), { range: '7d', now: NOW, bucketCount: 8 });
     for (const [i, bucket] of buckets.entries()) {
       expect(bucket.end).toBeGreaterThan(bucket.start);
       if (i > 0) expect(bucket.start).toBe(buckets[i - 1]?.end);
@@ -304,8 +330,8 @@ describe('volumeBuckets (Test 7)', () => {
 
 describe('emptyStateOf classifies all four states (Test 9)', () => {
   it('in-range rows present -> none', () => {
-    const data = dataOf({ sessions: ladder(3) });
-    expect(emptyStateOf(data, ladder(3), {})).toEqual({ kind: 'none' });
+    const data = dataOf({ sessions: sessionLadder(3) });
+    expect(emptyStateOf(data, sessionLadder(3), {})).toEqual({ kind: 'none' });
   });
 
   it('in-range empty and the probe empty -> never_captured', () => {
@@ -323,7 +349,7 @@ describe('emptyStateOf classifies all four states (Test 9)', () => {
   });
 
   it('a non-empty page narrowed to zero by the project control -> no_match_for_project', () => {
-    const data = dataOf({ sessions: ladder(40), truncated: true });
+    const data = dataOf({ sessions: sessionLadder(40), truncated: true });
     expect(
       emptyStateOf(data, [], { project: '/p/other' }),
       'the three-state design rendered this as a blank pane, which ' +
@@ -343,7 +369,7 @@ describe('emptyStateOf classifies all four states (Test 9)', () => {
 });
 
 describe('no_match_for_project may not state a falsehood (Ruling 3)', () => {
-  const deep = makeSession({ id: 'deep', project_path: '/p/rare' });
+  const deep = makeSessionRow({ id: 'deep', project_path: '/p/rare' });
 
   it('re-queries the server with `project` when a TRUNCATED page narrows to zero', async () => {
     // The whole point of the ruling: the client-side pass sees one page, so a
@@ -359,12 +385,8 @@ describe('no_match_for_project may not state a falsehood (Ruling 3)', () => {
     const data = await loadSessionList(api, { range: '7d', now: NOW, project: '/p/rare' });
 
     expect(calls(), 'exactly one extra request, in an already-empty state').toBe(2);
-    expect(queries[1]).toEqual({
-      from: new Date(NOW - 7 * 86_400_000).toISOString(),
-      project: '/p/rare',
-      limit: LIST_LIMIT,
-    });
-    expect(data.projectSessions).toEqual([deep]);
+    expect(queries[1]).toEqual({ project: '/p/rare', limit: LIST_LIMIT });
+    expect(data.projectSessions?.map((s) => s.id)).toEqual(['deep']);
 
     const rows = selectRows(data, { project: '/p/rare', sort: 'started_at', direction: 'desc' });
     expect(rows.map((s) => s.id)).toEqual(['deep']);
@@ -379,7 +401,7 @@ describe('no_match_for_project may not state a falsehood (Ruling 3)', () => {
     const fullPage = ladder(LIST_LIMIT, () => ({ project_path: '/p/busy' }));
     const { api, calls } = recordingApi([
       makePage(fullPage, { has_more: true, limit: LIST_LIMIT }),
-      makePage<Session>([]),
+      makePage<SessionListRow>([]),
     ]);
 
     const data = await loadSessionList(api, { range: '7d', now: NOW, project: '/p/gone' });
@@ -449,7 +471,7 @@ describe('cursorIntent (Test 16)', () => {
 });
 
 describe('applyIntent actually navigates (Test 17)', () => {
-  const rows = ladder(4);
+  const rows = sessionLadder(4);
 
   it('open pushes the session href onto the history port', () => {
     const port = fakeHistoryPort('/');
