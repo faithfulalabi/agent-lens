@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { statSafe } from '../archive/paths.js';
 import { PROJECTOR_VERSION } from '../transcript/version.js';
 import { SCHEMA_VERSION } from './schema.js';
-import { projectSession, type ProjectionEnv } from './write.js';
+import { projectSession, writeMeta, type ProjectionEnv } from './write.js';
 
 /** One session tree, folded. The three parts of the live-tail epoch string. */
 export interface ArchiveFold {
@@ -125,9 +125,8 @@ export function fingerprint(fold: ArchiveFold): string {
  * REPORT, never a gate: the gate is the per-row `projector_version` stamp.
  */
 export function seedMeta(db: DatabaseSync): void {
-  const write = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
-  write.run('schema_version', String(SCHEMA_VERSION));
-  write.run('projector_version', String(PROJECTOR_VERSION));
+  writeMeta(db, 'schema_version', String(SCHEMA_VERSION));
+  writeMeta(db, 'projector_version', String(PROJECTOR_VERSION));
 }
 
 /** What the gate did. `unindexed` means the corpus sweep has not seen the file. */
@@ -144,24 +143,34 @@ const GATE_SQL = `SELECT archive_path, projected_mtime_ms, projected_size, proje
   FROM sessions WHERE id = ?`;
 
 /**
- * The gate every read passes. A hit reprojects nothing; any one of the three
- * stamped parts differing reprojects the whole file.
+ * What the gate did, plus the fold it already took. `fold` is absent only when
+ * there were no bytes to fold — the one path that answers `'failed'` before any
+ * write.
  */
-export function ensureProjected(
-  db: DatabaseSync,
-  id: string,
-  env: ProjectionEnv,
-): ProjectionOutcome {
+export interface GateResult {
+  outcome: ProjectionOutcome;
+  fold?: ArchiveFold;
+}
+
+/**
+ * The gate every read passes, returning its fold. A hit reprojects nothing; any
+ * one of the three stamped parts differing reprojects the whole file.
+ *
+ * The fold rides back out because `fingerprint(fold)` is the detail response's
+ * live-tail epoch, and re-folding to get it would `readdir` the tree twice per
+ * request.
+ */
+export function ensureProjectedFold(db: DatabaseSync, id: string, env: ProjectionEnv): GateResult {
   const row = db.prepare(GATE_SQL).get(id) as GateRow | undefined;
   if (row === undefined) {
     // Creating the Tier-A row belongs to the corpus sweep. Nothing here
     // fabricates a session out of a stat.
     seedMeta(db);
-    return 'unindexed';
+    return { outcome: 'unindexed' };
   }
 
   const fold = foldArchive(row.archive_path);
-  if (fold === undefined) return 'failed';
+  if (fold === undefined) return { outcome: 'failed' };
 
   // ALL THREE, never two of three: a two-part comparison is how a projection
   // outlives the projector that produced it.
@@ -170,7 +179,7 @@ export function ensureProjected(
     row.projected_size === fold.size &&
     row.projector_version === PROJECTOR_VERSION
   ) {
-    return 'hit';
+    return { outcome: 'hit', fold };
   }
 
   seedMeta(db);
@@ -179,7 +188,16 @@ export function ensureProjected(
   } catch {
     // The rethrow is `projectSession`'s contract for a direct caller. A read
     // must not die because one session is unprojectable.
-    return 'failed';
+    return { outcome: 'failed', fold };
   }
-  return 'projected';
+  return { outcome: 'projected', fold };
+}
+
+/** {@link ensureProjectedFold} for the caller that needs only the verdict. */
+export function ensureProjected(
+  db: DatabaseSync,
+  id: string,
+  env: ProjectionEnv,
+): ProjectionOutcome {
+  return ensureProjectedFold(db, id, env).outcome;
 }

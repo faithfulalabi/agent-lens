@@ -17,6 +17,7 @@ import {
   projectSlugOf,
   rowIdOf,
   sessionDirOf,
+  sessionRootOf,
   subagentsDirOf,
   toolResultsDirOf,
   workflowParentOf,
@@ -104,6 +105,49 @@ describe('AC1 — sidecar and tool-results paths are pure string math', () => {
   it('takes the same slice foldArchive takes, and degrades for a non-transcript', () => {
     expect(sessionDirOf('/a/b/c.jsonl')).toBe('/a/b/c');
     expect(sessionDirOf('/a/b/c.meta.json')).toBe('/a/b/c.meta.json');
+  });
+
+  // ★ A SIDECAR'S SESSION ROOT IS ITS GRANDPARENT. `spill.ts:80-81` states the
+  // rule; `discover.ts:11` enforces it by mirroring `tool-results/` only under
+  // `<slug>/<stem>/`. Measured over 53 structured spill references: 34 sit in a
+  // sidecar, and 0 of 65 archive `tool-results/` files sit under `subagents/`.
+  it('anchors a sidecar at the session root, not beside its own transcript', () => {
+    const top = '/archive/-Users-dev-proj/abc.jsonl';
+    const root = '/archive/-Users-dev-proj/abc';
+
+    // A top-level transcript: the root IS the sibling directory.
+    expect(sessionRootOf(top)).toBe(root);
+
+    // A flat sidecar, and the `subagents/workflows/wf_<id>/` pocket, both land
+    // on the same root — which is what makes the two indistinguishable to a
+    // spill resolver, exactly as `discover.ts` mirrors them.
+    expect(sessionRootOf(`${root}/subagents/agent-kid.jsonl`)).toBe(root);
+    expect(sessionRootOf(`${root}/subagents/workflows/wf_1/agent-deep.jsonl`)).toBe(root);
+
+    // And `tool-results/` follows it, so one rule serves both call sites.
+    expect(toolResultsDirOf(`${root}/subagents/agent-kid.jsonl`)).toBe(join(root, 'tool-results'));
+    expect(toolResultsDirOf(top)).toBe(join(root, 'tool-results'));
+  });
+
+  it('sessionRootOf is idempotent and never escapes the slug', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom('/archive/-slug/abc', '/a/b/c', '/x'),
+        fc.integer({ min: 0, max: 3 }),
+        (root, depth) => {
+          const nested =
+            depth === 0
+              ? `${root}.jsonl`
+              : `${root}/subagents/${'d/'.repeat(depth - 1)}agent-x.jsonl`;
+          const once = sessionRootOf(nested);
+          expect(once).toBe(root);
+          // A root is already a root: re-anchoring it changes nothing but the
+          // `.jsonl` strip, which it no longer has.
+          expect(sessionRootOf(once)).toBe(once);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 });
 

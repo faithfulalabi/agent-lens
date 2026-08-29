@@ -3,7 +3,7 @@
 // `__tests__/sql-one-door.test.ts` is what makes that a fact rather than a
 // comment.
 //
-// **This module never projects.** `ensureProjected` (`freshness.ts:129`) does
+// **This module never projects.** `ensureProjectedFold` (`freshness.ts:163`) does
 // `readdirSync` + `statSync` and can trigger a full reprojection; the caller
 // must have run it before `readSessionHeader`/`readEventPage`/`readTurns`.
 // `spec/data-model-v2.md:295` puts that gate on the route. Nothing here opens a
@@ -168,8 +168,14 @@ export interface EventRow {
 }
 
 /**
- * The coordinates `GET /api/events/:id/content` dispatches on. No join: the
- * archive path is derivable from `session_id`, which task 4.4 resolves.
+ * The coordinates `GET /api/events/:id/content` dispatches on. No join, so the
+ * archive path is a SECOND read — {@link readEventArchivePath}, keyed on
+ * `session_id`.
+ *
+ * CORRECTED 2026-08-25 (task 4.4): this comment previously said the archive path
+ * was "derivable from `session_id`". It is not. A top-level archive path is
+ * `<root>/<slug>/<id>.jsonl` and the slug is not recoverable from the id;
+ * `corpus/paths.ts` has `rowIdOf` and no inverse.
  */
 export interface EventContentRow {
   id: string;
@@ -495,6 +501,27 @@ export function readEventContentRow(
     .get(event_id) as unknown as EventContentRow | undefined;
 }
 
+/** Where a session's bytes live, and whose sidecar it is. */
+export interface EventArchive {
+  archive_path: string;
+  /** Non-null on a sidecar. It names the session whose `tool-results/` holds the
+   *  spills, which is what a sidecar's own directory never does. */
+  parent_session_id: string | null;
+}
+
+/**
+ * The archive path an `events.src_offset` is relative to. A sidecar IS a
+ * `sessions` row (`schema.ts:44`), so one lookup answers for both.
+ */
+export function readEventArchivePath(
+  db: DatabaseSync,
+  session_id: string,
+): EventArchive | undefined {
+  return db
+    .prepare(`SELECT archive_path, parent_session_id FROM sessions WHERE id = ?`)
+    .get(session_id) as unknown as EventArchive | undefined;
+}
+
 // --- Search ----------------------------------------------------------------
 
 export interface SearchQuery {
@@ -556,4 +583,88 @@ export function readDriftRows(db: DatabaseSync): DriftRow[] {
        WHERE projection_state = 'ready'`,
     )
     .all() as unknown as DriftRow[];
+}
+
+// --- Health ----------------------------------------------------------------
+
+/** The three `GET /api/health` numbers that are counted rather than stored. */
+export interface HealthCounts {
+  sessions_indexed: number;
+  sessions_projected: number;
+  db_bytes: number;
+}
+
+/**
+ * `projected` is the exact complement of {@link countUnprojected}, so the two
+ * always sum to `sessions_indexed`. `db_bytes` comes from the page counters
+ * rather than a `statSync`, which keeps `fs` as well as SQL out of the route.
+ */
+export function readHealthCounts(db: DatabaseSync): HealthCounts {
+  const sessions = db
+    .prepare(
+      `SELECT count(*) AS sessions_indexed,
+       coalesce(sum(projection_state IN ('ready', 'empty')), 0) AS sessions_projected
+     FROM sessions`,
+    )
+    .get() as unknown as Omit<HealthCounts, 'db_bytes'>;
+  const pages = db.prepare('PRAGMA page_count').get() as unknown as { page_count: number };
+  const size = db.prepare('PRAGMA page_size').get() as unknown as { page_size: number };
+  return { ...sessions, db_bytes: pages.page_count * size.page_size };
+}
+
+/**
+ * Events in one session's projection, for what `POST .../reproject` reports it
+ * wrote. There is no counterpart for turns because `sessions.turn_count` is a
+ * column the projection already stamps.
+ */
+export function readEventCount(db: DatabaseSync, session_id: string): number {
+  const row = db
+    .prepare('SELECT count(*) AS n FROM events WHERE session_id = ?')
+    .get(session_id) as unknown as { n: number };
+  return row.n;
+}
+
+// --- Corpus sweep ----------------------------------------------------------
+// Not wire shapes: these four serve `src/corpus/`, which walks the archive and
+// diffs it against the rows below. They live here for the same reason the rest
+// does — the one door.
+
+/** The three freshness columns of one indexed session. */
+export interface IndexedRow {
+  archive_path: string;
+  file_mtime_ms: number;
+  file_size: number;
+}
+
+/** The whole Tier-A index in one query, keyed the way the walk diffs it. */
+export function readIndexedFolds(db: DatabaseSync): Map<string, IndexedRow> {
+  const rows = db
+    .prepare('SELECT archive_path, file_mtime_ms, file_size FROM sessions')
+    .all() as unknown as IndexedRow[];
+  return new Map(rows.map((row) => [row.archive_path, row]));
+}
+
+/** One `meta` value. `undefined` when the key was never written. */
+export function readMeta(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+    { value: string } | undefined;
+  return row?.value;
+}
+
+const TREE_ROOTS_SQL = `SELECT id FROM sessions
+  WHERE parent_session_id IS NULL AND rollup_state = 'own'
+  ORDER BY last_activity_at DESC, id DESC`;
+
+/** Top-level trees no sweep has rolled up yet, newest first. */
+export function readTreeRoots(db: DatabaseSync): string[] {
+  const rows = db.prepare(TREE_ROOTS_SQL).all() as unknown as { id: string }[];
+  return rows.map((row) => row.id);
+}
+
+/** The direct children of one session — wave 2's breadth-first frontier. */
+export function readChildSessionIds(db: DatabaseSync, session_id: string): string[] {
+  const rows = db
+    .prepare('SELECT id FROM sessions WHERE parent_session_id = ?')
+    .all(session_id) as unknown as { id: string }[];
+  return rows.map((row) => row.id);
 }

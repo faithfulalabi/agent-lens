@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   countUnprojected,
   readDriftRows,
+  readEventArchivePath,
   readEventContentRow,
   readEventPage,
   readProjects,
@@ -302,6 +303,25 @@ describe('AC1 — the eight query families return the spec shapes', () => {
     expect(readEventContentRow(db, 'no-such-event')).toBeUndefined();
   });
 
+  it('6b. readEventArchivePath answers for a session, a sidecar, and nothing else', () => {
+    const id = seedFull();
+    const parent = readEventArchivePath(db, id)!;
+    expect(keysOf(parent)).toEqual(['archive_path', 'parent_session_id']);
+    expect(parent.archive_path).toBe(join('/Users/dev/.agent-lens/archive', `${id}.jsonl`));
+    // A top-level session is the row with no parent — the `idx_sessions_recent`
+    // predicate the list depends on.
+    expect(parent.parent_session_id).toBeNull();
+
+    // A sidecar IS a `sessions` row, so one lookup answers for both.
+    const kid = seedSidecarRow(db, id, { id: 'kid-session' });
+    expect(readEventArchivePath(db, kid)).toEqual({
+      archive_path: join('/Users/dev/.agent-lens/archive', `${kid}.jsonl`),
+      parent_session_id: id,
+    });
+
+    expect(readEventArchivePath(db, 'no-such-session')).toBeUndefined();
+  });
+
   it('7. searchEvents returns SearchHit rows joined to their session (:349-354)', () => {
     const id = seedFull();
     const hits = searchEvents(db, { q: 'quick', limit: 50 });
@@ -556,6 +576,16 @@ describe('AC4 — has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
       fragment: 'readDriftRows',
       present: false,
       why: 'Q4 rules the harness_versions tally into the MAPPER, so this selects raw rows and holds no count today. Present:false is the guard — a GROUP BY harness_version landing here must flip this flag, which is the review.',
+    },
+    {
+      fragment: 'readHealthCounts',
+      present: true,
+      why: 'GET /api/health reports sessions_indexed and sessions_projected by name (data-model-v2.md:394-396). Both are corpus totals over `sessions`, not a page total, and sessions_projected is the exact complement of countUnprojected.',
+    },
+    {
+      fragment: 'readEventCount',
+      present: true,
+      why: 'POST /api/sessions/:id/reproject reports event_count (data-model-v2.md:373-375). An exact total over one session on the session index — the LIMIT n+1 probe cannot answer a total, and paging every event into the route to length it would be worse. Turns need no twin: sessions.turn_count is a stamped column.',
     },
   ];
 

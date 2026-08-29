@@ -28,6 +28,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { relativeUnder } from '../archive/paths.js';
 import { foldArchive, type ArchiveFold } from '../db/freshness.js';
+import { readIndexedFolds, type IndexedRow } from '../db/read.js';
 import { classifyCorpusPath, logicalPathOf, workflowParentOf } from './paths.js';
 
 /** One walked transcript whose fold differs from what `sessions` recorded. */
@@ -68,20 +69,6 @@ export interface ScanResult {
   walked: number;
 }
 
-interface IndexedRow {
-  archive_path: string;
-  file_mtime_ms: number;
-  file_size: number;
-}
-
-const INDEXED_SQL = 'SELECT archive_path, file_mtime_ms, file_size FROM sessions';
-
-/** The whole Tier-A index in one query, diffed in memory. */
-function indexedByPath(db: DatabaseSync): Map<string, IndexedRow> {
-  const rows = db.prepare(INDEXED_SQL).all() as unknown as IndexedRow[];
-  return new Map(rows.map((row) => [row.archive_path, row]));
-}
-
 /**
  * Walk the archive and return only the transcripts whose bytes moved.
  *
@@ -101,7 +88,7 @@ export function scanCorpus(db: DatabaseSync, archiveRoot: string, sourceRoot: st
   walk(archiveRoot, {
     archiveRoot,
     sourceRoot,
-    indexed: indexedByPath(db),
+    indexed: readIndexedFolds(db),
     // A hot file and its sealed twin share a logical name; the first one walked
     // wins, and the second is not a second file.
     seen: new Set<string>(),

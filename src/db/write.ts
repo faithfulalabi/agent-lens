@@ -576,3 +576,24 @@ const SUBAGENT_ROLLUP_SQL = `UPDATE sessions SET
 export function recomputeSubagentRollups(db: DatabaseSync, id: string): void {
   db.prepare(SUBAGENT_ROLLUP_SQL).run({ id });
 }
+
+/**
+ * The flip `recomputeSubagentRollups` refuses to make: this row's `sub_*` are
+ * final. Only the caller that reached the whole descendant fixpoint may say so.
+ */
+export function markRollupComplete(db: DatabaseSync, id: string): void {
+  db.prepare(`UPDATE sessions SET rollup_state = 'complete' WHERE id = ?`).run(id);
+}
+
+/**
+ * Link a row to its parent. Tier-A only, like the two upserts above, so it never
+ * invalidates a projection the child already has.
+ */
+export function setParentSession(db: DatabaseSync, id: string, parent_session_id: string): void {
+  db.prepare('UPDATE sessions SET parent_session_id = ? WHERE id = ?').run(parent_session_id, id);
+}
+
+/** Write one `meta` key. The table is a report, never a gate — see `seedMeta`. */
+export function writeMeta(db: DatabaseSync, key: string, value: string): void {
+  db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+}

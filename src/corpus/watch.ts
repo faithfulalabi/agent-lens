@@ -18,7 +18,7 @@
 // deadline bounds the tick at `deadline + one tree`.
 //
 // ⚠️ RESIDUAL, STATED NOT HIDDEN: a single tree larger than the deadline still
-// overruns, because one projection is one SAVEPOINT and cannot be split. The
+// overruns, because one projection is one `SAVEPOINT` and cannot be split. The
 // deadline bounds the NUMBER of overruns to one per tick, not their size. Node
 // coalesces a late `setInterval` fire, so an overrun delays the next tick rather
 // than stacking ticks.
@@ -32,8 +32,15 @@ import type { DatabaseSync } from 'node:sqlite';
 import { createArchiveReader, type ArchiveReader } from '../archive/read.js';
 import { resolveArchiveRoot, resolveTranscriptRoot } from '../archive/paths.js';
 import { ensureProjected } from '../db/freshness.js';
+import { readChildSessionIds, readMeta, readTreeRoots } from '../db/read.js';
 import { readSessionEnvelope } from '../db/sidecars.js';
-import { recomputeSubagentRollups, upsertSessionIndex } from '../db/write.js';
+import {
+  markRollupComplete,
+  recomputeSubagentRollups,
+  setParentSession,
+  upsertSessionIndex,
+  writeMeta,
+} from '../db/write.js';
 import { createProjectionEnv } from './env.js';
 import { decodeProjectDir, projectSlugOf, rowIdOf, workflowParentOf } from './paths.js';
 import { scanCorpus } from './scan.js';
@@ -135,15 +142,6 @@ export interface CorpusSweep {
   close(): void;
 }
 
-const WRITE_META_SQL = 'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)';
-const READ_META_SQL = 'SELECT value FROM meta WHERE key = ?';
-
-const TREE_ROOTS_SQL = `SELECT id FROM sessions
-  WHERE parent_session_id IS NULL AND rollup_state = 'own'
-  ORDER BY last_activity_at DESC, id DESC`;
-
-const CHILDREN_SQL = 'SELECT id FROM sessions WHERE parent_session_id = ?';
-
 /**
  * Start the corpus sweep. Returns a handle; nothing wires it into the CLI yet —
  * the running server still opens the plan-001 database, and two schemas in one
@@ -219,7 +217,7 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
       // to be found through. The parent is pure path math instead.
       const parent = workflowParentOf(entry.relPath);
       if (parent !== undefined) {
-        db.prepare('UPDATE sessions SET parent_session_id = ? WHERE id = ?').run(parent, id);
+        setParentSession(db, id, parent);
         report.deferred_wf_sidecars += 1;
       }
     }
@@ -244,8 +242,8 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
         done.push(id);
 
         if (ensureProjected(db, id, env) === 'failed') report.projection_failed.push(id);
-        for (const child of db.prepare(CHILDREN_SQL).all(id) as unknown as { id: string }[]) {
-          if (!seen.has(child.id)) next.push(child.id);
+        for (const child of readChildSessionIds(db, id)) {
+          if (!seen.has(child)) next.push(child);
         }
       }
       frontier = next;
@@ -258,17 +256,16 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
 
     // Only the root flips. `rollup_state` is the claim that a row's `sub_*` are
     // final, and that is true of the root of a completed fixpoint alone.
-    db.prepare(`UPDATE sessions SET rollup_state = 'complete' WHERE id = ?`).run(root);
+    markRollupComplete(db, root);
   };
 
   const runWave2 = (report: SweepReport, startedAt: number): void => {
-    const roots = db.prepare(TREE_ROOTS_SQL).all() as unknown as { id: string }[];
     let processed = 0;
-    for (const root of roots) {
+    for (const root of readTreeRoots(db)) {
       // BETWEEN trees, never inside one, and never before the first: a zero
       // deadline still makes progress at exactly one tree per tick.
       if (processed > 0 && now() - startedAt >= deadlineMs) break;
-      projectTree(root.id, report);
+      projectTree(root, report);
       processed += 1;
     }
   };
@@ -333,15 +330,11 @@ function stampIndexMeta(
   report: SweepReport,
   now: () => number,
 ): void {
-  const write = db.prepare(WRITE_META_SQL);
-  const read = db.prepare(READ_META_SQL);
-
   // Only on a change: this runs once a second forever, and a WAL write per tick
   // for a value that never moves is a cost with no reader.
-  const root = read.get('projects_root') as { value: string } | undefined;
-  if (root?.value !== sourceRoot) write.run('projects_root', sourceRoot);
+  if (readMeta(db, 'projects_root') !== sourceRoot) writeMeta(db, 'projects_root', sourceRoot);
 
   if (report.unkeyable.length > 0 || report.envelope_incomplete.length > 0) return;
-  if (read.get('index_built_at') !== undefined && report.indexed === 0) return;
-  write.run('index_built_at', new Date(now()).toISOString());
+  if (readMeta(db, 'index_built_at') !== undefined && report.indexed === 0) return;
+  writeMeta(db, 'index_built_at', new Date(now()).toISOString());
 }
