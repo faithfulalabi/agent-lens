@@ -17,9 +17,11 @@ import {
   type SessionData,
 } from '@/lib/session-data';
 import { initialNavState, navReducer, type NavAction, type NavState } from '@/lib/tree-nav';
+import { buildThread, type SessionViewMode } from '@/lib/thread';
 import { EventDetail } from '@/components/session/EventDetail';
 import { SessionHeader } from '@/components/session/SessionHeader';
 import { SpanTree } from '@/components/session/SpanTree';
+import { ThreadView } from '@/components/session/ThreadView';
 import { TruncationNotice } from '@/components/session/TruncationNotice';
 
 /*
@@ -127,6 +129,17 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   const rows = useMemo(() => flatten(model, nav.expandedIds), [model, nav.expandedIds]);
 
   /*
+   * The second reader over the SAME array. `useAsync` reads its loader through a
+   * ref and keys its effect on the session id, so switching surfaces re-renders
+   * and issues no further request — which is the whole of AC1.
+   *
+   * Local state rather than a route: a route needs `route-match.ts`, which is
+   * under a standing do-not-touch rule and reserves query state for Task 7.2.
+   */
+  const [view, setView] = useState<SessionViewMode>('tree');
+  const thread = useMemo(() => buildThread(data?.events ?? []), [data]);
+
+  /*
    * The one action no keystroke produces. `modelIds` is the model's own id set
    * rather than the on-screen rows', which is what keeps a selection sitting
    * under a closed turn alive — and it is the contract Task 6.2's live append
@@ -214,7 +227,9 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
 
   return (
     <main data-slot="session-view" className="flex h-full min-h-0 flex-col">
-      {data === null ? null : <SessionHeader session={data.session} now={now} />}
+      {data === null ? null : (
+        <SessionHeader session={data.session} now={now} view={view} onViewChange={setView} />
+      )}
       {data === null ? null : (
         <TruncationNotice
           shown={data.shown}
@@ -224,18 +239,24 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div data-slot="tree-pane" className="min-w-0 flex-1 border-r border-border">
-          <SpanTree
-            rows={rows}
-            selectedId={nav.selectedId}
-            focusedIndex={nav.focusedIndex}
-            onKeyDown={onKeyDown}
-            onSelect={onSelect}
-            onToggle={onToggle}
-          />
-        </div>
+        {view === 'thread' && data !== null ? (
+          <ThreadView rows={thread} startedAt={data.session.started_at} />
+        ) : (
+          <>
+            <div data-slot="tree-pane" className="min-w-0 flex-1 border-r border-border">
+              <SpanTree
+                rows={rows}
+                selectedId={nav.selectedId}
+                focusedIndex={nav.focusedIndex}
+                onKeyDown={onKeyDown}
+                onSelect={onSelect}
+                onToggle={onToggle}
+              />
+            </div>
 
-        <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />
+            <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />
+          </>
+        )}
       </div>
     </main>
   );

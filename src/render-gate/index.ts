@@ -1,7 +1,7 @@
 // `npm run render-gate -- --task <id>` — the machine-decidable half of AC-R1.
 //
 // Boots 0.2's own dev server, drives the installed Chrome through it with
-// `playwright-core`, and writes `.render-gate/<task>/` — five screenshots, a
+// `playwright-core`, and writes `.render-gate/<task>/` — six screenshots, a
 // `report.json` of every assertion, and an `index.html` contact sheet.
 //
 // Two rules hold the whole file up:
@@ -26,13 +26,18 @@ import {
   type Observations,
   type RenderGateReport,
   type ShotRecord,
+  type ThreadProbe,
   type ToolCallProbe,
 } from './report.js';
 
 /**
- * The seven `data-slot` values the gate drives. `data-slot` carries no styling
+ * The eight `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
+ *
+ * Every entry is CLICKED or READ by the drive below. `thread-view` is
+ * deliberately not listed: the container is reached through `data-thread-kind`,
+ * and an entry no drive touches is the vacuity the guard exists to catch.
  */
 export const SELECTORS = {
   sessionCount: 'session-list-count',
@@ -42,6 +47,7 @@ export const SELECTORS = {
   traceExpand: 'trace-expand',
   spanRow: 'span-row',
   spanDetail: 'span-detail',
+  threadToggle: 'thread-toggle',
 } as const;
 
 /** `SpanTree`'s own `ESTIMATED_ROW_PX`. Pinned by a test — `totalRows` needs it. */
@@ -53,7 +59,7 @@ const DEFAULT_DEADLINE_MS = 180_000;
 const PER_WAIT_TIMEOUT_MS = 15_000;
 
 /**
- * The five screenshots, named so the contact sheet reads in drive order.
+ * The six screenshots, named so the contact sheet reads in drive order.
  *
  * `05-tool-call.png` was added by task 5.3 and it is not decoration. The four
  * before it are shot at `[data-index="1"]` and at the row `ArrowDown` reaches —
@@ -61,9 +67,18 @@ const PER_WAIT_TIMEOUT_MS = 15_000;
  * the corpus. So without a fifth shot the AC-R2 sign-off could not see the
  * state AC-R1 asserts on. Moving an earlier shot is not the fix: `driveKeyboard`
  * reads `selectedIndexBefore`, and a click before it corrupts that reading.
+ *
+ * `06-thread.png` is task 5.4's, on the same argument: the five before it are
+ * all taken on the tree, so without it the AC-R2 eye would open the contact
+ * sheet and see no thread pixels at all.
  */
 type ShotName =
-  '01-sessions.png' | '02-session.png' | '03-detail.png' | '04-focus.png' | '05-tool-call.png';
+  | '01-sessions.png'
+  | '02-session.png'
+  | '03-detail.png'
+  | '04-focus.png'
+  | '05-tool-call.png'
+  | '06-thread.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -268,9 +283,11 @@ interface PageElement {
   getBoundingClientRect(): { height: number };
 }
 
-/** The three fields the payload cross-checks read off the detail response. */
+/** The fields the payload cross-checks read off the detail response. */
 export interface WireEvent {
   id: string;
+  /** What the projector called this record. The thread counts `thinking` rows. */
+  kind: string;
   input: string | null;
   text: string | null;
   /** The word the detail pane has to print. Null on every non-tool row. */
@@ -466,6 +483,12 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const toolCallInline = toolCallProbe(found);
   const eventDetail = await probeEventDetail(page, found, shoot);
 
+  // LAST of all: the toggle swaps the tree out for the thread, so every tree
+  // reading has to be taken before it. There is no trip back — a return would
+  // be dead motion, and the response count below spans the whole drive either
+  // way, which is what makes AC1 survive the switch.
+  const threadInline = await probeThreadInline(page, events, shoot);
+
   const detail: DetailTexts = { t0, t1, t2 };
   return {
     shots,
@@ -480,6 +503,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       detailResponses,
       toolCallInline,
       eventDetail,
+      threadInline,
       detail,
       consoleErrors,
       failedResponses,
@@ -601,6 +625,76 @@ async function probeEventDetail(
     storageMatched: pane.includes(wire.output_storage),
   };
 }
+
+/**
+ * AC-R1 for task 5.4: the THREAD is read, not merely reached.
+ *
+ * ★ IT AIMS AT `data-thread-kind`, NOT AT `data-event-kind`. The pre-existing
+ * cross-check selects the latter, which `SpanRow` renders and no thread row
+ * carries — so a probe that reused it would discharge this AC with the tree.
+ *
+ * ★ A NULL ANSWER FAILS THE GATE. `findPayloadRow` may legitimately answer
+ * nothing because the tree virtualizer decides what is on screen; the thread has
+ * no window, so every tool row of the session is in the document and MEASURED
+ * 293 of 293 sessions carry a qualifying one. The candidate set here is
+ * therefore a superset of the tree probe's, and an empty one means the toggle is
+ * broken. `report.ts` scores that as a failure rather than a warning.
+ *
+ * `pickPayloadRow` is reused verbatim so both surfaces agree on what "a row
+ * worth reading" is, rather than this file growing a third search.
+ */
+async function probeThreadInline(
+  page: Page,
+  events: readonly WireEvent[],
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<ThreadProbe | null> {
+  const toggle = page.locator(slot(SELECTORS.threadToggle));
+  if ((await toggle.count()) === 0) return null;
+
+  await toggle.click();
+  await page.waitForSelector('[data-thread-kind]');
+  await shoot('06-thread.png');
+
+  const rows = await page.$$eval('[data-thread-kind="tool"]', (nodes) =>
+    nodes.map((node) => ({
+      id: node.getAttribute('data-event-id') ?? '',
+      text: node.textContent ?? '',
+    })),
+  );
+  const thinkingTexts = await page.$$eval('[data-thread-kind="thinking"]', (nodes) =>
+    nodes.map((node) => node.textContent ?? ''),
+  );
+
+  const wire = pickPayloadRow(rows, new Map(events.map((event) => [event.id, event])));
+  const row = wire === null ? undefined : rows.find((candidate) => candidate.id === wire.id);
+  if (wire === null || row === undefined) return null;
+
+  const shown = oneLine(row.text);
+  const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
+  const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
+  const marked = thinkingTexts.map(oneLine);
+
+  return {
+    eventId: wire.id,
+    inputPrefix,
+    outputPrefix,
+    inputMatched: inputPrefix !== '' && shown.includes(inputPrefix),
+    outputMatched: outputPrefix !== '' && shown.includes(outputPrefix),
+    thinkingRows: marked.length,
+    thinkingEvents: events.filter((event) => event.kind === 'thinking').length,
+    markerRows: marked.filter((text) => text.includes(REASONING_NOT_RECORDED)).length,
+    emptyRows: marked.filter((text) => text === '').length,
+  };
+}
+
+/**
+ * What the projector writes in place of reasoning the harness withheld.
+ *
+ * Spelled here rather than imported from `src/transcript/`: the gate asserts on
+ * what reaches the BROWSER, and importing the projector's own constant would let
+ * a rename pass on both sides while the screen changed under the reader.
+ */
+const REASONING_NOT_RECORDED = 'reasoning not recorded (signature only)';
 
 /** An id, safe inside a double-quoted CSS attribute selector. */
 function cssAttrValue(value: string): string {

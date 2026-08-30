@@ -3,6 +3,7 @@ import { ChevronLeft } from 'lucide-react';
 import type { SessionListRow } from '@/lib/api';
 
 import { cn } from '@/lib/utils';
+import { SESSION_VIEW_MODES, type SessionViewMode } from '@/lib/thread';
 import { hrefFor } from '@/lib/route-match';
 import { formatCost, formatDuration, formatTokens } from '@/lib/format';
 
@@ -54,14 +55,27 @@ import { SPAN_VISUALS } from './span-visuals';
  * they were before agent-lens, so the control is a real link at the list's own
  * href — right on a middle-click, right on a fresh tab, and reachable by the
  * keyboard for free.
+ *
+ * ===========================================================================
+ * THE VIEW TOGGLE IS OPTIONAL, AND IT IS TWO BUTTONS.
+ * ===========================================================================
+ * Task 5.4 hung the tree/thread switch here rather than on a route: a route
+ * would mean editing `route-match.ts`, which is under a standing do-not-touch
+ * rule and which reserves query state for Task 7.2. Both props are optional so
+ * every existing caller and every existing render assertion stays true, and the
+ * pair is `aria-pressed` buttons — the same shape `RangeControl` uses on the
+ * session list, not a new component.
  */
 
 export interface SessionHeaderProps {
   session: SessionListRow;
   now: number | Date;
+  /** Omit both this and `onViewChange` and no toggle renders at all. */
+  view?: SessionViewMode;
+  onViewChange?: (view: SessionViewMode) => void;
 }
 
-export function SessionHeader({ session, now }: SessionHeaderProps) {
+export function SessionHeader({ session, now, view, onViewChange }: SessionHeaderProps) {
   const status = SESSION_STATUS_VISUALS[session.live ? 'live' : 'complete'];
   const totalTokens = session.tokens_in + session.tokens_out;
   const endedAt = session.live ? undefined : session.last_activity_at;
@@ -85,6 +99,10 @@ export function SessionHeader({ session, now }: SessionHeaderProps) {
         {session.project_path}
       </h1>
 
+      {view === undefined || onViewChange === undefined ? null : (
+        <ViewToggle view={view} onViewChange={onViewChange} />
+      )}
+
       <span className={cn('flex shrink-0 items-center gap-1 text-xs', status.badge)}>
         <span aria-hidden="true" className={cn('size-1.5 rounded-md', status.dot)} />
         {status.label}
@@ -107,5 +125,48 @@ export function SessionHeader({ session, now }: SessionHeaderProps) {
         cost={formatCost(session.est_cost ?? 0)}
       />
     </header>
+  );
+}
+
+/**
+ * Which surface the session reads on — `RangeControl`'s segmented shape again.
+ *
+ * Only the thread button carries a `data-slot`: the gate clicks that one, and a
+ * `SELECTORS` entry no drive uses is the vacuity the gate's own guard exists to
+ * catch. The conditional attribute is spread the way `EventDetail.tsx` spreads
+ * `data-event-id`, so both class literals stay in one `className={cn(…)}`
+ * position where `retokenized.test.ts` can still read them.
+ */
+function ViewToggle({
+  view,
+  onViewChange,
+}: {
+  view: SessionViewMode;
+  onViewChange: (view: SessionViewMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Session view"
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-surface p-0.5"
+    >
+      {SESSION_VIEW_MODES.map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          {...(mode === 'thread' ? { 'data-slot': 'thread-toggle' } : {})}
+          aria-pressed={mode === view}
+          onClick={() => {
+            onViewChange(mode);
+          }}
+          className={cn(
+            'rounded-md px-2 py-1 text-2xs transition-colors',
+            mode === view ? 'bg-surface-raised text-foreground' : 'text-muted',
+          )}
+        >
+          {mode}
+        </button>
+      ))}
+    </div>
   );
 }

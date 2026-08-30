@@ -1,13 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import {
+  PREVIEW_CHARS,
   formatCost,
   formatDuration,
   formatDurationMs,
+  formatEventTime,
   formatStartedAt,
   formatTokens,
+  previewOf,
 } from '../format';
-import { makeSessionRow, makeTurnRow } from './fixtures';
+import { makeEventRow, makeSessionRow, makeTurnRow } from './fixtures';
 
 /*
  * AC2 — Tests 3 to 6 of the task plan.
@@ -211,6 +214,83 @@ describe('formatStartedAt switches from an interval to a calendar day at 24h', (
   });
 });
 
+/* ------------------------------------------------- Test 5 (task 5.4) --- */
+
+describe('formatEventTime gives a reading order inside one day (AC2)', () => {
+  const first = makeEventRow({ ts: '2026-07-29T09:00:00.000Z' });
+  const later = makeEventRow({ ts: '2026-07-29T09:01:30.000Z' });
+
+  it('renders two events 90 seconds apart as two different strings', () => {
+    /*
+     * The whole reason this function exists. `formatStartedAt` answers `Nm ago`
+     * for anything under 24 hours, so inside a same-day session it renders the
+     * IDENTICAL string on every row — which is not a reading order at all.
+     */
+    const now = Date.parse('2026-07-29T10:30:00.000Z');
+    expect(formatStartedAt(first.ts, now)).toBe('1h ago');
+    expect(formatStartedAt(later.ts, now)).toBe('1h ago');
+    expect(formatEventTime(first.ts)).not.toBe(formatEventTime(later.ts));
+  });
+
+  it('spells a 24-hour wall clock, and never a 24th hour', () => {
+    // The reader's own zone decides the digits, so the shape is what is pinned.
+    expect(formatEventTime(first.ts)).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(formatEventTime('2026-07-29T00:00:00.000Z')).not.toMatch(/^24:/);
+  });
+
+  it('stays a bare clock while the row shares the session’s day (F3)', () => {
+    expect(formatEventTime(later.ts, first.ts)).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('leads with the day once the row’s day differs from the session’s (F3)', () => {
+    /*
+     * MEASURED: 11 of 293 sessions cross a calendar day, 8 run over 24 hours
+     * and the widest spans 230.9 hours. Unqualified, those read `23:59:00` then
+     * `00:01:00` and the order appears to run backwards.
+     */
+    const qualified = formatEventTime('2026-08-07T12:00:00.000Z', '2026-07-29T12:00:00.000Z');
+    expect(qualified).toMatch(/^[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('tells two same-numbered days a year apart apart', () => {
+    // The label carries no year, so the COMPARISON has to. Otherwise a session
+    // spanning a year would read as one day.
+    const across = formatEventTime('2027-07-29T12:00:00.000Z', '2026-07-29T12:00:00.000Z');
+    expect(across).not.toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('is total: an unusable stamp on either side never throws', () => {
+    expect(formatEventTime('whenever')).toBe(NO_VALUE);
+    expect(formatEventTime(first.ts, 'whenever')).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+/* ------------------------------------------------- Test 7 (task 5.4) --- */
+
+describe('previewOf still clamps at 96 after the move out of SpanRow (AC2)', () => {
+  it('cuts a 200-character body to 96 characters plus the ellipsis', () => {
+    const clamped = previewOf('x'.repeat(200));
+    expect(PREVIEW_CHARS).toBe(96);
+    expect(clamped).toHaveLength(PREVIEW_CHARS + 1);
+    expect(clamped?.endsWith('…')).toBe(true);
+  });
+
+  it('flattens whitespace to one line, exactly as the tree row always did', () => {
+    expect(previewOf('  a\n\n  b  ')).toBe('a b');
+  });
+
+  it('reports an absent or blank body as absent, never as an empty string', () => {
+    expect(previewOf(null)).toBeNull();
+    expect(previewOf('   \n ')).toBeNull();
+  });
+
+  it('takes a wider budget so the thread can read further than the tree scans', () => {
+    // F4. The default stays the tree's; the thread passes its own.
+    expect(previewOf('y'.repeat(200), 480)).toHaveLength(200);
+    expect(previewOf('y'.repeat(600), 480)).toHaveLength(481);
+  });
+});
+
 /* --------------------------------------------------------------- Test 6 --- */
 
 describe('every Intl formatter is built once, at module load', () => {
@@ -237,6 +317,10 @@ describe('every Intl formatter is built once, at module load', () => {
         format.formatTokens(1234 + row);
         format.formatDuration('2026-07-29T09:00:00.000Z', '2026-07-29T09:00:01.020Z');
         format.formatStartedAt('2026-07-20T09:00:00.000Z', now);
+        // Task 5.4's three, and the thread calls the last one once per row on a
+        // list with no window — the exact shape this guard exists for.
+        format.formatEventTime('2026-07-29T09:00:00.000Z');
+        format.formatEventTime('2026-08-07T09:00:00.000Z', '2026-07-29T09:00:00.000Z');
       }
 
       expect(

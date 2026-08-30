@@ -127,6 +127,7 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     child_session_id: null,
     agent_type: null,
     raw_type: 'assistant',
+    raw_subtype: null,
     ...overrides,
   };
 }

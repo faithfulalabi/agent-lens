@@ -66,6 +66,7 @@ const SOURCE_FILES = [
   '../session/TraceGroup.tsx',
   '../session/TruncationNotice.tsx',
   '../session/SessionHeader.tsx',
+  '../session/ThreadView.tsx',
 ] as const;
 
 function sources(): { name: string; text: string }[] {

@@ -79,6 +79,35 @@ export interface EventDetailProbe {
   storageMatched: boolean;
 }
 
+/**
+ * AC-R1 for task 5.4: what the THREAD showed, read off `data-thread-kind` rows.
+ *
+ * ★ `null` DOES NOT MEAN "NOTHING TO CHECK" HERE, AND THAT IS THE POINT.
+ * `ToolCallProbe` above may be absent because the tree virtualizer rendered no
+ * qualifying row — a fact about the window, not about the product. The thread
+ * has no virtualizer and MEASURED 293 of 293 sessions carry a `tool_call` with
+ * both halves, so no corpus fact can empty this probe. The only remaining cause
+ * is a control that does not work, and a warning there would ship a green gate
+ * over a dead feature. `threadAssertions` fails on `null`.
+ */
+export interface ThreadProbe {
+  eventId: string;
+  /** Whitespace-normalised prefix of the wire `input` that was looked for. */
+  inputPrefix: string;
+  /** The same, for the wire `text` — the tool's output. */
+  outputPrefix: string;
+  inputMatched: boolean;
+  outputMatched: boolean;
+  /** `[data-thread-kind="thinking"]` rows in the document. */
+  thinkingRows: number;
+  /** `kind === 'thinking'` events in the one detail response. */
+  thinkingEvents: number;
+  /** Of those rows, how many carry the elided-reasoning string verbatim. */
+  markerRows: number;
+  /** Of those rows, how many render no text at all. Must be zero. */
+  emptyRows: number;
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -97,6 +126,8 @@ export interface Observations {
   toolCallInline: ToolCallProbe | null;
   /** The same row, read in the detail pane instead of the tree. See the type. */
   eventDetail: EventDetailProbe | null;
+  /** The thread, read after the toggle. `null` is a FAILURE — see the type. */
+  threadInline: ThreadProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -273,6 +304,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     },
     ...toolCallAssertions(result.toolCallInline),
     ...eventDetailAssertions(result.eventDetail),
+    ...threadAssertions(result.threadInline),
     {
       name: 'console-errors',
       ok: result.consoleErrors.length === 0,
@@ -302,14 +334,14 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
-      // RAISED 4 -> 5 BY TASK 5.3, with `05-tool-call.png`. The literal below
-      // is pinned by no test of its own, so leaving it at four would ship a
-      // report reading `5 screenshot(s) / expected: 4 screenshots` with
-      // `ok: true` — a contact sheet that contradicts itself while passing.
+      // RAISED 5 -> 6 BY TASK 5.4, with `06-thread.png`. The literal below is
+      // pinned by no test of its own, so leaving it behind would ship a report
+      // reading `6 screenshot(s) / expected: 5 screenshots` with `ok: true` —
+      // a contact sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 5,
+      ok: result.shots.length === 6,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '5 screenshots',
+      expected: '6 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -361,6 +393,57 @@ function eventDetailAssertions(probe: EventDetailProbe | null): AssertionRecord[
 }
 
 /**
+ * AC-R1 for task 5.4, in two records: the thread carried the payload, and it
+ * accounted for every `thinking` event.
+ *
+ * ★ `null` IS A FAILING ASSERTION, NOT A WARNING. `toolCallAssertions` above
+ * degrades because a virtualizer decides what it can see; nothing decides that
+ * here. A silent pass over an unclickable toggle is the "validated structure,
+ * never validated experience" failure this AC was written to stop.
+ *
+ * The two clauses stay separate because they fail for different reasons and a
+ * reader acts on them differently: a missing prefix is a rendering defect, a
+ * miscounted marker is a model defect.
+ */
+function threadAssertions(probe: ThreadProbe | null): AssertionRecord[] {
+  if (probe === null) {
+    return [
+      {
+        name: 'thread-reached',
+        ok: false,
+        actual: 'no thread control was found, or it drew no [data-thread-kind] row',
+        expected: 'the thread control renders, and clicking it draws the thread',
+      },
+    ];
+  }
+
+  const found = (ok: boolean): string => (ok ? 'found' : 'MISSING');
+  const markersOk =
+    probe.thinkingRows === probe.thinkingEvents &&
+    probe.markerRows === probe.thinkingRows &&
+    probe.emptyRows === 0;
+
+  return [
+    {
+      name: 'thread-tool-inline',
+      ok: probe.inputMatched && probe.outputMatched,
+      actual:
+        `${probe.eventId}: input ${found(probe.inputMatched)} (${quote(probe.inputPrefix)}), ` +
+        `output ${found(probe.outputMatched)} (${quote(probe.outputPrefix)})`,
+      expected: 'a [data-thread-kind="tool"] row contains a prefix of its input and its output',
+    },
+    {
+      name: 'thread-thinking-markers',
+      ok: markersOk,
+      actual:
+        `${probe.thinkingRows} row(s) for ${probe.thinkingEvents} event(s); ` +
+        `${probe.markerRows} carry the marker, ${probe.emptyRows} render empty`,
+      expected: 'one marker per thinking event, every one carrying the string, none empty',
+    },
+  ];
+}
+
+/**
  * Context for the AC-R2 eye. Never affects `ok`.
  *
  * Task 5.3 deleted the pre-5.3 placeholder warning with the placeholder itself.
@@ -391,7 +474,7 @@ function quote(text: string): string {
 /* ------------------------------------------------------------ contact sheet --- */
 
 /**
- * The artifact the founder opens for AC-R2's visual sign-off: four shots, the
+ * The artifact the founder opens for AC-R2's visual sign-off: every shot, the
  * assertion table, and the label capture with its window bounds spelled out —
  * a capture whose bounds are invisible is how "the first 25" became wrong.
  */

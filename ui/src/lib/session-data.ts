@@ -49,6 +49,12 @@ export interface SessionData {
   readonly turns: readonly TurnRow[];
   /** Bucketed by `turn_id`, which is the shape `buildTurnGroups` takes. */
   readonly eventsByTurn: ReadonlyMap<string, readonly EventRow[]>;
+  /**
+   * The same page, still flat and still in `seq` order — what `buildThread`
+   * reads. Carried rather than rebuilt from the buckets above, because that is
+   * what makes one response fill both screens with no second request.
+   */
+  readonly events: readonly EventRow[];
   /** The server has events past this page. Reported, never chased. */
   readonly hasMore: boolean;
   /** How many events actually arrived — the number the notice strip spells. */
@@ -91,6 +97,7 @@ export async function loadSessionDetail(
     session: body.session,
     turns: body.turns,
     eventsByTurn,
+    events: body.events,
     hasMore: body.has_more,
     shown: body.events.length,
   };

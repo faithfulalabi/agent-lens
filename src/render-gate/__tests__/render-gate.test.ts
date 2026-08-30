@@ -82,6 +82,17 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       outputMatched: true,
       storageMatched: true,
     },
+    threadInline: {
+      eventId: 'toolu_1',
+      inputPrefix: '{"cmd":"ls"}',
+      outputPrefix: 'a.txt',
+      inputMatched: true,
+      outputMatched: true,
+      thinkingRows: 3,
+      thinkingEvents: 3,
+      markerRows: 3,
+      emptyRows: 0,
+    },
     labels: [
       { index: 0, text: 'turn 1: hello' },
       { index: 1, text: 'tool Read, ok' },
@@ -110,9 +121,12 @@ const SHOT_NAMES = [
   // `ArrowDown` reaches, neither of which is ever a `tool_call` — so this is
   // the only one that can show the AC-R2 eye the state AC-R1 asserted on.
   '05-tool-call.png',
+  // Task 5.4, on the same argument: the five above are all taken on the tree,
+  // so without this one the contact sheet carries no thread pixels at all.
+  '06-thread.png',
 ];
 
-/** Five screenshots that clear the byte threshold, so only the override can red. */
+/** Screenshots that all clear the byte threshold, so only the override can red. */
 const PASSING_SHOTS = SHOT_NAMES.map((name) => ({ name, bytes: MIN_SHOT_BYTES + 1 }));
 
 function passingResult(overrides: Partial<Observations> = {}): DriveResult {
@@ -351,17 +365,26 @@ describe('buildReport (AC5)', () => {
   });
 
   it('reds when a screenshot is too small to be a picture of anything', () => {
+    /*
+     * ★ THE SPOILED SHOT IS DERIVED, NEVER LISTED. An earlier spelling built a
+     * short literal array, so the next task to add a screenshot made this test
+     * red on `shot-count` and stop exercising the byte threshold at all — green
+     * arithmetic hiding a check that no longer ran. Mapping over `PASSING_SHOTS`
+     * keeps the COUNT correct by construction whatever the shot set becomes,
+     * and spoils exactly one byte reading.
+     */
+    const shots = PASSING_SHOTS.map((shot, i) =>
+      i === PASSING_SHOTS.length - 1 ? { ...shot, bytes: 7_150 } : shot,
+    );
     const report = buildReport({
       task: '0.3',
       startedAt: '2026-08-08T00:00:00.000Z',
-      result: {
-        ...passingObservations(),
-        // Still five, so `shot-count` stays green and the byte threshold is
-        // demonstrably the thing that reds.
-        shots: [...PASSING_SHOTS.slice(0, 4), { name: '05-tool-call.png', bytes: 7_150 }],
-      },
+      result: { ...passingObservations(), shots },
       error: null,
     });
+
+    expect(shots).toHaveLength(SHOT_NAMES.length);
+    expect(report.assertions.find((a) => a.name === 'shot-count')?.ok).toBe(true);
     expect(report.ok).toBe(false);
   });
 
@@ -448,6 +471,85 @@ describe('buildReport (AC5)', () => {
     expect(probe?.actual).toContain('toolu_1');
   });
 
+  it('asserts the thread reading, and names both of its clauses (AC-R1, task 5.4)', () => {
+    const report = buildReport({
+      task: '5.4',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const names = report.assertions.map((a) => a.name);
+
+    expect(names).toContain('thread-tool-inline');
+    expect(names).toContain('thread-thinking-markers');
+    expect(report.assertions.find((a) => a.name === 'thread-tool-inline')?.actual).toContain(
+      'toolu_1',
+    );
+    // The clause that separates 5.4 from 5.3: this row was read off
+    // `data-thread-kind`, which `SpanRow` does not render.
+    expect(report.assertions.find((a) => a.name === 'thread-tool-inline')?.expected).toContain(
+      'data-thread-kind="tool"',
+    );
+  });
+
+  it.each([
+    ['the thread row showed no input', { inputMatched: false }],
+    ['the thread row showed no output', { outputMatched: false }],
+    // Clause 3, restated: no fold key reduces the count, so the honest reading
+    // is equality. A row short of an event is a dropped `thinking` block.
+    ['a thinking event rendered no row', { thinkingRows: 2 }],
+    ['a thinking row carried something other than the marker', { markerRows: 2 }],
+    ['a thinking row rendered empty', { emptyRows: 1, markerRows: 2 }],
+  ])('reds when %s', (_label, overrides) => {
+    const threadInline = { ...passingObservations().threadInline!, ...overrides };
+    const report = buildReport({
+      task: '5.4',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult({ threadInline }),
+      error: null,
+    });
+    expect(report.ok).toBe(false);
+  });
+
+  it('FAILS on an absent thread control rather than warning about it', () => {
+    /*
+     * ★ THE ONE PLACE 5.4 DEPARTS FROM THE 5.1 PRECEDENT, DELIBERATELY.
+     * `toolCallInline` degrades to a warning because the tree virtualizer
+     * decides which rows exist to read; the thread has no virtualizer, and
+     * MEASURED 293 of 293 sessions carry a qualifying `tool_call`. So no corpus
+     * fact can empty this probe — a null can only mean the control did not
+     * work, and a warning there would ship a green gate over a dead feature.
+     */
+    const report = buildReport({
+      task: '5.4',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult({ threadInline: null }),
+      error: null,
+    });
+
+    expect(report.ok).toBe(false);
+    const reached = report.assertions.find((a) => a.name === 'thread-reached');
+    expect(reached?.ok).toBe(false);
+    expect(report.warnings.join(' ')).not.toContain('thread');
+  });
+
+  it('expects a thread screenshot, so AC-R2 is not decoration (task 5.4)', () => {
+    // Without `06-thread.png` the founder opens the contact sheet for a thread
+    // task and sees five pictures of the tree, which the plan index forbids by
+    // name. The literal is pinned because nothing else pins it.
+    const report = buildReport({
+      task: '5.4',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const count = report.assertions.find((a) => a.name === 'shot-count');
+
+    expect(count?.ok).toBe(true);
+    expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
+    expect(report.shots.map((s) => s.name)).toContain('06-thread.png');
+  });
+
   it('carries the two new readings into the report and the contact sheet', () => {
     const report = buildReport({
       task: '5.2',
@@ -506,12 +608,11 @@ describe('renderContactSheet (AC5)', () => {
   });
   const html = renderContactSheet(report);
 
-  it.each(['01-sessions.png', '02-session.png', '03-detail.png', '04-focus.png'])(
-    'references %s',
-    (name) => {
-      expect(html).toContain(name);
-    },
-  );
+  // Over `SHOT_NAMES` rather than a literal list: the literal had gone stale by
+  // two tasks, so a shot could be added and never checked to reach the sheet.
+  it.each(SHOT_NAMES)('references %s', (name) => {
+    expect(html).toContain(name);
+  });
 
   it('embeds all three detail texts', () => {
     expect(html).toContain('T-zero');
@@ -547,6 +648,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '03-detail.png',
       '04-focus.png',
       '05-tool-call.png',
+      '06-thread.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.
@@ -614,11 +716,13 @@ describe('the gate source itself (AC6)', () => {
     const values = Object.values(SELECTORS);
 
     // Vacuity guard: a silently-shrinking constant would trivially satisfy the
-    // loop. RAISED 6 -> 7 BY TASK 5.1, in lockstep with the seventh real slot
-    // (`back-to-sessions`) that the same commit drives and `SessionHeader.tsx`
+    // loop. RAISED 7 -> 8 BY TASK 5.4, in lockstep with the eighth real slot
+    // (`thread-toggle`) that the same commit drives and `SessionHeader.tsx`
     // renders — the invariant this guards is a constant that shrinks unnoticed.
-    expect(values).toHaveLength(7);
-    expect(new Set(values).size).toBe(7);
+    // `thread-view` is deliberately NOT an entry: a slot no drive clicks is the
+    // vacuity this guard exists to catch.
+    expect(values).toHaveLength(8);
+    expect(new Set(values).size).toBe(8);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
@@ -641,6 +745,7 @@ describe('the gate source itself (AC6)', () => {
    */
   describe('pickPayloadRow — which rendered row is worth clicking (AC-R1)', () => {
     const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
+      kind: 'tool_call',
       input: '{"file_path":"a.txt"}',
       text: 'ok',
       output_storage: 'inline',

@@ -146,6 +146,13 @@ export interface EventRow {
   child_session_id: string | null;
   agent_type: string | null;
   raw_type: string;
+  /**
+   * The harness's own sub-label. Task 5.4 declared it: `raw_type` alone crushes
+   * 601 of 1,577 `unknown` rows onto `system`, and the thread's drift alarm has
+   * to tell `turn_duration` from `stop_hook_summary`. `src/db/read.ts` has always
+   * sent it.
+   */
+  raw_subtype: string | null;
 }
 
 /**
