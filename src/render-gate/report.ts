@@ -10,9 +10,6 @@ export const MIN_SHOT_BYTES = 20_000;
 /** How many row labels `report.json` carries. Bounded by the virtual window too. */
 export const MAX_LABELS = 25;
 
-/** The two strings `SessionView`'s detail pane renders until task 5.3 fills it. */
-const PLACEHOLDER_DETAIL = /^Select a span to see its detail\.$|arrives with the detail pane\.$/;
-
 /** One machine-decidable check. `actual`/`expected` are for the human reading it. */
 export interface AssertionRecord {
   name: string;
@@ -60,6 +57,28 @@ export interface ToolCallProbe {
   outputMatched: boolean;
 }
 
+/**
+ * AC-R1 itself: clicking that row filled the DETAIL PANE with the event's real
+ * input, its real output, and the word naming where the output was stored.
+ *
+ * Distinct from `ToolCallProbe` above, which reads the tree ROW. The row shows
+ * 96 characters of a body whose measured p99 is 36,168 bytes — 0.27% — so a
+ * green row assertion says nothing about whether the pane shows the rest.
+ *
+ * `null` carries the same meaning it does there: no qualifying row was inside
+ * the virtual window, which is a fact about the corpus rather than a pass.
+ */
+export interface EventDetailProbe {
+  eventId: string;
+  inputPrefix: string;
+  outputPrefix: string;
+  /** The row's `output_storage`, verbatim — the word the pane has to print. */
+  storageWord: string;
+  inputMatched: boolean;
+  outputMatched: boolean;
+  storageMatched: boolean;
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -76,6 +95,8 @@ export interface Observations {
   detailResponses: number;
   /** `null` when no rendered tool_call row carried both halves. See the type. */
   toolCallInline: ToolCallProbe | null;
+  /** The same row, read in the detail pane instead of the tree. See the type. */
+  eventDetail: EventDetailProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -251,6 +272,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'exactly one GET /api/sessions/:id response',
     },
     ...toolCallAssertions(result.toolCallInline),
+    ...eventDetailAssertions(result.eventDetail),
     {
       name: 'console-errors',
       ok: result.consoleErrors.length === 0,
@@ -280,10 +302,14 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
+      // RAISED 4 -> 5 BY TASK 5.3, with `05-tool-call.png`. The literal below
+      // is pinned by no test of its own, so leaving it at four would ship a
+      // report reading `5 screenshot(s) / expected: 4 screenshots` with
+      // `ok: true` — a contact sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 4,
+      ok: result.shots.length === 5,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '4 screenshots',
+      expected: '5 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -311,23 +337,38 @@ function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
 }
 
 /**
+ * AC-R1's own assertion: the pane, not the row.
+ *
+ * All three clauses in one record rather than three, because they are one
+ * question — did clicking this row show this event — and a partial pass is not
+ * a state anybody would act on differently.
+ */
+function eventDetailAssertions(probe: EventDetailProbe | null): AssertionRecord[] {
+  if (probe === null) return [];
+  const found = (ok: boolean): string => (ok ? 'found' : 'MISSING');
+  return [
+    {
+      name: 'detail-event-payload',
+      ok: probe.inputMatched && probe.outputMatched && probe.storageMatched,
+      actual:
+        `${probe.eventId}: input ${found(probe.inputMatched)} (${quote(probe.inputPrefix)}), ` +
+        `output ${found(probe.outputMatched)} (${quote(probe.outputPrefix)}), ` +
+        `storage ${found(probe.storageMatched)} (${quote(probe.storageWord)})`,
+      expected:
+        'the detail pane contains a prefix of the input, of the output, and the storage word',
+    },
+  ];
+}
+
+/**
  * Context for the AC-R2 eye. Never affects `ok`.
  *
- * Two independent notes: the detail pane may still render the pre-5.3
- * placeholder, and the virtual window may have held no `tool_call` row carrying
- * both halves of its payload.
+ * Task 5.3 deleted the pre-5.3 placeholder warning with the placeholder itself.
+ * A warning that can never fire has stopped being reviewed, which is the same
+ * objection `retokenized.test.ts` raises about a stale allowlist entry.
  */
 function driveWarnings(result: DriveResult): string[] {
   const warnings: string[] = [];
-  const stale = (['t0', 't1', 't2'] as const).filter((key) =>
-    PLACEHOLDER_DETAIL.test(result.detail[key]),
-  );
-  if (stale.length > 0) {
-    warnings.push(
-      `detail pane still renders the pre-5.3 placeholder at ${stale.join(', ')} — ` +
-        'the transitions are real, the content is not',
-    );
-  }
   if (result.toolCallInline === null) {
     warnings.push(
       'tool-call-inline: none in window — OBSERVED, NOT ASSERTED. No rendered ' +

@@ -17,8 +17,10 @@ import {
   devDataDir,
   isSessionDetailPath,
   parseArgv,
+  pickPayloadRow,
   runRenderGate,
   type DriveOutcome,
+  type WireEvent,
 } from '../index.js';
 import {
   MAX_LABELS,
@@ -71,6 +73,15 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       inputMatched: true,
       outputMatched: true,
     },
+    eventDetail: {
+      eventId: 'toolu_1',
+      inputPrefix: '{"cmd":"ls"}',
+      outputPrefix: 'a.txt',
+      storageWord: 'inline',
+      inputMatched: true,
+      outputMatched: true,
+      storageMatched: true,
+    },
     labels: [
       { index: 0, text: 'turn 1: hello' },
       { index: 1, text: 'tool Read, ok' },
@@ -90,9 +101,18 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
   };
 }
 
-const SHOT_NAMES = ['01-sessions.png', '02-session.png', '03-detail.png', '04-focus.png'];
+const SHOT_NAMES = [
+  '01-sessions.png',
+  '02-session.png',
+  '03-detail.png',
+  '04-focus.png',
+  // Task 5.3. The four above are shot at `data-index="1"` and at the row
+  // `ArrowDown` reaches, neither of which is ever a `tool_call` — so this is
+  // the only one that can show the AC-R2 eye the state AC-R1 asserted on.
+  '05-tool-call.png',
+];
 
-/** Four screenshots that clear the byte threshold, so only the override can red. */
+/** Five screenshots that clear the byte threshold, so only the override can red. */
 const PASSING_SHOTS = SHOT_NAMES.map((name) => ({ name, bytes: MIN_SHOT_BYTES + 1 }));
 
 function passingResult(overrides: Partial<Observations> = {}): DriveResult {
@@ -336,7 +356,9 @@ describe('buildReport (AC5)', () => {
       startedAt: '2026-08-08T00:00:00.000Z',
       result: {
         ...passingObservations(),
-        shots: [...PASSING_SHOTS.slice(0, 3), { name: '04-focus.png', bytes: 7_150 }],
+        // Still five, so `shot-count` stays green and the byte threshold is
+        // demonstrably the thing that reds.
+        shots: [...PASSING_SHOTS.slice(0, 4), { name: '05-tool-call.png', bytes: 7_150 }],
       },
       error: null,
     });
@@ -353,13 +375,65 @@ describe('buildReport (AC5)', () => {
     const report = buildReport({
       task: '5.2',
       startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult({ toolCallInline: null }),
+      // Both, because one search feeds both probes: a window with nothing to
+      // click leaves the row reading and the pane reading equally unmade.
+      result: passingResult({ toolCallInline: null, eventDetail: null }),
       error: null,
     });
 
     expect(report.assertions.map((a) => a.name)).not.toContain('tool-call-inline');
+    expect(report.assertions.map((a) => a.name)).not.toContain('detail-event-payload');
     expect(report.warnings.join(' ')).toContain('tool-call-inline: none in window');
     expect(report.ok, 'an absent row is not a product failure').toBe(true);
+  });
+
+  it('asserts the pane reading, and names all three of its clauses (AC-R1)', () => {
+    const report = buildReport({
+      task: '5.3',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const probe = report.assertions.find((a) => a.name === 'detail-event-payload');
+
+    expect(probe?.ok).toBe(true);
+    expect(probe?.actual).toContain('toolu_1');
+    expect(probe?.actual).toContain('inline');
+  });
+
+  it.each([
+    ['the pane never showed the input', { inputMatched: false }],
+    ['the pane never showed the output', { outputMatched: false }],
+    // The clause that separates 5.3 from 5.2: a pane can carry both bodies and
+    // still never say where the output came from.
+    ['the pane never named the storage', { storageMatched: false }],
+  ])('reds when %s', (_label, overrides) => {
+    const eventDetail = { ...passingObservations().eventDetail!, ...overrides };
+    const report = buildReport({
+      task: '5.3',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult({ eventDetail }),
+      error: null,
+    });
+    expect(report.ok).toBe(false);
+  });
+
+  it('no longer warns about a placeholder that no longer exists', () => {
+    // Task 5.3 deleted the pane's placeholder, so the regex that matched it
+    // could never fire again. A warning nobody can trip has stopped being
+    // reviewed — the same objection `retokenized.test.ts` makes about a stale
+    // allowlist entry.
+    const report = buildReport({
+      task: '5.3',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult({
+        detail: { t0: 'Select a span to see its detail.', t1: 'a', t2: 'b' },
+      }),
+      error: null,
+    });
+
+    expect(report.warnings.join(' ')).not.toContain('placeholder');
+    for (const { text } of gateSources()) expect(text).not.toContain('PLACEHOLDER_DETAIL');
   });
 
   it('asserts the payload cross-check whenever the window held a row to check', () => {
@@ -384,25 +458,6 @@ describe('buildReport (AC5)', () => {
     expect(report.turnGroupCount).toBe(2);
     expect(report.detailResponses).toBe(1);
     expect(renderContactSheet(report)).toContain('2 turn group(s)');
-  });
-
-  it('records a non-blocking warning when the pane still shows the 5.3 placeholder', () => {
-    const report = buildReport({
-      task: '0.3',
-      startedAt: '2026-08-08T00:00:00.000Z',
-      result: passingResult({
-        detail: {
-          t0: 'Select a span to see its detail.',
-          t1: 'Span detail for a arrives with the detail pane.',
-          t2: 'Span detail for b arrives with the detail pane.',
-        },
-      }),
-      error: null,
-    });
-
-    expect(report.warnings.length).toBeGreaterThan(0);
-    // A warning is context for AC-R2's eye, never a failure.
-    expect(report.ok).toBe(true);
   });
 
   it('turns a drive that never finished into a failed assertion, not an absent one', () => {
@@ -491,6 +546,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '02-session.png',
       '03-detail.png',
       '04-focus.png',
+      '05-tool-call.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.
@@ -570,6 +626,84 @@ describe('the gate source itself (AC6)', () => {
       }).trim();
       expect(found, `data-slot="${slot}" is not in ui/src`).not.toBe('');
     }
+  });
+
+  /*
+   * ★ THE PURE HALF OF THE PROBE, AND ONLY THE PURE HALF.
+   *
+   * The choreography around this — click, wait for `aria-selected`, wait for
+   * the pane's `data-event-id`, read, shoot — is Playwright, and faking a
+   * `Page` for it would mean an `as unknown as Page` double over `locator`,
+   * `waitForSelector`, `$$eval` and `screenshot`. That is the same shape as the
+   * plan-001 test that provably could not be written in this environment. The
+   * live gate run covers the choreography; this covers the decision, which is
+   * the split `isSessionDetailPath` already uses.
+   */
+  describe('pickPayloadRow — which rendered row is worth clicking (AC-R1)', () => {
+    const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
+      input: '{"file_path":"a.txt"}',
+      text: 'ok',
+      output_storage: 'inline',
+      ...overrides,
+    });
+    const map = (...events: WireEvent[]): Map<string, WireEvent> =>
+      new Map(events.map((event) => [event.id, event]));
+
+    it('reads the RENDERED rows and never the wire order', () => {
+      /*
+       * The window is the constraint. `SpanTree` emits ~34 rows into a 720px
+       * viewport, and a `.click()` on a locator for a row the virtualizer never
+       * rendered throws after PER_WAIT_TIMEOUT_MS and fails the whole drive —
+       * it does NOT degrade to the null observation. So a wire event with no
+       * row on screen is not a candidate, however good its payload is.
+       */
+      const payloads = map(wire({ id: 'off-screen' }), wire({ id: 'rendered' }));
+      const picked = pickPayloadRow([{ id: 'rendered', text: 'tool Read' }], payloads);
+
+      expect(picked?.id).toBe('rendered');
+    });
+
+    it('takes the first rendered row that qualifies, in row order', () => {
+      const payloads = map(wire({ id: 'a' }), wire({ id: 'b' }));
+      const rows = [
+        { id: 'unknown-to-the-wire', text: '' },
+        { id: 'b', text: '' },
+        { id: 'a', text: '' },
+      ];
+
+      expect(pickPayloadRow(rows, payloads)?.id).toBe('b');
+    });
+
+    it.each([
+      ['no input', { input: null }],
+      ['no output', { text: null }],
+      // AC-R1's third clause needs a word to look for. A row without one would
+      // make the clause unassertable rather than failing it.
+      ['no storage word', { output_storage: null }],
+    ])('skips a row with %s', (_label, missing) => {
+      const payloads = map(wire({ id: 'incomplete', ...missing }), wire({ id: 'whole' }));
+      const rows = [
+        { id: 'incomplete', text: '' },
+        { id: 'whole', text: '' },
+      ];
+
+      expect(pickPayloadRow(rows, payloads)?.id).toBe('whole');
+    });
+
+    it('answers null when nothing on screen qualifies', () => {
+      // The observation path. `report.ts` emits no assertion and warns instead:
+      // a check that cannot fail is not a pass.
+      expect(pickPayloadRow([{ id: 'x', text: '' }], map(wire({ id: 'y' })))).toBeNull();
+      expect(pickPayloadRow([], map(wire({ id: 'y' })))).toBeNull();
+    });
+
+    it('narrows the three fields so the caller needs no null check', () => {
+      const picked = pickPayloadRow([{ id: 'a', text: '' }], map(wire({ id: 'a' })));
+
+      expect(picked).not.toBeNull();
+      expect(picked?.input).toBe('{"file_path":"a.txt"}');
+      expect(picked?.output_storage).toBe('inline');
+    });
   });
 
   it('counts a session-detail response, and nothing that merely looks like one', () => {

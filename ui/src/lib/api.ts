@@ -1,12 +1,14 @@
 /*
  * The typed read-API client (Task 5.1c, AC1).
  *
- * Two methods, against two of the ten routes `src/server/api.ts` registers.
+ * Three methods, against three of the ten routes `src/server/api.ts` registers.
  * Task 4.5 deleted the other three — `listSpans`, `listMessages` and
  * `getPayload` — with the routes they called: the tool-call fold makes a span
  * list an event page, and `/api/traces/:id/messages` and `/api/payloads/:id` do
- * not exist. `/api/events/:id/content` replaces the last of them and Task 5.3
- * writes its client. Two rules shape everything below:
+ * not exist. `/api/events/:id/content` replaced the last of them and Task 5.3
+ * wrote `getEventContent` against it. That third method serves 56 rows of
+ * 30,286 — 55 `spill` outputs and one `line_ref` input — so it is the pane's
+ * exception path, never its main one. Two rules shape everything below:
  *
  * 1. **Every path is origin-relative.** `ui/src/__tests__/no-egress.test.ts`
  *    fails the build on any new absolute URL literal in the bundle, and "zero
@@ -110,6 +112,11 @@ export interface TurnRow {
  * cannot say what a tool call was asked to do, or what its number measures,
  * without them. Neither `kind` nor `status` is narrowed here — the wire carries
  * whatever the projector wrote, and `lib/turn-tree.ts` owns the narrowing.
+ *
+ * `spill_path`/`spill_bytes` join them on the same terms for Task 5.3:
+ * `EVENT_COLUMNS` sends both at `src/db/read.ts:448`, and the raw-JSON
+ * disclosure claims to show the stored record verbatim — which it cannot do
+ * while the browser type drops two of its columns on the floor.
  */
 export interface EventRow {
   id: string;
@@ -129,6 +136,9 @@ export interface EventRow {
   text: string | null;
   text_bytes: number | null;
   output_storage: string | null;
+  /** Where the output was written when it did not fit inline. */
+  spill_path: string | null;
+  spill_bytes: number | null;
   model: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
@@ -154,6 +164,29 @@ export interface SessionDetailBody {
   has_more: boolean;
   /** The live-tail epoch. Empty when the archive had no bytes to fold. */
   fingerprint: string;
+}
+
+/** Which half of an event row is being read. Mirrors the route's `?field=`. */
+export type ContentField = 'input' | 'text';
+
+/**
+ * `GET /api/events/:id/content` — one half of one event, read back in full.
+ *
+ * Mirrors the body `src/server/api.ts:471-482` builds. `storage` is the
+ * RESOLVED word rather than the stored one: a `spill` row that the archive
+ * mirror answered still reports `spill`, and one it could not reports
+ * `missing`, which is a normal state the pane labels rather than an error.
+ * `spill_path` is present only when the resolver dereferenced one.
+ */
+export interface EventContentBody {
+  id: string;
+  field: ContentField;
+  storage: string;
+  byte_size: number;
+  range: { start: number; end: number };
+  content: string;
+  truncated: boolean;
+  spill_path?: string;
 }
 
 /** Discriminant shared by every failure this client throws. */
@@ -258,6 +291,18 @@ export interface ApiClient {
     query?: SessionDetailQuery,
     options?: RequestOptions,
   ): Promise<SessionDetailBody>;
+  /**
+   * One half of one event, whole.
+   *
+   * `field` is a bare argument rather than a query object because the pane only
+   * ever asks for the whole field. The route also reads `?range=`, and a query
+   * interface here would be configuration for a value that never changes.
+   */
+  getEventContent(
+    id: string,
+    field: ContentField,
+    options?: RequestOptions,
+  ): Promise<EventContentBody>;
 }
 
 export interface ApiClientOptions {
@@ -304,9 +349,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       request<Page<SessionListRow>>('/api/sessions', { ...query }, options),
 
     getSession: (id, query = {}, options) =>
-      request<SessionDetailBody>(
-        `/api/sessions/${encodeURIComponent(id)}`,
-        { ...query },
+      request<SessionDetailBody>(`/api/sessions/${encodeURIComponent(id)}`, { ...query }, options),
+
+    getEventContent: (id, field, options) =>
+      request<EventContentBody>(
+        `/api/events/${encodeURIComponent(id)}/content`,
+        { field },
         options,
       ),
   };

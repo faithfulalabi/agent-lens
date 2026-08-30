@@ -25,9 +25,15 @@ type _AssertCaptureMode = CaptureMode extends 'full' | 'transcript_only' ? true 
 type _AssertTurn = TurnRow['parent_event_id'] extends string | null ? true : never;
 type _AssertEvent = EventRow['input'] extends string | null ? true : never;
 
+// Task 5.3 widened the row again. The raw-JSON disclosure claims to render the
+// stored record verbatim, and it cannot while the browser type drops a column
+// `EVENT_COLUMNS` sends — so the presence of `spill_path` is a type-level fact.
+type _AssertSpill = EventRow['spill_path'] extends string | null ? true : never;
+
 export type SharedTypesResolve = [
   _AssertSessionStatus,
   _AssertCaptureMode,
   _AssertTurn,
   _AssertEvent,
+  _AssertSpill,
 ];

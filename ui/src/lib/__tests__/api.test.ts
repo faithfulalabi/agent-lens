@@ -80,6 +80,11 @@ const METHODS: readonly { name: string; path: string; call: (c: ApiClient) => Pr
   [
     { name: 'listSessions', path: '/api/sessions', call: (c) => c.listSessions() },
     { name: 'getSession', path: '/api/sessions/s1', call: (c) => c.getSession('s1') },
+    {
+      name: 'getEventContent',
+      path: '/api/events/ev-1/content?field=text',
+      call: (c) => c.getEventContent('ev-1', 'text'),
+    },
   ];
 
 describe('the API client authenticates by header', () => {
@@ -321,6 +326,47 @@ describe('the API client returns the shared wire shapes', () => {
     const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
     await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).listSessions(query);
     expect(calls[0]?.url).toBe(`/api/sessions${search}`);
+  });
+
+  it('getEventContent names the field as a bare param, and encodes the id', async () => {
+    // `field` is an argument rather than a query object: the pane only ever
+    // asks for the whole field, so a `range` interface would be configuration
+    // for a value that never changes. The route reads `?range=` all the same.
+    const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
+    const client = createApiClient({ fetchImpl, bootstrap: BOOTSTRAP });
+
+    await client.getEventContent('toolu_01/x', 'input');
+    await client.getEventContent('ev-1', 'text');
+
+    expect(calls[0]?.url).toBe('/api/events/toolu_01%2Fx/content?field=input');
+    expect(calls[1]?.url).toBe('/api/events/ev-1/content?field=text');
+    expect(calls[1]?.url, 'the pane never asks for a byte range').not.toContain('range');
+  });
+
+  it('getEventContent returns the route body and throws AuthError on 401', async () => {
+    const body = {
+      id: 'ev-1',
+      field: 'text',
+      storage: 'spill',
+      byte_size: 12,
+      range: { start: 0, end: 11 },
+      content: 'the resolved',
+      truncated: false,
+      spill_path: 'tool-results/abc.txt',
+    };
+    const ok = createApiClient({
+      fetchImpl: recordingFetch(() => json(body)).fetchImpl,
+      bootstrap: BOOTSTRAP,
+    });
+    expect(await ok.getEventContent('ev-1', 'text')).toEqual(body);
+
+    // 401 arrives as text/plain from `token-auth.ts`, so a client that called
+    // `res.json()` on the failure path would throw a SyntaxError instead.
+    const denied = createApiClient({
+      fetchImpl: recordingFetch(() => new Response('Unauthorized', { status: 401 })).fetchImpl,
+      bootstrap: BOOTSTRAP,
+    });
+    await expect(denied.getEventContent('ev-1', 'text')).rejects.toBeInstanceOf(AuthError);
   });
 
   it('passes an AbortSignal through to fetch', async () => {
