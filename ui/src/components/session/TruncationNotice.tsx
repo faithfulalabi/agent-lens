@@ -14,6 +14,11 @@ import { truncationNotes, type TruncationFacts } from '@/lib/session-data';
  * nothing else — so the assertion that this strip appears would have had no
  * home at all. Props-in, it is one render call away.
  *
+ * Task 5.2 cut its facts from four to three: the client row cap and the turn
+ * page were this module's own choices and both went with the paging loop, so
+ * what is left is what the SERVER says it withheld plus what arrived with no
+ * turn to hang under.
+ *
  * ===========================================================================
  * NOTHING TO SAY MEANS NOTHING ON SCREEN.
  * ===========================================================================

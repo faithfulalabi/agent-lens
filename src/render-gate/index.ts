@@ -25,6 +25,7 @@ import {
   type Observations,
   type RenderGateReport,
   type ShotRecord,
+  type ToolCallProbe,
 } from './report.js';
 
 /**
@@ -256,6 +257,30 @@ interface PageElement {
   getBoundingClientRect(): { height: number };
 }
 
+/** The two fields the payload cross-check reads off the detail response. */
+interface WireEvent {
+  id: string;
+  input: string | null;
+  text: string | null;
+}
+
+/** How much of a payload the gate looks for in the rendered row. */
+const PAYLOAD_PREFIX_CHARS = 24;
+
+/** One line, one space run — the shape both the row and the wire are reduced to. */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/** `/api/sessions/:id` and nothing else — the list route has no path segment. */
+export function isSessionDetailPath(url: string): boolean {
+  try {
+    return /^\/api\/sessions\/[^/]+$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
 declare const document: {
   querySelector(selectors: string): PageElement | null;
   querySelectorAll(selectors: string): readonly PageElement[];
@@ -293,6 +318,15 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const page = await context.newPage();
   const consoleErrors: string[] = [];
   const failedResponses: string[] = [];
+  /*
+   * ★ RESPONSES, NOT REQUESTS. `ui/src/main.tsx` wraps the app in StrictMode,
+   * so `useAsync`'s effect double-invokes and the first fetch is aborted only
+   * AFTER it is issued — two requests always reach the wire and exactly one
+   * response comes back. The response count is the decidable property, and it
+   * is the one AC1 means: one response fills the whole screen.
+   */
+  let detailResponses = 0;
+  let wireEvents: Promise<WireEvent[]> | null = null;
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
     // The URL matters: a bare "Failed to load resource" names nothing, and the
@@ -303,6 +337,15 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   });
   page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`));
   page.on('response', (response) => {
+    if (isSessionDetailPath(response.url()) && response.status() < 400) {
+      detailResponses += 1;
+      // Kept as a promise: reading a body inside the handler would make the
+      // listener async and the count race the drive.
+      wireEvents ??= response
+        .json()
+        .then((body: { events?: WireEvent[] }) => body.events ?? [])
+        .catch(() => []);
+    }
     if (response.status() < 400) return;
     if (isIgnoredRequest(response.url())) return;
     failedResponses.push(`${response.status()} ${response.url()}`);
@@ -337,6 +380,9 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
 
   const tree = await readTree(page);
   const spanRowCount = await page.locator(slot(SELECTORS.spanRow)).count();
+  // Counted at ANY depth: a `task_notification` turn folds under the Agent
+  // event that spawned it, so depth-0 counting is wrong on a folded session.
+  const turnGroupCount = await page.locator(slot(SELECTORS.traceRow)).count();
 
   // Row 1 is the first turn's first span under every session size — the virtual
   // window always holds it, which is the whole reason turn 1 is the driven turn.
@@ -350,6 +396,10 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const t2 = (await detailPane.innerText()).trim();
   await shoot('04-focus.png');
 
+  // LAST, because it may expand further turns: every reading above is already
+  // taken, so nothing it moves can disturb an assertion.
+  const toolCallInline = await probeToolCallInline(page, (await wireEvents) ?? []);
+
   const detail: DetailTexts = { t0, t1, t2 };
   return {
     shots,
@@ -360,6 +410,9 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       sessionCount,
       backLinks,
       spanRowCount,
+      turnGroupCount,
+      detailResponses,
+      toolCallInline,
       detail,
       consoleErrors,
       failedResponses,
@@ -367,6 +420,61 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       ...keyboard,
     },
   };
+}
+
+/**
+ * AC-R1's third clause: a `tool_call` row on screen renders a prefix of the
+ * input and the output the wire actually sent.
+ *
+ * The window is the hard part, not the fields — measured on the newest archived
+ * session, 91 of 91 `tool_call` events carry both halves, but only the rows the
+ * virtualizer rendered can be read. So collapsed turns in the window are opened,
+ * a few at a time, until a qualifying row appears. When none does, this answers
+ * `null` and `report.ts` records an observation rather than a pass.
+ */
+async function probeToolCallInline(
+  page: Page,
+  events: readonly WireEvent[],
+): Promise<ToolCallProbe | null> {
+  const payloads = new Map(
+    events
+      .filter((event) => event.input !== null && event.text !== null)
+      .map((event) => [event.id, event]),
+  );
+  if (payloads.size === 0) return null;
+
+  const readRows = (): Promise<{ id: string; text: string }[]> =>
+    page.$$eval('[data-event-kind="tool_call"]', (nodes) =>
+      nodes.map((node) => ({
+        id: node.getAttribute('data-event-id') ?? '',
+        text: node.textContent ?? '',
+      })),
+    );
+
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
+    for (const row of await readRows()) {
+      const wire = payloads.get(row.id);
+      if (wire === undefined || wire.input === null || wire.text === null) continue;
+      const shown = oneLine(row.text);
+      const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
+      const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
+      return {
+        eventId: row.id,
+        inputPrefix,
+        outputPrefix,
+        inputMatched: inputPrefix !== '' && shown.includes(inputPrefix),
+        outputMatched: outputPrefix !== '' && shown.includes(outputPrefix),
+      };
+    }
+    // Nothing qualifying in the window: open one more closed turn and look
+    // again. Bounded, because an unbounded search is a hang rather than a miss.
+    const closed = page.locator(`${slot(SELECTORS.traceRow)}[aria-expanded="false"]`).first();
+    if ((await closed.count()) === 0) break;
+    await closed.locator(slot(SELECTORS.traceExpand)).click();
+    await page.waitForSelector(`${slot(SELECTORS.spanRow)}`);
+  }
+
+  return null;
 }
 
 /**

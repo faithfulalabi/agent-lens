@@ -1,52 +1,21 @@
 /*
- * Shared factories for the UI suites (Task 5.2a). NOT a test file — the `ui`
- * project only collects `*.test.ts(x)`, the same convention `helpers.ts` and
+ * Shared factories for the UI suites. NOT a test file — the `ui` project only
+ * collects `*.test.ts(x)`, the same convention `helpers.ts` and
  * `../../__tests__/build-ui.ts` already follow.
  *
- * `makeSession` returns a full `Session`, not a partial cast, so a change to
- * `@shared/entities.ts` breaks this file at compile time instead of leaving
- * every suite asserting against a shape the server no longer sends.
+ * Every factory returns a COMPLETE wire row rather than a partial cast, so a
+ * change to `ui/src/lib/api.ts` breaks this file at compile time instead of
+ * leaving every suite asserting against a shape the server no longer sends.
  *
- * Tasks 5.2b and 5.3a EXTEND this module rather than starting rivals to it.
+ * Task 5.2 deleted the `Session`/`Span`/`Trace` builders with the entity types
+ * they constructed. The v2 wire is what the screens read, so it is what the
+ * fixtures build.
  */
 
-import type { Session, Span, SpanStatus, Trace, TraceTrigger } from '@shared/entities.ts';
 import type { Page } from '@shared/api.ts';
 
-import type {
-  ApiClient,
-  EventRow,
-  SessionDetailBody,
-  SessionListRow,
-  TurnRow,
-} from '../api.js';
-import { buildTreeModel, flatten, type Row, type TreeModel } from '../span-tree.js';
-
-/** A complete, plausible session. Every field is overridable. */
-export function makeSession(overrides: Partial<Session> = {}): Session {
-  return {
-    id: 'seed-s0',
-    harness: 'claude-code',
-    project_path: '/tmp/agent-lens/project-0',
-    git_branch: 'main',
-    model: 'claude-sonnet-5',
-    started_at: '2026-07-29T09:00:00.000Z',
-    ended_at: '2026-07-29T09:30:00.000Z',
-    status: 'complete',
-    capture_mode: 'full',
-    transcript_path: '/tmp/agent-lens/transcripts/seed-s0.jsonl',
-    total_tokens: 1200,
-    tokens_in: 1000,
-    tokens_out: 200,
-    tokens_cache_read: 50,
-    tokens_cache_write: 10,
-    est_cost: 0.0123,
-    tool_call_count: 2,
-    error_count: 0,
-    trace_count: 2,
-    ...overrides,
-  };
-}
+import type { ApiClient, EventRow, SessionDetailBody, SessionListRow, TurnRow } from '../api.js';
+import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree.js';
 
 /** The one pagination envelope the read API serves on every list route. */
 export function makePage<T>(items: T[], overrides: Partial<Page<T>> = {}): Page<T> {
@@ -92,6 +61,14 @@ export function makeSessionRow(overrides: Partial<SessionListRow> = {}): Session
   };
 }
 
+/** The wall-clock origin every factory below counts forward from. */
+const TREE_EPOCH = Date.parse('2026-07-29T09:00:00.000Z');
+
+/** `TREE_EPOCH + n` seconds, as the ISO string the server puts on the wire. */
+export function atSecond(second: number): string {
+  return new Date(TREE_EPOCH + second * 1000).toISOString();
+}
+
 /** One row of the detail response's `turns` array. */
 export function makeTurnRow(overrides: Partial<TurnRow> = {}): TurnRow {
   return {
@@ -127,6 +104,10 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     name: 'Read',
     status: 'ok',
     duration_ms: 1000,
+    duration_source: 'elapsed',
+    input: '{"file_path":"a.txt"}',
+    input_bytes: 21,
+    input_storage: 'inline',
     text: 'stdout',
     text_bytes: 6,
     output_storage: 'inline',
@@ -172,257 +153,99 @@ export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   };
 }
 
-/* ------------------------------------------------ Task 5.3a: the tree --- */
+/* ---------------------------------------------------- the turn tree --- */
 
-/** The wall-clock origin every span factory below counts forward from. */
-const TREE_EPOCH = Date.parse('2026-07-29T09:00:00.000Z');
-
-/** `TREE_EPOCH + n` seconds, as the ISO string the server puts on the wire. */
-export function atSecond(second: number): string {
-  return new Date(TREE_EPOCH + second * 1000).toISOString();
-}
-
-/** A complete, plausible turn. Rollup fields are the server's, not a sum. */
-export function makeTrace(overrides: Partial<Trace> = {}): Trace {
-  return {
-    id: 'seed-s0:1',
-    session_id: 'seed-s0',
-    turn_seq: 1,
-    trigger: 'user_prompt',
-    prompt_preview: 'add a span tree',
-    started_at: atSecond(0),
-    ended_at: atSecond(60),
-    status: 'complete',
-    total_tokens: 1200,
-    tokens_in: 1000,
-    tokens_out: 200,
-    tokens_cache_read: 50,
-    tokens_cache_write: 10,
-    est_cost: 0.0123,
-    duration_ms: 60_000,
-    tool_call_count: 2,
-    error_count: 0,
-    ...overrides,
-  };
-}
-
-/** A complete, plausible span. Every field is overridable. */
-export function makeSpan(overrides: Partial<Span> = {}): Span {
-  return {
-    id: 'sp-1',
-    trace_id: 'seed-s0:1',
-    span_type: 'tool_call',
-    name: 'Read',
-    status: 'ok',
-    started_at: atSecond(0),
-    ended_at: atSecond(1),
-    source: 'hook',
-    tags: [],
-    attrs: {},
-    ...overrides,
-  };
-}
-
-/** One node of the nested literal {@link makeSpanTree} reads. */
-export interface SpanTreeSpec extends Partial<Span> {
+/** One node of the nested literal {@link makeTurnTree} reads. */
+export interface TurnTreeSpec extends Partial<TurnRow> {
   id: string;
-  children?: SpanTreeSpec[];
+  /** The events this turn owns, in the order they are declared. */
+  events?: Partial<EventRow>[];
+  /**
+   * Turns folded under this turn's LAST declared event, each with their own
+   * events and folds. This is the chain the measured archive produces.
+   */
+  folded?: TurnTreeSpec[];
+}
+
+export interface TurnTree {
+  readonly turns: TurnRow[];
+  readonly eventsByTurn: Map<string, EventRow[]>;
 }
 
 /**
- * A nested literal, flattened into the page the server actually serves:
- * `parent_span_id` wired from the nesting and the result sorted by
- * `started_at` — because `readSessionSpans` orders `started_at ASC` and
- * nothing else, so the array a real client receives is time-ordered and NOT
- * tree-ordered. A spec that pins its own timestamps therefore produces a page
- * whose array order genuinely disagrees with its tree order.
+ * A nested literal, flattened into the two arrays the server actually serves.
  *
- * Unpinned spans walk one second forward per node in declaration order, which
- * keeps the two orders equal — useful when a test is about something else.
+ * The nesting wires `parent_event_id`: a `folded` child hangs off its parent
+ * turn's last declared event and is stamped `kind: 'task_notification'`, which
+ * is what `foldsUnderAgent` tests. `seq` walks one forward per event across the
+ * WHOLE session, exactly as the projector numbers it, so bucket order and file
+ * order agree and a test asserting on order is asserting on something real.
  */
-export function makeSpanTree(specs: SpanTreeSpec[], base: Partial<Span> = {}): Span[] {
-  const spans: Span[] = [];
-  let clock = 0;
+export function makeTurnTree(specs: TurnTreeSpec[]): TurnTree {
+  const turns: TurnRow[] = [];
+  const eventsByTurn = new Map<string, EventRow[]>();
+  let seq = 0;
 
-  const walk = (nodes: SpanTreeSpec[], parentSpanId: string | undefined): void => {
+  const walk = (nodes: TurnTreeSpec[], parentEventId: string | null): void => {
     for (const node of nodes) {
-      const { children, ...fields } = node;
-      const second = clock;
-      clock += 1;
-      spans.push(
-        makeSpan({
-          started_at: atSecond(second),
-          ended_at: atSecond(second + 1),
-          ...base,
+      const { events = [], folded = [], ...fields } = node;
+      const rows = events.map((event, i) => {
+        const at = seq;
+        seq += 1;
+        return makeEventRow({
+          id: `${node.id}-ev-${i}`,
+          turn_id: node.id,
+          seq: at,
+          ts: atSecond(at),
+          ...event,
+        });
+      });
+      turns.push(
+        makeTurnRow({
+          seq: turns.length,
+          title: `turn ${node.id}`,
+          first_seq: rows[0]?.seq ?? 0,
+          last_seq: rows[rows.length - 1]?.seq ?? 0,
+          ...(parentEventId === null
+            ? {}
+            : { kind: 'task_notification', parent_event_id: parentEventId }),
           ...fields,
-          ...(parentSpanId === undefined ? {} : { parent_span_id: parentSpanId }),
         }),
       );
-      if (children !== undefined) walk(children, node.id);
+      eventsByTurn.set(node.id, rows);
+      const anchor = rows[rows.length - 1];
+      walk(folded, anchor?.id ?? null);
     }
   };
 
-  walk(specs, undefined);
-  spans.sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
-  return spans;
+  walk(specs, null);
+  return { turns, eventsByTurn };
 }
 
-/**
- * A page whose second span names a parent that is not on it.
- *
- * Real and routine, from two independent causes: the span page is capped, so a
- * child can arrive without its parent, and the `unattributed` tag marks spans
- * the normalizer could not attach at all.
- */
-export function makeOrphanPage(): Span[] {
-  return [
-    makeSpan({ id: 'sp-kept', started_at: atSecond(0), ended_at: atSecond(1) }),
-    makeSpan({
-      id: 'sp-orphan',
-      parent_span_id: 'sp-off-page',
-      tags: ['unattributed'],
-      started_at: atSecond(2),
-      ended_at: atSecond(3),
-    }),
-  ];
-}
-
-/**
- * Two spans that name each other as parent.
- *
- * `parent_span_id` is a self-FK with `ON DELETE SET NULL` and no cycle
- * constraint (`db/migrations/001-initial-schema.ts`), so the database will
- * happily store this and the client owns termination.
- */
-export function makeCyclePage(): Span[] {
-  return [
-    makeSpan({
-      id: 'sp-a',
-      parent_span_id: 'sp-b',
-      started_at: atSecond(0),
-      ended_at: atSecond(1),
-    }),
-    makeSpan({
-      id: 'sp-b',
-      parent_span_id: 'sp-a',
-      started_at: atSecond(2),
-      ended_at: atSecond(3),
-    }),
-  ];
-}
-
-/* --------------------------------------------- Task 5.3b: rendered rows --- */
-
-/*
- * Task 5.3a deliberately left the four factories below to this task, saying so
- * in as many words: they serve the rendered tree's tests and nothing in the
- * pure model needed them.
- *
- * Every one of them answers with the shapes the SERVER can actually produce —
- * the whole `SpanStatus` union, the whole `TraceTrigger` union, and the four
- * degradation tags the normalizer writes — rather than with the one or two a
- * particular assertion happens to want. That is what makes "and the ordinary
- * case draws none of it" assertable on the same fixture.
- */
-
-/** How many spans hang under each turn in {@link makeLargeTree} by default. */
-const LARGE_SPANS_PER_TRACE = 500;
+/** How many events hang under each turn in {@link makeLargeTree} by default. */
+const LARGE_EVENTS_PER_TURN = 500;
 
 /** How many turns {@link makeLargeTree} builds by default. */
-const LARGE_TRACES = 10;
-
-export interface LargeTree {
-  readonly traces: Trace[];
-  readonly spansByTrace: Map<string, Span[]>;
-}
+const LARGE_TURNS = 10;
 
 /**
- * A session at real scale: 10 turns of 500 spans, i.e. 5,000 spans.
+ * A session at real scale: 10 turns of 500 events, i.e. 5,000 events.
  *
- * The same shape the manual measurement recipe seeds on disk
- * (`seedFixtureDb(dir, {sessions: 1, tracesPerSession: 10, spansPerTrace: 500})`),
- * so the automated row-count assertion and the hand-run browser measurement are
- * looking at a session of the same size rather than at two different ones.
- *
- * Flat rather than deeply nested on purpose: this fixture exists to measure the
- * row count and the model's complexity, and nesting would make the row count
- * depend on expansion state instead of on the viewport.
+ * Flat rather than folded on purpose: this fixture exists to measure the row
+ * count and the model's complexity, and nesting would make the row count depend
+ * on expansion state instead of on the viewport.
  */
 export function makeLargeTree({
-  traces = LARGE_TRACES,
-  spansPerTrace = LARGE_SPANS_PER_TRACE,
-}: { traces?: number; spansPerTrace?: number } = {}): LargeTree {
-  const turns: Trace[] = [];
-  const spansByTrace = new Map<string, Span[]>();
-
-  for (let t = 0; t < traces; t += 1) {
-    const id = `seed-s0:${t}`;
-    turns.push(makeTrace({ id, turn_seq: t, prompt_preview: `turn ${t}` }));
-    spansByTrace.set(
-      id,
-      Array.from({ length: spansPerTrace }, (_, s) =>
-        makeSpan({
-          id: `${id}-sp-${s}`,
-          trace_id: id,
-          name: `step ${s}`,
-          started_at: atSecond(t * spansPerTrace + s),
-          ended_at: atSecond(t * spansPerTrace + s + 1),
-        }),
-      ),
-    );
-  }
-
-  return { traces: turns, spansByTrace };
-}
-
-/** One span per `SpanStatus`, in a stable order, all under one turn. */
-export function makeStatusPage(): Span[] {
-  const statuses: readonly SpanStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
-  return statuses.map((status, i) =>
-    makeSpan({
-      id: `sp-${status}`,
-      name: status,
-      status,
-      started_at: atSecond(i),
-      // A running span has not ended. Giving it an `ended_at` would make it the
-      // one shape on this page that cannot exercise the live spelling.
-      ...(status === 'running' ? { ended_at: undefined } : { ended_at: atSecond(i + 1) }),
-    }),
-  );
-}
-
-/** The four tags the normalizer writes, plus one span carrying none of them. */
-export function makeDegradedPage(): Span[] {
-  const tags = ['degraded', 'transcript_only', 'synthetic_open', 'unattributed'];
-  return [
-    ...tags.map((tag, i) =>
-      makeSpan({
-        id: `sp-${tag}`,
-        tags: [tag],
-        started_at: atSecond(i),
-        ended_at: atSecond(i + 1),
-      }),
-    ),
-    makeSpan({ id: 'sp-clean', tags: [], started_at: atSecond(9), ended_at: atSecond(10) }),
-  ];
-}
-
-/**
- * One turn per `TraceTrigger`.
- *
- * A trigger that is not `user_prompt` is what "synthetic trace" means — there
- * is no other marker on the wire — so the ordinary case has to be on the same
- * fixture for "and it draws no badge" to mean anything.
- */
-export function makeSyntheticTraces(): Trace[] {
-  const triggers: readonly TraceTrigger[] = [
-    'user_prompt',
-    'system_resume',
-    'compaction',
-    'unknown',
-  ];
-  return triggers.map((trigger, i) =>
-    makeTrace({ id: `seed-s0:${i}`, turn_seq: i, trigger, prompt_preview: `turn ${i}` }),
+  turns = LARGE_TURNS,
+  eventsPerTurn = LARGE_EVENTS_PER_TURN,
+}: { turns?: number; eventsPerTurn?: number } = {}): TurnTree {
+  return makeTurnTree(
+    Array.from({ length: turns }, (_, t) => ({
+      id: `seed-s0:${t}`,
+      seq: t,
+      title: `turn ${t}`,
+      events: Array.from({ length: eventsPerTurn }, (_, e) => ({ name: `step ${e}` })),
+    })),
   );
 }
 
@@ -430,22 +253,16 @@ export function makeSyntheticTraces(): Trace[] {
  * A model and the row list it flattens to with everything opened.
  *
  * `model.rowIds` is every id that can be a row, so passing it as the expansion
- * set opens the whole forest — which is what a render assertion about a nested
- * span wants, and it saves each test hand-building an expansion set that would
+ * set opens the whole tree — which is what a render assertion about a nested
+ * row wants, and it saves each test hand-building an expansion set that would
  * then be the thing under test rather than the thing being assumed.
  */
-export function expandedRows(
-  traces: readonly Trace[],
-  spansByTrace: ReadonlyMap<string, readonly Span[]>,
-): { model: TreeModel; rows: Row[] } {
-  const model = buildTreeModel(traces, spansByTrace);
+export function expandedRows(tree: TurnTree): { model: TreeModel; rows: Row[] } {
+  const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
   return { model, rows: flatten(model, model.rowIds) };
 }
 
 /** {@link expandedRows} for the common one-turn page. */
-export function rowsForSpans(spans: readonly Span[], trace: Trace = makeTrace()): Row[] {
-  return expandedRows(
-    [trace],
-    new Map([[trace.id, spans.map((s) => ({ ...s, trace_id: trace.id }))]]),
-  ).rows;
+export function rowsForEvents(events: Partial<EventRow>[], turn: Partial<TurnRow> = {}): Row[] {
+  return expandedRows(makeTurnTree([{ id: 'seed-s0:1', seq: 1, ...turn, events }])).rows;
 }

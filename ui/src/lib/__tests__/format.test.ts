@@ -7,13 +7,13 @@ import {
   formatStartedAt,
   formatTokens,
 } from '../format';
-import { makeSession, makeTrace } from './fixtures';
+import { makeSessionRow, makeTurnRow } from './fixtures';
 
 /*
  * AC2 — Tests 3 to 6 of the task plan.
  *
- * The session factory is used rather than bare literals so that a change to
- * `@shared/entities.ts` reaches these assertions as a compile error.
+ * The wire factories are used rather than bare literals so that a change to
+ * `ui/src/lib/api.ts` reaches these assertions as a compile error.
  */
 
 const NO_VALUE = '—';
@@ -39,8 +39,10 @@ describe('formatCost never spells a priced session as free', () => {
   });
 
   it('renders a real session cost, and the zero session as the em dash', () => {
-    expect(formatCost(makeSession({ est_cost: 0.0123 }).est_cost)).toBe('$0.01');
-    expect(formatCost(makeSession({ est_cost: 0 }).est_cost)).toBe(NO_VALUE);
+    expect(formatCost(makeSessionRow({ est_cost: 0.0123 }).est_cost)).toBe('$0.01');
+    expect(formatCost(makeSessionRow({ est_cost: 0 }).est_cost)).toBe(NO_VALUE);
+    // `est_cost` is nullable on the wire, which is a different absence from 0.
+    expect(formatCost(makeSessionRow({ est_cost: null }).est_cost)).toBe(NO_VALUE);
   });
 });
 
@@ -59,18 +61,19 @@ describe('formatTokens', () => {
   });
 
   it('separates thousands for a real session total', () => {
-    expect(formatTokens(makeSession({ total_tokens: 48250 }).total_tokens)).toBe('48,250');
+    const row = makeSessionRow({ tokens_in: 48_000, tokens_out: 250 });
+    expect(formatTokens(row.tokens_in + row.tokens_out)).toBe('48,250');
   });
 });
 
 /* --------------------------------------------------------------- Test 4 --- */
 
 describe('formatDuration reads the injected clock and never the ambient one', () => {
-  const live = makeSession({
-    status: 'live',
-    started_at: '2026-07-29T09:00:00.000Z',
+  const live = {
+    ...makeSessionRow({ live: true, started_at: '2026-07-29T09:00:00.000Z' }),
+    // The header derives this: a live session has no end to close against.
     ended_at: undefined,
-  });
+  };
 
   it('gives a different answer for the same live session at two clocks', () => {
     const early = formatDuration(
@@ -89,10 +92,12 @@ describe('formatDuration reads the injected clock and never the ambient one', ()
   });
 
   it('closes a completed session at its own end, ignoring the clock entirely', () => {
-    const done = makeSession({
+    const row = makeSessionRow({
+      live: false,
       started_at: '2026-07-29T09:00:00.000Z',
-      ended_at: '2026-07-29T09:30:00.000Z',
+      last_activity_at: '2026-07-29T09:30:00.000Z',
     });
+    const done = { ...row, ended_at: row.last_activity_at };
     const atOneClock = formatDuration(done.started_at, done.ended_at, Date.parse('2027-01-01'));
     const atAnother = formatDuration(done.started_at, done.ended_at, Date.parse('2030-01-01'));
     expect(atOneClock).toBe('30m 0s');
@@ -165,9 +170,9 @@ describe('formatDurationMs spells a raw millisecond count', () => {
   });
 
   it('spells the duration a turn actually arrives with', () => {
-    // Trace.duration_ms is a plain number on the wire — the reason this
+    // `TurnRow.duration_ms` is a plain number on the wire — the reason this
     // function exists at all, since formatDuration only accepts ISO strings.
-    expect(formatDurationMs(makeTrace({ duration_ms: 1_020 }).duration_ms)).toBe('1.02s');
+    expect(formatDurationMs(makeTurnRow({ duration_ms: 1_020 }).duration_ms)).toBe('1.02s');
   });
 });
 

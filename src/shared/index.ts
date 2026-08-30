@@ -4,20 +4,10 @@
 //
 // The envelope and event-id halves went with the hook path in Task 4.5: v2 reads
 // transcripts, so there is no envelope to shape and no id to derive. Task 5.1
-// then dropped the seven entity types that went with them.
+// then dropped the seven entity types that went with them, and Task 5.2 dropped
+// the eight that described the plan-001 span tree.
 
-export type {
-  Session,
-  SessionStatus,
-  CaptureMode,
-  Trace,
-  TraceTrigger,
-  TraceStatus,
-  Span,
-  SpanType,
-  SpanStatus,
-  SpanSource,
-} from './entities.js';
+export type { SessionStatus, CaptureMode } from './entities.js';
 
 export type { ModelPrice, TokenUsage } from './pricing.js';
 export {

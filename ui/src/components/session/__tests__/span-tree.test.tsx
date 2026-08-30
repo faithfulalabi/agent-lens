@@ -3,37 +3,33 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import type { Span, SpanStatus, SpanType, Trace, TraceTrigger } from '@shared/entities.ts';
-
+import type { EventRow, TurnRow } from '../../../lib/api';
 import {
-  buildTreeModel,
+  EVENT_KINDS,
+  EVENT_STATUSES,
+  buildTurnGroups,
   flatten,
+  type EventRowModel,
   type Row,
-  type SpanRow,
-  type TraceRow,
-} from '../../../lib/span-tree';
+  type TurnRowModel,
+} from '../../../lib/turn-tree';
 import {
-  atSecond,
   expandedRows,
-  makeDegradedPage,
   makeLargeTree,
-  makeSession,
-  makeSpan,
-  makeStatusPage,
-  makeSyntheticTraces,
-  makeTrace,
-  rowsForSpans,
+  makeSessionRow,
+  makeTurnTree,
+  rowsForEvents,
 } from '../../../lib/__tests__/fixtures';
 import { hrefFor } from '../../../lib/route-match';
 import { SpanTree } from '../SpanTree';
-import { TreeSpanRow } from '../SpanRow';
+import { DURATION_LABELS, TreeSpanRow } from '../SpanRow';
 import { TraceGroup } from '../TraceGroup';
 import { TruncationNotice } from '../TruncationNotice';
 import { SessionHeader } from '../SessionHeader';
-import { DEGRADED_TAGS, SPAN_VISUALS } from '../span-visuals';
+import { SPAN_VISUALS, VISUAL_OF_KIND, type SpanTypeKey } from '../span-visuals';
 
 /*
- * Task 5.3b's rendering half.
+ * Task 5.2's rendering half.
  *
  * `renderToStaticMarkup` only — the `ui` project has no DOM, effects never run,
  * and every component below is props-in / JSX-out precisely so one static
@@ -56,7 +52,7 @@ import { DEGRADED_TAGS, SPAN_VISUALS } from '../span-visuals';
 
 const NOW = Date.parse('2026-07-29T09:10:00.000Z');
 
-/** Every `treeitem` in a markup string — turn headers and span rows alike. */
+/** Every `treeitem` in a markup string — turn headers and event rows alike. */
 function treeItemCount(markup: string): number {
   return (markup.match(/role="treeitem"/g) ?? []).length;
 }
@@ -66,33 +62,27 @@ function treeMarkup(rows: readonly Row[], height: number | null): string {
     <SpanTree
       rows={rows}
       focusedIndex={0}
-      now={NOW}
       {...(height === null ? {} : { initialRect: { width: 1280, height } })}
     />,
   );
 }
 
-/** The span rows of a one-turn page, already narrowed. */
-function spanRowsOf(spans: readonly Span[], trace?: Trace): SpanRow[] {
-  const rows = trace === undefined ? rowsForSpans(spans) : rowsForSpans(spans, trace);
-  return rows.filter((row): row is SpanRow => row.kind === 'span');
+/** The event rows of a one-turn page, already narrowed. */
+function eventRowsOf(events: Partial<EventRow>[], turn: Partial<TurnRow> = {}): EventRowModel[] {
+  return rowsForEvents(events, turn).filter((row): row is EventRowModel => row.kind === 'event');
 }
 
-function spanRowMarkup(overrides: Partial<Span>, selected = false): string {
-  const row = spanRowsOf([makeSpan({ id: 'sp-under-test', ...overrides })])[0];
-  expect(row, 'the fixture produced no span row').toBeDefined();
+function eventRowMarkup(overrides: Partial<EventRow>, selected = false): string {
+  const row = eventRowsOf([overrides])[0];
+  expect(row, 'the fixture produced no event row').toBeDefined();
   if (row === undefined) throw new Error('unreachable');
-  return renderToStaticMarkup(
-    <TreeSpanRow row={row} selected={selected} focused={false} now={NOW} />,
-  );
+  return renderToStaticMarkup(<TreeSpanRow row={row} selected={selected} focused={false} />);
 }
 
-function traceRowMarkup(trace: Trace): string {
-  const rows = flatten(
-    buildTreeModel([trace], new Map([[trace.id, [makeSpan({ trace_id: trace.id })]]])),
-    new Set([trace.id]),
+function turnRowMarkup(turn: Partial<TurnRow>): string {
+  const row = rowsForEvents([{ name: 'Read' }], turn).find(
+    (r): r is TurnRowModel => r.kind === 'turn',
   );
-  const row = rows.find((r): r is TraceRow => r.kind === 'trace');
   if (row === undefined) throw new Error('the fixture produced no turn row');
   return renderToStaticMarkup(<TraceGroup row={row} selected={false} focused={false} />);
 }
@@ -100,8 +90,7 @@ function traceRowMarkup(trace: Trace): string {
 /* ------------------------------------ Test 4 — virtualization, by SCALING -- */
 
 describe('SpanTree renders O(viewport) rows, not O(n) (Test 4, AC1a)', () => {
-  const { traces, spansByTrace } = makeLargeTree();
-  const { rows } = expandedRows(traces, spansByTrace);
+  const { rows } = expandedRows(makeLargeTree());
 
   /*
    * The measured numbers, on @tanstack/react-virtual@3.14.9 and this repo's
@@ -120,7 +109,7 @@ describe('SpanTree renders O(viewport) rows, not O(n) (Test 4, AC1a)', () => {
   const tall = treeMarkup(rows, 720);
   const short = treeMarkup(rows, 360);
 
-  it('holds 5,000 spans, so an unvirtualized render would be visibly different', () => {
+  it('holds 5,000 events, so an unvirtualized render would be visibly different', () => {
     expect(rows.length).toBe(5010);
   });
 
@@ -176,8 +165,8 @@ describe('SpanTree renders O(viewport) rows, not O(n) (Test 4, AC1a)', () => {
 /*
  * MEASURED AS A RATIO, NOT AGAINST A WALL-CLOCK CEILING.
  *
- * The first version of this test asserted "5,000 spans in under 250 ms" and it
- * FLAKED — this suite runs 68 files in parallel, three of which shell out to a
+ * The first version of this test asserted "5,000 events in under 250 ms" and it
+ * FLAKED — this suite runs many files in parallel, three of which shell out to a
  * real `vite build`, so a step that takes 15 ms unloaded can take an order of
  * magnitude longer while sharing a machine. A ceiling that survives that is too
  * loose to catch anything; the honest fix is to stop measuring speed.
@@ -191,12 +180,12 @@ describe('SpanTree renders O(viewport) rows, not O(n) (Test 4, AC1a)', () => {
  * The minimum of several runs is used rather than the mean: noise can only ever
  * ADD time, so the fastest observation is the closest one to the real cost.
  */
-function bestBuildMs(spanCount: number): number {
-  const { traces, spansByTrace } = makeLargeTree({ traces: 10, spansPerTrace: spanCount / 10 });
+function bestBuildMs(eventCount: number): number {
+  const tree = makeLargeTree({ turns: 10, eventsPerTurn: eventCount / 10 });
   let best = Number.POSITIVE_INFINITY;
   for (let run = 0; run < 5; run += 1) {
     const started = performance.now();
-    const model = buildTreeModel(traces, spansByTrace);
+    const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
     flatten(model, model.rowIds);
     best = Math.min(best, performance.now() - started);
   }
@@ -204,22 +193,22 @@ function bestBuildMs(spanCount: number): number {
 }
 
 describe('the row model builds within a complexity budget (Test 5, AC1a)', () => {
-  it('builds and flattens 5,000 spans into the row list', () => {
-    const { traces, spansByTrace } = makeLargeTree();
-    const model = buildTreeModel(traces, spansByTrace);
+  it('builds and flattens 5,000 events into the row list', () => {
+    const tree = makeLargeTree();
+    const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
     expect(flatten(model, model.rowIds).length).toBe(5010);
   });
 
-  it('costs about five times as much for five times the spans, not twenty-five', () => {
+  it('costs about five times as much for five times the events, not twenty-five', () => {
     // Floored so the ratio cannot be manufactured by a baseline that rounded to
-    // zero — on a fast machine 1,000 spans genuinely can measure under 1 ms.
+    // zero — on a fast machine 1,000 events genuinely can measure under 1 ms.
     const small = Math.max(bestBuildMs(1000), 0.05);
     const large = bestBuildMs(5000);
     const ratio = large / small;
 
     expect(
       ratio,
-      `5,000 spans cost ${ratio.toFixed(1)}x what 1,000 cost. Linear is ~5x and ` +
+      `5,000 events cost ${ratio.toFixed(1)}x what 1,000 cost. Linear is ~5x and ` +
         'quadratic is ~25x, so this guards COMPLEXITY — an accidental ' +
         'quadratic, say a parent lookup by scan rather than by map. It is NOT ' +
         'a proxy for the 2-second open: that bar needs a real browser and is ' +
@@ -264,16 +253,15 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
     /*
      * The same source-pin technique as the two above, extended to the props no
      * render test can reach. Every one of these is a swap that would ship
-     * green: `truncated={data.tracesTruncated}` says the wrong thing about the
-     * wrong cap, and a `focusedIndex`/`selectedId` crossover would put the
-     * cursor on the selection and the selection on the cursor.
+     * green: `hasMore={data.shown > 0}` says the wrong thing about the wrong
+     * fact, and a `focusedIndex`/`selectedId` crossover would put the cursor on
+     * the selection and the selection on the cursor.
      */
     const source = sourceOf('../../../pages/SessionView.tsx');
     for (const wire of [
       'shown={data.shown}',
-      'truncated={data.truncated}',
-      'tracesTruncated={data.tracesTruncated}',
-      'unmatchedSpanCount={model.unmatchedSpanCount}',
+      'hasMore={data.hasMore}',
+      'unmatchedEventCount={model.unmatchedEventCount}',
       'selectedId={nav.selectedId}',
       'focusedIndex={nav.focusedIndex}',
     ]) {
@@ -292,26 +280,16 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
      * expandable row. Putting `tabIndex={-1}` on the ROW does not help: a
      * focusable child is not removed from the tab order by its parent.
      *
-     * The fixture therefore has to nest — two children under one parent span,
-     * inside a turn — so that three separate expand toggles exist to be
-     * counted.
+     * The fixture therefore has to nest — a folded turn under an Agent event —
+     * so that three separate expand toggles exist to be counted.
      */
-    const rows = rowsForSpans([
-      makeSpan({ id: 'parent', started_at: atSecond(0), ended_at: atSecond(9) }),
-      makeSpan({ id: 'child-a', parent_span_id: 'parent', started_at: atSecond(1) }),
-      makeSpan({ id: 'child-b', parent_span_id: 'parent', started_at: atSecond(2) }),
-    ]);
+    const rows = NESTED_ROWS;
     const markup = renderToStaticMarkup(
-      <SpanTree
-        rows={rows}
-        focusedIndex={2}
-        now={NOW}
-        initialRect={{ width: 1280, height: 720 }}
-      />,
+      <SpanTree rows={rows} focusedIndex={2} initialRect={{ width: 1280, height: 720 }} />,
     );
 
     expect(markup.match(/<button/g) ?? [], 'the fixture must actually have toggles').toHaveLength(
-      2,
+      3,
     );
 
     // Everything the browser would put in the tab sequence: an explicit
@@ -325,23 +303,79 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
       'the tree promises exactly one tab stop and the arrows do the rest; an ' +
         'expand toggle left in the sequence adds one stop per expandable row.',
     ).toBe(1);
-    expect(markup.match(/tabindex="-1"/g) ?? []).toHaveLength(rows.length - 1 + 2);
+    expect(markup.match(/tabindex="-1"/g) ?? []).toHaveLength(rows.length - 1 + 3);
+  });
+});
+
+/* ------------- Test 3 — every kind and every status renders (the blank guard) */
+
+const WIRE_STATUSES = [null, 'ok', 'error', 'denied', 'running', 'wat'] as const;
+
+describe('every event kind and every status renders, including a null one (Test 3, AC2)', () => {
+  /*
+   * ⚠️ THE BLANK-SCREEN GUARD. `status IS NULL` on 14,211 of 30,286 archived
+   * events — every `text`, `thinking`, `prompt`, `compaction` and `unknown`
+   * row. Before Task 5.2 the coalesce lived in an adapter this task deleted;
+   * moving it into `turn-tree.ts` rather than dropping it is the whole reason
+   * screen 2 still draws.
+   *
+   * Mutation check, verified by hand: drop the `?? 'unknown'` in
+   * `eventStatusOf` and `SPAN_VISUALS.status[…]` answers undefined, so
+   * `status.Icon` throws on the first non-tool row of every real session.
+   */
+  const cases = EVENT_KINDS.flatMap((kind) =>
+    WIRE_STATUSES.map((status) => [kind, String(status)] as const),
+  );
+
+  it.each(cases)('a %s event with status %s renders a named row', (kind, status) => {
+    const markup = eventRowMarkup({
+      kind,
+      status: status === 'null' ? null : status,
+      name: null,
+    });
+    expect(markup).toContain('data-slot="span-row"');
+    expect(markup).toContain('data-slot="span-status"');
+    expect(markup).toContain(`data-event-kind="${kind}"`);
+    // A non-empty accessible name on the status glyph, which is the half that
+    // survives a reader who cannot tell the two reds apart.
+    expect(markup).toMatch(/data-slot="span-status" role="img" title="[^"]+" aria-label="[^"]+"/);
+  });
+
+  it.each([null, 'wat'])('resolves status %s to the unknown visual', (status) => {
+    const markup = eventRowMarkup({ status });
+    expect(markup).toContain('data-span-status="unknown"');
+    expect(markup).toContain(`aria-label="${SPAN_VISUALS.status.unknown.label}"`);
+  });
+
+  it('resolves an unrecognised kind to the generic visual rather than throwing', () => {
+    const markup = eventRowMarkup({ kind: 'wat', name: null });
+    expect(markup).toContain('data-event-kind="unknown"');
+    expect(markup).toContain(VISUAL_OF_KIND.unknown.tint);
+  });
+
+  it('names the kind of work as well as the event, in the accessible name', () => {
+    const markup = eventRowMarkup({ kind: 'tool_call', name: 'Bash', status: 'ok' });
+    expect(markup).toContain('aria-label="tool call Bash, ok, elapsed, approval wait included"');
+  });
+
+  it('falls back to the raw kind when the projector named nothing', () => {
+    expect(eventRowMarkup({ kind: 'thinking', name: null })).toContain('>thinking<');
   });
 });
 
 /* --------------------------- Test 9 — error and denied rows, AC3 ------------ */
 
 describe('error and denied rows are tinted, glyphed AND named (Test 9, AC3)', () => {
-  it.each(['error', 'denied'] as const)('a %s span washes the whole row', (status) => {
-    const markup = spanRowMarkup({ status });
+  it.each(['error', 'denied'] as const)('a %s event washes the whole row', (status) => {
+    const markup = eventRowMarkup({ status });
     expect(markup).toContain(SPAN_VISUALS.status[status].row);
     expect(SPAN_VISUALS.status[status].row, 'the specced 8% error wash').toBe('bg-error/8');
   });
 
-  it.each(['error', 'denied', 'running', 'unknown', 'ok'] as const)(
-    'a %s span carries a glyph and its word, never colour alone',
+  it.each([...EVENT_STATUSES])(
+    'a %s event carries a glyph and its word, never colour alone',
     (status) => {
-      const markup = spanRowMarkup({ status });
+      const markup = eventRowMarkup({ status });
       const { label } = SPAN_VISUALS.status[status];
       expect(markup, 'design-system.md: error rows get an icon + row tint').toContain('<svg');
       expect(markup).toContain(`aria-label="${label}"`);
@@ -351,198 +385,225 @@ describe('error and denied rows are tinted, glyphed AND named (Test 9, AC3)', ()
   );
 
   it('leaves an ordinary row unwashed, so the washed ones stand out', () => {
-    const markup = spanRowMarkup({ status: 'ok' });
-    expect(markup).not.toContain('bg-error/8');
+    expect(eventRowMarkup({ status: 'ok' })).not.toContain('bg-error/8');
   });
 
-  it('gives a live span the pulse the design system asks for', () => {
-    expect(spanRowMarkup({ status: 'running', ended_at: undefined })).toContain(
-      'animate-live-pulse',
-    );
-    expect(spanRowMarkup({ status: 'ok' })).not.toContain('animate-live-pulse');
-  });
-
-  it('names the kind of work as well as the span, in the accessible name', () => {
-    const markup = spanRowMarkup({ span_type: 'subagent', name: 'reviewer', status: 'ok' });
-    expect(markup).toContain('aria-label="sub-agent reviewer, ok"');
-  });
-
-  it('folds degradation into the row name, since naming it hides its chips', () => {
-    /*
-     * `aria-label` on a treeitem REPLACES the name computed from its children,
-     * so a tag that lived only in a chip would stop being announced entirely —
-     * which is the same colour-alone failure in a different disguise.
-     */
-    const markup = spanRowMarkup({ name: 'Bash', status: 'ok', tags: ['degraded'] });
-    expect(markup).toContain('aria-label="tool call Bash, ok, degraded"');
+  it('gives a live event the pulse the design system asks for', () => {
+    expect(eventRowMarkup({ status: 'running' })).toContain('animate-live-pulse');
+    expect(eventRowMarkup({ status: 'ok' })).not.toContain('animate-live-pulse');
   });
 
   it('gives the status glyph a role, so its label is not dropped', () => {
     // A name on a plain span is discarded by the accessible-name computation:
     // the element's role is generic and it carries no text of its own.
-    const markup = spanRowMarkup({ status: 'error' });
-    expect(markup).toMatch(/data-slot="span-status" role="img"/);
+    expect(eventRowMarkup({ status: 'error' })).toMatch(/data-slot="span-status" role="img"/);
+  });
+
+  it('draws no error chip on the event, and the turn above still draws its own', () => {
+    /*
+     * `showErrors` is false on an event row, decided by Task 5.2. An event's
+     * only possible child is a folded turn, and that turn's header renders its
+     * STORED `error_count` one row down — so the rollup reading is not lost, it
+     * renders where the number lives. On the event itself the chip could only
+     * read `1 err`, beside a status glyph that already carries the word and an
+     * 8% row wash: a fourth signal for one fact.
+     *
+     * Mutation check, verified by hand: pass `showErrors={row.hasChildren}` and
+     * a nested-turn event grows a phantom `1 err`.
+     */
+    expect(eventRowMarkup({ status: 'error' })).not.toContain('data-slot="row-errors"');
+    expect(turnRowMarkup({ error_count: 3 })).toContain('3 err');
   });
 });
 
-/* ------------------------- Test 10 — synthetic traces, AC3 ----------------- */
+/* ------------------- Test 7 and 8 — the tool_call row, AC3 ----------------- */
 
-describe('a turn that no prompt started says so (Test 10, AC3)', () => {
-  const traces = makeSyntheticTraces();
+describe('a tool_call row shows what was called and what came back (Test 7, AC3)', () => {
+  it('renders the tool name, its status, its input and its output', () => {
+    const markup = eventRowMarkup({
+      kind: 'tool_call',
+      name: 'Bash',
+      status: 'ok',
+      input: '{"cmd":"ls"}',
+      text: 'a.txt',
+    });
 
-  it.each(['system_resume', 'compaction', 'unknown'] as const)(
-    'a %s turn carries the trigger badge and names it',
-    (trigger) => {
-      const trace = traces.find((t) => t.trigger === trigger);
-      if (trace === undefined) throw new Error(`no ${trigger} turn in the fixture`);
-      const markup = traceRowMarkup(trace);
+    expect(markup).toContain('>Bash<');
+    expect(markup).toContain('data-span-status="ok"');
+    // Mutation check, verified by hand: drop the payload line and both of these
+    // go red, which is the whole of AC3's "and both its input and its output".
+    expect(markup).toContain('data-slot="span-input"');
+    expect(markup).toContain('{&quot;cmd&quot;:&quot;ls&quot;}');
+    expect(markup).toContain('data-slot="span-output"');
+    expect(markup).toContain('a.txt');
+  });
 
-      expect(markup).toContain('data-slot="trace-trigger"');
-      expect(markup).toContain(`>${trigger}<`);
-      expect(markup, 'the badge is informational, so it takes the neutral atom').toContain(
-        SPAN_VISUALS.triggerBadge,
-      );
-      expect(markup).toContain(`title="started by ${trigger}"`);
+  it('clamps a long payload to one line rather than pasting 64 KB into a row', () => {
+    const markup = eventRowMarkup({ input: 'x'.repeat(4_000), text: null });
+    const shown = /data-slot="span-input"[^>]*>([^<]*)</.exec(markup)?.[1] ?? '';
+    expect(shown.length).toBeLessThan(120);
+    expect(shown.startsWith('x'.repeat(50)), 'the preview is a PREFIX of the value').toBe(true);
+    expect(markup).not.toContain('data-slot="span-output"');
+  });
+
+  it('draws no payload line at all when the event carries neither', () => {
+    expect(eventRowMarkup({ input: null, text: null })).not.toContain('data-slot="span-payload"');
+  });
+});
+
+describe('the duration is labelled by where it came from (Test 8, AC3)', () => {
+  it.each([...Object.keys(DURATION_LABELS)] as (keyof typeof DURATION_LABELS)[])(
+    'a %s duration names its source and never says execution',
+    (source) => {
+      const markup = eventRowMarkup({
+        duration_source: source === 'none' ? null : source,
+        duration_ms: source === 'none' ? null : 1_020,
+      });
+      expect(markup).toContain(`data-duration-source="${source}"`);
+      expect(markup).toContain(DURATION_LABELS[source]);
+      // ★ A 61 ms Bash reads as 8,063 ms elapsed when a human sits on the
+      // approval dialog. A labelled approximation beats a precise-looking lie.
+      expect(markup.toLowerCase()).not.toContain('execution');
     },
   );
 
-  it('a user prompt is the ordinary case and carries no badge at all', () => {
-    const trace = traces.find((t) => t.trigger === 'user_prompt');
-    if (trace === undefined) throw new Error('no user_prompt turn in the fixture');
+  it('gives the four arms four distinct labels', () => {
+    const labels = Object.values(DURATION_LABELS);
+    expect(labels).toHaveLength(4);
+    expect(new Set(labels).size).toBe(4);
+  });
+
+  it('defaults an absent source to none, never to elapsed', () => {
+    // Mutation check, verified by hand: defaulting the null arm to `elapsed`
+    // claims a measurement on 14,211 of 30,286 rows that nobody took.
+    const markup = eventRowMarkup({ duration_source: null, duration_ms: null });
+    expect(markup).toContain('data-duration-source="none"');
+    expect(markup).toContain(DURATION_LABELS.none);
+    // …and the number itself is the em dash, not `0ms`.
+    expect(markup).not.toContain('0ms');
+  });
+
+  it('never lets the TURN vocabulary reach the event map', () => {
+    /*
+     * `turns.duration_source` is `derived` | `turn_duration` — a different
+     * field on a different table. The separation is structural: `TurnRow` does
+     * not declare the field at all, and a turn header renders no source.
+     */
+    for (const turnSource of ['derived', 'turn_duration']) {
+      expect(Object.keys(DURATION_LABELS)).not.toContain(turnSource);
+    }
+    expect(turnRowMarkup({})).not.toContain('data-duration-source');
+  });
+});
+
+/* ------------------------- the turn header badge, AC2 --------------------- */
+
+describe('a turn that no human started says so (AC2)', () => {
+  it.each(['task_notification', 'slash_command', 'compaction', 'system', 'unknown'])(
+    'a %s turn carries the badge and names its kind',
+    (kind) => {
+      const markup = turnRowMarkup({ kind });
+      expect(markup).toContain('data-slot="trace-trigger"');
+      expect(markup).toContain(`>${kind}<`);
+      expect(markup, 'the badge is informational, so it takes the neutral atom').toContain(
+        SPAN_VISUALS.triggerBadge,
+      );
+      expect(markup).toContain(`title="started by ${kind}"`);
+      expect(markup).toContain(`data-turn-kind="${kind}"`);
+    },
+  );
+
+  it('a human turn is the ordinary case and carries no badge at all', () => {
     expect(
-      traceRowMarkup(trace),
+      turnRowMarkup({ kind: 'human' }),
       'a badge on every turn would say nothing about any of them.',
     ).not.toContain('data-slot="trace-trigger"');
   });
 
-  it('shows the prompt preview the server already sends, with no payload fetch', () => {
-    const markup = traceRowMarkup(makeTrace({ prompt_preview: 'rename the widget' }));
+  it('shows the title the server already sends, with no payload fetch', () => {
+    const markup = turnRowMarkup({ title: 'rename the widget' });
     expect(markup).toContain('rename the widget');
     expect(markup).toContain('data-slot="trace-preview"');
   });
 });
 
-/* -------------------------- Test 11 — degraded spans, AC3 ------------------ */
-
-describe('a degraded span names its degradation (Test 11, AC3)', () => {
-  const page = makeDegradedPage();
-
-  it.each(DEGRADED_TAGS)('a %s span carries a labelled warning chip', (tag) => {
-    const span = page.find((s) => s.tags.includes(tag));
-    if (span === undefined) throw new Error(`no ${tag} span in the fixture`);
-    const markup = spanRowMarkup({ tags: span.tags });
-
-    expect(markup).toContain('data-slot="degraded-tag"');
-    expect(markup).toContain(`>${tag}<`);
-    expect(markup).toContain(`title="degraded capture: ${tag}"`);
-    expect(markup, 'warning is the spec’s own degraded-capture semantic').toContain(
-      SPAN_VISUALS.degradedChip,
-    );
-  });
-
-  it('a clean span carries none', () => {
-    expect(spanRowMarkup({ tags: [] })).not.toContain('data-slot="degraded-tag"');
-  });
-
-  it('ignores tags that are not degradations', () => {
-    expect(spanRowMarkup({ tags: ['seeded'] })).not.toContain('data-slot="degraded-tag"');
-  });
-
-  it('draws two chips for a span degraded two ways, in the manifest’s order', () => {
-    const markup = spanRowMarkup({ tags: ['unattributed', 'degraded'] });
-    const shown = [...markup.matchAll(/data-slot="degraded-tag"[^>]*>([^<]*)</g)].map((m) => m[1]);
-    expect(shown).toEqual(['degraded', 'unattributed']);
-  });
-});
-
 /* --------------------- Test 13 — the manifest is exhaustive ---------------- */
 
-const SPAN_TYPES: readonly SpanType[] = [
+const SPAN_TYPES: readonly SpanTypeKey[] = [
   'llm_call',
   'tool_call',
   'thinking',
   'subagent',
   'generic',
 ];
-const SPAN_STATUSES: readonly SpanStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
-const TRIGGERS: readonly TraceTrigger[] = ['user_prompt', 'system_resume', 'compaction', 'unknown'];
 
 describe('the span-visuals manifest covers everything the wire can carry (Test 13)', () => {
-  it('has an entry for every span type and every span status', () => {
+  it('has an entry for every palette key and every event status', () => {
     /*
      * `satisfies` catches a MISSING key at compile time; this catches the other
-     * direction — a type added to `@shared/entities.ts` that nobody taught this
+     * direction — a status added to `turn-tree.ts` that nobody taught this
      * manifest about would render an untinted, unglyphed row, and widening the
      * union is exactly the change that would not touch the manifest.
      */
     expect(Object.keys(SPAN_VISUALS.type).sort()).toEqual([...SPAN_TYPES].sort());
-    expect(Object.keys(SPAN_VISUALS.status).sort()).toEqual([...SPAN_STATUSES].sort());
+    expect(Object.keys(SPAN_VISUALS.status).sort()).toEqual([...EVENT_STATUSES].sort());
+  });
+
+  it('maps every event kind onto a palette entry', () => {
+    // Seven kinds onto five keys, by reuse. A kind missing here indexes the map
+    // with undefined and the row throws before it draws.
+    expect(Object.keys(VISUAL_OF_KIND).sort()).toEqual([...EVENT_KINDS].sort());
+    for (const kind of EVENT_KINDS) {
+      expect(Object.values(SPAN_VISUALS.type)).toContain(VISUAL_OF_KIND[kind]);
+    }
   });
 
   it('gives every status a word, so status is never colour alone', () => {
-    for (const status of SPAN_STATUSES) {
+    for (const status of EVENT_STATUSES) {
       expect(SPAN_VISUALS.status[status].label, `${status} has no word`).not.toBe('');
     }
   });
 
-  it('renders every span type with its own tint and glyph', () => {
-    for (const spanType of SPAN_TYPES) {
-      const markup = spanRowMarkup({ span_type: spanType });
-      expect(markup, `${spanType} renders untinted`).toContain(SPAN_VISUALS.type[spanType].tint);
+  it('renders every event kind with its own tint and glyph', () => {
+    for (const kind of EVENT_KINDS) {
+      const markup = eventRowMarkup({ kind });
+      expect(markup, `${kind} renders untinted`).toContain(VISUAL_OF_KIND[kind].tint);
       expect(markup).toContain('data-slot="span-type"');
     }
   });
 
-  it('renders every trigger the wire can carry', () => {
-    for (const trigger of TRIGGERS) {
-      expect(() => traceRowMarkup(makeTrace({ trigger }))).not.toThrow();
-    }
-  });
-
   it('washes exactly the two statuses that are failures', () => {
-    const washed = SPAN_STATUSES.filter((s) => SPAN_VISUALS.status[s].row !== '');
-    expect(washed.sort()).toEqual(['denied', 'error']);
+    const washed = EVENT_STATUSES.filter((s) => SPAN_VISUALS.status[s].row !== '');
+    expect([...washed].sort()).toEqual(['denied', 'error']);
   });
 });
 
 /* ------------------- Test 18b — the truncation strip renders --------------- */
 
 describe('truncation is stated out loud (Test 18b)', () => {
-  it('says how many spans it is showing once the cap bit', () => {
+  it('says how many events it is showing once the server withheld some', () => {
     const markup = renderToStaticMarkup(
-      <TruncationNotice shown={20_000} truncated tracesTruncated={false} unmatchedSpanCount={0} />,
+      <TruncationNotice shown={20_000} hasMore unmatchedEventCount={0} />,
     );
     expect(markup).toContain('data-slot="truncation-notice"');
     expect(markup, 'a bare 20000 reads as a total rather than as a limit').toContain('20,000');
     expect(markup).toContain('role="status"');
   });
 
-  it('reports spans whose turn fell off the page, which nothing else does', () => {
+  it('reports events whose turn is not on the page, which nothing else does', () => {
     const markup = renderToStaticMarkup(
-      <TruncationNotice
-        shown={12}
-        truncated={false}
-        tracesTruncated={false}
-        unmatchedSpanCount={7}
-      />,
+      <TruncationNotice shown={12} hasMore={false} unmatchedEventCount={7} />,
     );
     expect(
       markup,
       'the model counts these so this component can say so — the alternative ' +
-        'is spans that arrived, were counted, and appear nowhere.',
-    ).toContain('7 more spans');
+        'is events that arrived, were counted, and appear nowhere.',
+    ).toContain('7 more events');
   });
 
   it('renders nothing at all when the tree is complete', () => {
     expect(
-      renderToStaticMarkup(
-        <TruncationNotice
-          shown={12}
-          truncated={false}
-          tracesTruncated={false}
-          unmatchedSpanCount={0}
-        />,
-      ),
+      renderToStaticMarkup(<TruncationNotice shown={12} hasMore={false} unmatchedEventCount={0} />),
       'a permanent "showing everything" strip trains the reader to stop ' +
         'reading the one that matters.',
     ).toBe('');
@@ -551,19 +612,25 @@ describe('truncation is stated out loud (Test 18b)', () => {
 
 /* --------------------- Test 19 — the ARIA tree contract -------------------- */
 
+/** One turn, two events, and a `task_notification` turn folded under the second. */
+const NESTED_ROWS = expandedRows(
+  makeTurnTree([
+    {
+      id: 'seed-s0:0',
+      seq: 0,
+      events: [{ name: 'Read' }, { name: 'Agent' }],
+      folded: [{ id: 'seed-s0:1', seq: 1, events: [{ name: 'Bash' }] }],
+    },
+  ]),
+).rows;
+
 describe('the emitted markup is a real ARIA tree (Test 19)', () => {
-  const spans = [
-    makeSpan({ id: 'parent', started_at: atSecond(0), ended_at: atSecond(9) }),
-    makeSpan({ id: 'child-a', parent_span_id: 'parent', started_at: atSecond(1) }),
-    makeSpan({ id: 'child-b', parent_span_id: 'parent', started_at: atSecond(2) }),
-  ];
-  const rows = rowsForSpans(spans);
+  const rows = NESTED_ROWS;
   const markup = renderToStaticMarkup(
     <SpanTree
       rows={rows}
-      selectedId="child-b"
+      selectedId="seed-s0:1-ev-0"
       focusedIndex={1}
-      now={NOW}
       initialRect={{ width: 1280, height: 720 }}
     />,
   );
@@ -571,42 +638,40 @@ describe('the emitted markup is a real ARIA tree (Test 19)', () => {
   it('puts one tree around every treeitem', () => {
     expect(markup.match(/role="tree"/g) ?? []).toHaveLength(1);
     expect(treeItemCount(markup)).toBe(rows.length);
+    expect(rows).toHaveLength(5);
   });
 
-  it('gives a turn header the same treeitem role as a span row', () => {
+  it('gives a turn header the same treeitem role as an event row', () => {
     // A turn is a row the arrow keys land on, so a section-heading role would
     // be a lie about what focus can reach.
     expect(markup).toContain('data-slot="trace-group"');
-    expect(
-      markup.match(/role="treeitem"[^>]*data-slot="trace-group"|data-slot="trace-group"/g),
-    ).not.toBeNull();
+    expect(markup.match(/data-slot="trace-group"/g) ?? []).toHaveLength(2);
   });
 
-  it('levels every row as depth plus one, turns at 1 and their children at 2', () => {
+  it('levels every row as depth plus one, and a folded turn is not at level 1', () => {
     const levels = [...markup.matchAll(/aria-level="(\d+)"/g)].map((m) => Number(m[1]));
     expect(levels).toEqual(rows.map((row) => row.depth + 1));
-    expect(levels[0]).toBe(1);
-    expect(levels[1]).toBe(2);
-    expect(levels).toContain(3);
+    expect(levels).toEqual([1, 2, 2, 3, 4]);
   });
 
   it('states set size and position from the SIBLINGS, not from the window', () => {
     /*
      * The load-bearing one. With ~34 of 5,000 rows in the document, a
      * window-relative number would have a screen reader announce "1 of 34" for
-     * a whole session. `Row` carries `setSize`/`posInSet` for this alone.
+     * a whole session. `Row` carries `setSize`/`posInSet` for this alone, and a
+     * sibling set never mixes an event with a turn.
      */
     const sizes = [...markup.matchAll(/aria-setsize="(\d+)"/g)].map((m) => Number(m[1]));
     const positions = [...markup.matchAll(/aria-posinset="(\d+)"/g)].map((m) => Number(m[1]));
     expect(sizes).toEqual(rows.map((row) => row.setSize));
     expect(positions).toEqual(rows.map((row) => row.posInSet));
-    expect(sizes, 'the two children are a set of two, whatever the window shows').toContain(2);
+    expect(sizes, 'the two events are a set of two, whatever the window shows').toContain(2);
   });
 
   it('marks expansion only on rows that can expand', () => {
     const expandable = rows.filter((row) => row.hasChildren).length;
     expect(markup.match(/aria-expanded=/g) ?? []).toHaveLength(expandable);
-    expect(expandable).toBe(2);
+    expect(expandable).toBe(3);
   });
 
   it('marks the selected row, and only it', () => {
@@ -619,86 +684,80 @@ describe('the emitted markup is a real ARIA tree (Test 19)', () => {
     // wrapper is neither, so it declares itself presentational.
     expect(markup.match(/role="presentation"/g) ?? []).toHaveLength(rows.length);
   });
+
+  it('indents a folded turn header the same way it indents an event', () => {
+    // A turn header is no longer always at depth 0, and a class name assembled
+    // from a depth is invisible to Tailwind's scanner.
+    expect(markup).toContain('padding-left:28px');
+  });
 });
 
-/* -------------- AC4-render — chips are read at turn and session level ------ */
+/* -------------- Test 6 — the header derives its four missing fields -------- */
 
-describe('chips are read off the server’s rollups, never resummed (AC4-render)', () => {
-  /*
-   * Every fixture below deliberately DISAGREES with its own children. That
-   * disagreement is the whole test: a component that recomputed would render
-   * the sum and go red, and one that reads renders the stored number.
-   */
-  it('a turn header shows the turn’s stored totals, not the sum of its spans', () => {
-    const trace = makeTrace({
-      total_tokens: 9999,
+describe('chips are read off the server’s rollups, never resummed (Test 6, AC1)', () => {
+  it('a turn header shows the turn’s stored totals, not the sum of its events', () => {
+    /*
+     * The fixture deliberately DISAGREES with its own events. That disagreement
+     * is the whole test: a component that recomputed would render the sum and
+     * go red, and one that reads renders the stored number.
+     */
+    const markup = turnRowMarkup({
+      tokens_in: 9_000,
+      tokens_out: 999,
       est_cost: 1.25,
       duration_ms: 60_000,
       error_count: 3,
     });
-    const model = buildTreeModel(
-      [trace],
-      new Map([
-        [trace.id, [makeSpan({ trace_id: trace.id, tokens_in: 1, tokens_out: 1, est_cost: 0.01 })]],
-      ]),
-    );
-    const row = flatten(model, new Set([trace.id])).find((r): r is TraceRow => r.kind === 'trace');
-    if (row === undefined) throw new Error('no turn row');
-    const markup = renderToStaticMarkup(<TraceGroup row={row} selected={false} focused={false} />);
 
     expect(markup).toContain('9,999 tok');
     expect(markup).toContain('$1.25');
     expect(markup).toContain('1m 0s');
     expect(markup).toContain('3 err');
-    expect(markup, 'the summed answer would have been 2 tokens').not.toContain('2 tok');
   });
 
-  it('a sub-agent subtree IS summed, because nothing else sums it', () => {
-    // The server's rollups stop at the turn, so a subtree inside one has no
-    // stored total to read — this is the one level the client owns.
-    const rows = spanRowsOf([
-      makeSpan({
-        id: 'group',
-        span_type: 'subagent',
-        started_at: atSecond(0),
-        ended_at: atSecond(4),
-      }),
-      makeSpan({
-        id: 'kid-a',
-        parent_span_id: 'group',
-        tokens_in: 100,
-        tokens_out: 5,
-        est_cost: 0.5,
-      }),
-      makeSpan({
-        id: 'kid-b',
-        parent_span_id: 'group',
-        tokens_in: 20,
-        tokens_out: 0,
-        est_cost: 0.25,
-        status: 'error',
-        started_at: atSecond(2),
-      }),
-    ]);
-    const group = rows.find((row) => row.id === 'group');
-    if (group === undefined) throw new Error('no subagent row');
-    const markup = renderToStaticMarkup(
-      <TreeSpanRow row={group} selected={false} focused={false} now={NOW} />,
+  it('derives status, tokens, end and turn count from the wire row', () => {
+    /*
+     * `GET /api/sessions/:id` sends no `status`, no `ended_at` and no
+     * `total_tokens`. Task 5.2 deleted the adapter that invented them, so the
+     * component derives them and this pins all four.
+     *
+     * Mutation check, verified by hand: read `session.total_tokens` and the
+     * token chip spells `undefined`.
+     */
+    const live = renderToStaticMarkup(
+      <SessionHeader
+        session={makeSessionRow({ live: true, tokens_in: 10, tokens_out: 5, turn_count: 3 })}
+        now={NOW}
+      />,
     );
+    expect(live).toContain('live');
+    expect(live).toContain('15 tok');
+    expect(live).toContain('3 turns');
 
-    expect(markup).toContain('125 tok');
-    expect(markup).toContain('$0.75');
-    expect(markup).toContain('1 err');
+    const done = renderToStaticMarkup(
+      <SessionHeader
+        session={makeSessionRow({
+          live: false,
+          started_at: '2026-07-29T09:00:00.000Z',
+          last_activity_at: '2026-07-29T09:05:00.000Z',
+        })}
+        now={NOW}
+      />,
+    );
+    expect(done).toContain('complete');
+    // Closed at `last_activity_at`, not at the injected clock ten minutes on.
+    expect(done).toContain('5m 0s');
   });
 
   it('a session header shows the session’s stored totals (AC4-render)', () => {
-    const session = makeSession({
-      total_tokens: 123_456,
+    const session = makeSessionRow({
+      tokens_in: 120_000,
+      tokens_out: 3_456,
       est_cost: 4.5,
       error_count: 2,
-      trace_count: 7,
+      turn_count: 7,
       started_at: '2026-07-29T09:00:00.000Z',
-      ended_at: '2026-07-29T09:05:00.000Z',
+      last_activity_at: '2026-07-29T09:05:00.000Z',
     });
     const markup = renderToStaticMarkup(<SessionHeader session={session} now={NOW} />);
 
@@ -718,7 +777,7 @@ describe('chips are read off the server’s rollups, never resummed (AC4-render)
      * and nothing else. A real anchor rather than a history call: `history.back()`
      * on a fresh tab leaves agent-lens entirely.
      */
-    const markup = renderToStaticMarkup(<SessionHeader session={makeSession()} now={NOW} />);
+    const markup = renderToStaticMarkup(<SessionHeader session={makeSessionRow()} now={NOW} />);
 
     expect(markup).toContain('data-slot="back-to-sessions"');
     expect(markup).toContain(`href="${hrefFor({ name: 'sessions' })}"`);
@@ -730,34 +789,21 @@ describe('chips are read off the server’s rollups, never resummed (AC4-render)
 
   it('a session with no errors renders no error chip', () => {
     const markup = renderToStaticMarkup(
-      <SessionHeader session={makeSession({ error_count: 0 })} now={NOW} />,
+      <SessionHeader session={makeSessionRow({ error_count: 0 })} now={NOW} />,
     );
     expect(markup).not.toContain('data-slot="session-errors"');
   });
 
   it('spells an unpriced session as the em dash, never as $0', () => {
     const markup = renderToStaticMarkup(
-      <SessionHeader session={makeSession({ est_cost: 0 })} now={NOW} />,
+      <SessionHeader session={makeSessionRow({ est_cost: null })} now={NOW} />,
     );
     expect(markup).toContain('—');
     expect(markup).not.toContain('$0');
   });
 
-  it('spells a running span’s elapsed time against the injected clock', () => {
-    const markup = spanRowMarkup({
-      status: 'running',
-      started_at: new Date(NOW - 2_000).toISOString(),
-      ended_at: undefined,
-    });
-    expect(markup, 'never NaN, and never an em dash while a clock was offered').toContain('2.00s');
-  });
-
-  it('omits a chip a leaf has no number for rather than rendering a zero', () => {
-    const markup = spanRowMarkup({
-      tokens_in: undefined,
-      tokens_out: undefined,
-      est_cost: undefined,
-    });
+  it('omits a chip an event has no number for rather than rendering a zero', () => {
+    const markup = eventRowMarkup({ tokens_in: null, tokens_out: null, est_cost: null });
     expect(markup).not.toContain('0 tok');
     expect(markup).not.toContain('data-slot="metric-cost"');
   });
@@ -767,29 +813,23 @@ describe('chips are read off the server’s rollups, never resummed (AC4-render)
 
 describe('the selected row is washed and edged, per the flagship-row spec', () => {
   it('takes the accent wash and the accent left edge when selected', () => {
-    const markup = spanRowMarkup({ status: 'ok' }, true);
+    const markup = eventRowMarkup({ status: 'ok' }, true);
     expect(markup).toContain('bg-accent-muted');
     expect(markup).toContain('border-l-accent');
   });
 
   it('holds the edge’s width when unselected, so nothing shifts sideways', () => {
-    const markup = spanRowMarkup({ status: 'ok' }, false);
+    const markup = eventRowMarkup({ status: 'ok' }, false);
     expect(markup).toContain('border-l-2');
     expect(markup).toContain('border-l-background');
     expect(markup).not.toContain('bg-accent-muted');
   });
 
   it('indents by depth with an inline offset, never with a built class name', () => {
-    const rows = spanRowsOf([
-      makeSpan({ id: 'p', started_at: atSecond(0), ended_at: atSecond(5) }),
-      makeSpan({ id: 'c', parent_span_id: 'p', started_at: atSecond(1) }),
-    ]);
-    const child = rows.find((row) => row.id === 'c');
-    if (child === undefined) throw new Error('no child row');
-    const markup = renderToStaticMarkup(
-      <TreeSpanRow row={child} selected={false} focused={false} now={NOW} />,
-    );
-    expect(markup).toContain('padding-left:28px');
+    const row = NESTED_ROWS.find((r): r is EventRowModel => r.id === 'seed-s0:1-ev-0');
+    if (row === undefined) throw new Error('no nested event row');
+    const markup = renderToStaticMarkup(<TreeSpanRow row={row} selected={false} focused={false} />);
+    expect(markup).toContain('padding-left:42px');
     expect(
       markup,
       "a class name assembled at runtime is invisible to Tailwind's scanner " +
@@ -801,12 +841,14 @@ describe('the selected row is washed and edged, per the flagship-row spec', () =
 /* ---------------- every status the wire can carry actually renders --------- */
 
 describe('every status on one page renders its own treatment', () => {
-  const rows = rowsForSpans(makeStatusPage());
+  const rows = rowsForEvents(
+    EVENT_STATUSES.map((status) => ({ id: `ev-${status}`, name: status, status })),
+  );
   const markup = renderToStaticMarkup(
-    <SpanTree rows={rows} focusedIndex={0} now={NOW} initialRect={{ width: 1280, height: 720 }} />,
+    <SpanTree rows={rows} focusedIndex={0} initialRect={{ width: 1280, height: 720 }} />,
   );
 
-  it.each(SPAN_STATUSES)('%s appears exactly once', (status) => {
+  it.each([...EVENT_STATUSES])('%s appears exactly once', (status) => {
     expect(markup.match(new RegExp(`data-span-status="${status}"`, 'g')) ?? []).toHaveLength(1);
   });
 

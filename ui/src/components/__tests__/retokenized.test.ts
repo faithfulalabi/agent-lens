@@ -1,7 +1,9 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { CaptureMode, SessionStatus, SpanStatus, SpanType } from '@shared/entities.ts';
+import type { CaptureMode, SessionStatus } from '@shared/entities.ts';
+import type { EventStatus } from '../../lib/turn-tree';
+import type { SpanTypeKey } from '../session/span-visuals';
 import { builtCss, cleanupBuilds } from '../../__tests__/build-ui';
 import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from '../session/session-visuals';
 import { SPAN_VISUALS } from '../session/span-visuals';
@@ -338,7 +340,7 @@ describe('the session-visuals manifest is exhaustive and every class in it compi
   it('covers every status and every capture mode the wire can carry', () => {
     /*
      * `satisfies` catches a MISSING key at compile time; this catches the other
-     * direction — a status added to `@shared/entities.ts` that nobody taught
+     * direction — a status added to `lib/turn-tree.ts` that nobody taught
      * this manifest about would otherwise render an unstyled badge, and adding
      * it to the union is exactly the change that would not touch this file.
      */
@@ -388,14 +390,14 @@ describe('the session-visuals manifest is exhaustive and every class in it compi
  * out-of-vocabulary utility is silence rather than an error, so a mistyped wash
  * renders an error row that looks exactly like an ordinary one.
  */
-const SPAN_TYPE_KEYS: readonly SpanType[] = [
+const SPAN_TYPE_KEYS: readonly SpanTypeKey[] = [
   'llm_call',
   'tool_call',
   'thinking',
   'subagent',
   'generic',
 ];
-const SPAN_STATUS_KEYS: readonly SpanStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
+const SPAN_STATUS_KEYS: readonly EventStatus[] = ['running', 'ok', 'error', 'denied', 'unknown'];
 
 /** Every class string the span-tree manifest can put on screen, flattened. */
 function spanManifestTokens(): string[] {
@@ -404,7 +406,7 @@ function spanManifestTokens(): string[] {
     ...Object.values(SPAN_VISUALS.status).flatMap((v) => [v.row, v.tint]),
     SPAN_VISUALS.trace.tint,
     SPAN_VISUALS.triggerBadge,
-    SPAN_VISUALS.degradedChip,
+    SPAN_VISUALS.payloadChip,
     SPAN_VISUALS.errorChip,
   ];
   return values.flatMap((value) => value.split(/\s+/)).filter((token) => token !== '');

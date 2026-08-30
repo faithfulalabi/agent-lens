@@ -15,6 +15,7 @@ import {
   SELECTORS,
   archiveRefusal,
   devDataDir,
+  isSessionDetailPath,
   parseArgv,
   runRenderGate,
   type DriveOutcome,
@@ -61,6 +62,15 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
     sessionCount: 8,
     backLinks: 1,
     spanRowCount: 4,
+    turnGroupCount: 2,
+    detailResponses: 1,
+    toolCallInline: {
+      eventId: 'toolu_1',
+      inputPrefix: '{"cmd":"ls"}',
+      outputPrefix: 'a.txt',
+      inputMatched: true,
+      outputMatched: true,
+    },
     labels: [
       { index: 0, text: 'turn 1: hello' },
       { index: 1, text: 'tool Read, ok' },
@@ -281,6 +291,35 @@ describe('buildReport (AC5)', () => {
     ['focus that vanished', { focusIndexAfter: null }],
     ['selection that never moved', { selectedIndexAfter: '1' }],
     ['a pane that never changed', { detail: { t0: 'same', t1: 'same', t2: 'other' } }],
+    // AC2 seen from the browser: the group-by put nothing on screen.
+    ['no turn groups', { turnGroupCount: 0 }],
+    // AC1: one response fills the screen. Two means the paging loop came back.
+    ['a second session-detail response', { detailResponses: 2 }],
+    ['no session-detail response at all', { detailResponses: 0 }],
+    [
+      'a tool_call row that rendered no input',
+      {
+        toolCallInline: {
+          eventId: 'toolu_1',
+          inputPrefix: '{"cmd":"ls"}',
+          outputPrefix: 'a.txt',
+          inputMatched: false,
+          outputMatched: true,
+        },
+      },
+    ],
+    [
+      'a tool_call row that rendered no output',
+      {
+        toolCallInline: {
+          eventId: 'toolu_1',
+          inputPrefix: '{"cmd":"ls"}',
+          outputPrefix: 'a.txt',
+          inputMatched: true,
+          outputMatched: false,
+        },
+      },
+    ],
   ])('reds on %s', (_label, overrides) => {
     const report = buildReport({
       task: '0.3',
@@ -304,7 +343,50 @@ describe('buildReport (AC5)', () => {
     expect(report.ok).toBe(false);
   });
 
-  it('records a non-blocking warning when the pane still shows the 5.4 placeholder', () => {
+  it('reports an absent tool_call payload as an observation, never as a pass', () => {
+    /*
+     * ★ THE 5.1 PRECEDENT. Whether a rendered `tool_call` row carries both
+     * halves of its payload is a fact about the corpus, not about the screen.
+     * A green tick on an empty window would be a check that cannot fail, so the
+     * assertion is not emitted at all and a warning says so out loud.
+     */
+    const report = buildReport({
+      task: '5.2',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult({ toolCallInline: null }),
+      error: null,
+    });
+
+    expect(report.assertions.map((a) => a.name)).not.toContain('tool-call-inline');
+    expect(report.warnings.join(' ')).toContain('tool-call-inline: none in window');
+    expect(report.ok, 'an absent row is not a product failure').toBe(true);
+  });
+
+  it('asserts the payload cross-check whenever the window held a row to check', () => {
+    const report = buildReport({
+      task: '5.2',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const probe = report.assertions.find((a) => a.name === 'tool-call-inline');
+    expect(probe?.ok).toBe(true);
+    expect(probe?.actual).toContain('toolu_1');
+  });
+
+  it('carries the two new readings into the report and the contact sheet', () => {
+    const report = buildReport({
+      task: '5.2',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    expect(report.turnGroupCount).toBe(2);
+    expect(report.detailResponses).toBe(1);
+    expect(renderContactSheet(report)).toContain('2 turn group(s)');
+  });
+
+  it('records a non-blocking warning when the pane still shows the 5.3 placeholder', () => {
     const report = buildReport({
       task: '0.3',
       startedAt: '2026-08-08T00:00:00.000Z',
@@ -488,6 +570,17 @@ describe('the gate source itself (AC6)', () => {
       }).trim();
       expect(found, `data-slot="${slot}" is not in ui/src`).not.toBe('');
     }
+  });
+
+  it('counts a session-detail response, and nothing that merely looks like one', () => {
+    // The list route has no path segment, so `startsWith('/api/sessions')`
+    // would count it and AC1's "exactly one" would be off by one for free.
+    expect(isSessionDetailPath('http://localhost:5173/api/sessions/abc-123')).toBe(true);
+    expect(isSessionDetailPath('http://localhost:5173/api/sessions?limit=50')).toBe(false);
+    expect(isSessionDetailPath('http://localhost:5173/api/sessions')).toBe(false);
+    expect(isSessionDetailPath('http://localhost:5173/api/events/abc/content')).toBe(false);
+    expect(isSessionDetailPath('http://localhost:5173/api/sessions/abc/extra')).toBe(false);
+    expect(isSessionDetailPath('not a url')).toBe(false);
   });
 
   it('suppresses exactly one path, and only the one that was measured', () => {

@@ -102,7 +102,15 @@ export interface TurnRow {
   last_seq: number;
 }
 
-/** One row of the `events` array — the tool_use/tool_result fold, already done. */
+/**
+ * One row of the `events` array — the tool_use/tool_result fold, already done.
+ *
+ * `input`, `input_bytes`, `input_storage` and `duration_source` were declared by
+ * Task 5.2: `src/db/read.ts`'s `EVENT_COLUMNS` has always sent them, and the row
+ * cannot say what a tool call was asked to do, or what its number measures,
+ * without them. Neither `kind` nor `status` is narrowed here — the wire carries
+ * whatever the projector wrote, and `lib/turn-tree.ts` owns the narrowing.
+ */
 export interface EventRow {
   id: string;
   turn_id: string;
@@ -112,6 +120,12 @@ export interface EventRow {
   name: string | null;
   status: string | null;
   duration_ms: number | null;
+  /** `elapsed` | `sidecar_span` | `reported`; null on every non-tool row. */
+  duration_source: string | null;
+  /** The tool's input as JSON text — full, or an 8 KB head preview. */
+  input: string | null;
+  input_bytes: number | null;
+  input_storage: string | null;
   text: string | null;
   text_bytes: number | null;
   output_storage: string | null;

@@ -2,24 +2,40 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatCost, formatDurationMs, formatTokens } from '@/lib/format';
-import { subtreeChips, type ChipValues, type SpanRow as SpanRowModel } from '@/lib/span-tree';
+import {
+  durationSourceOf,
+  eventChips,
+  type ChipValues,
+  type EventDurationSource,
+  type EventRowModel,
+} from '@/lib/turn-tree';
 
 import { MetricChip } from './MetricChip';
-import { SPAN_VISUALS, degradedTagsOf } from './span-visuals';
+import { SPAN_VISUALS, VISUAL_OF_KIND } from './span-visuals';
 
 /*
- * One span row — `design-system.md`'s flagship component, props-in.
+ * One event row — `design-system.md`'s flagship component, props-in.
  *
  * `[type icon] name … [status] [duration] [tokens] [cost] [expand]`, exactly as
- * the Component Patterns section spells it.
+ * the Component Patterns section spells it, with the event's input and output
+ * on a second line beneath.
  *
  * ===========================================================================
- * THE COMPONENT IS `TreeSpanRow`. THE MODEL'S ROW TYPE IS `SpanRow`.
+ * THE COMPONENT IS `TreeSpanRow` AND ITS SLOTS STILL SAY `span`.
  * ===========================================================================
- * `span-tree.ts` already exports an interface called `SpanRow`, and this file
- * is called `SpanRow.tsx`. Naming the component the same thing would mean every
- * consumer aliasing one of the two on import, so the component takes the longer
- * name and the model keeps the short one it was shipped with.
+ * The model renamed `Span` to `EventRow` with Task 5.2, but `data-slot` values
+ * are a test hook that four UI suites and the render gate's `SELECTORS` pin by
+ * string. Renaming them would red four suites before it changed anything a
+ * reader can see, so the vocabulary mismatch is deliberate and stated here.
+ *
+ * ===========================================================================
+ * THE NUMBER IS LABELLED BY WHERE IT CAME FROM, AND NEVER AS EXECUTION.
+ * ===========================================================================
+ * A 61 ms `Bash` reads as 8,063 ms when a human sits on the approval dialog, so
+ * this row says what its duration MEASURED rather than implying it timed the
+ * work. The label rides in `title` and in the row's accessible name, which is
+ * where `design-system.md:141` already puts the status word. A fourth chip on
+ * screen would contradict the three-chip row spec.
  *
  * ===========================================================================
  * INDENTATION IS AN INLINE STYLE, AND IT HAS TO BE.
@@ -39,37 +55,69 @@ import { SPAN_VISUALS, degradedTagsOf } from './span-visuals';
  * always there and only its colour changes — to the canvas colour, against
  * which it cannot be seen.
  *
- * Nothing here reads a clock. `now` is a parameter, which is what lets a
- * running span's elapsed time be asserted at all.
+ * Nothing here reads a clock, and nothing here takes one: an event carries the
+ * duration the projector measured, and no elapsed time is computed on screen.
  */
 
 /** How far one nesting level shifts a row, in pixels. */
-const INDENT_PX = 14;
+export const INDENT_PX = 14;
+
+/** How much of an input or an output the second line shows. */
+const PREVIEW_CHARS = 96;
+
+/**
+ * What the duration measured, one phrase per `events.duration_source`.
+ *
+ * Total over four arms, and `none` is the commonest of them after `elapsed`:
+ * 14,211 of 30,286 events carry no source at all. `reported` is declared by
+ * `src/db/schema.ts:195` and written by nothing, so it is unreachable rather
+ * than absent — dropping it would make this map partial against the schema.
+ * `turns.duration_source` is a different vocabulary and never arrives here.
+ */
+export const DURATION_LABELS: Record<EventDurationSource, string> = {
+  elapsed: 'elapsed, approval wait included',
+  sidecar_span: 'measured by the sub-agent span',
+  reported: 'reported by the harness',
+  none: 'not measured',
+};
+
+/** One line of an input or an output, clamped. Never the whole 64 KB. */
+function previewOf(value: string | null): string | null {
+  if (value === null) return null;
+  const flat = value.replace(/\s+/g, ' ').trim();
+  if (flat === '') return null;
+  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS)}…` : flat;
+}
 
 export interface TreeSpanRowProps {
-  row: SpanRowModel;
+  row: EventRowModel;
   /** Drives the accent wash. Selection is an id and survives a collapse. */
   selected: boolean;
   /** Drives the roving tabindex. Focus is an index and is always on screen. */
   focused: boolean;
-  now: number | Date;
   onSelect?: (id: string) => void;
   onToggle?: (id: string) => void;
 }
 
-export function TreeSpanRow({ row, selected, focused, now, onSelect, onToggle }: TreeSpanRowProps) {
-  const { span } = row.node;
-  const type = SPAN_VISUALS.type[span.span_type];
-  const status = SPAN_VISUALS.status[span.status];
-  const degraded = degradedTagsOf(span.tags);
+export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: TreeSpanRowProps) {
+  const { event, kind, status: statusKey } = row.node;
+  const type = VISUAL_OF_KIND[kind];
+  const status = SPAN_VISUALS.status[statusKey];
+  const name = event.name ?? event.kind;
+  const durationSource = durationSourceOf(event.duration_source);
+  const durationLabel = DURATION_LABELS[durationSource];
+  const input = previewOf(event.input);
+  const output = previewOf(event.text);
 
   return (
     <div
       role="treeitem"
       data-slot="span-row"
-      data-span-status={span.status}
+      data-span-status={statusKey}
+      data-event-kind={kind}
+      data-event-id={event.id}
       /*
-       * `Row.depth` is 0 for a turn and 1 for its direct span children, while
+       * `Row.depth` is 0 for a top-level turn and 1 for its events, while
        * `aria-level` is 1-based from the root of the tree — so every row's
        * level is its depth plus one, turn headers included.
        */
@@ -80,73 +128,107 @@ export function TreeSpanRow({ row, selected, focused, now, onSelect, onToggle }:
       {...(row.hasChildren ? { 'aria-expanded': row.expanded } : {})}
       /*
        * An explicit name, because a `treeitem`'s computed name would otherwise
-       * be every chip in the row read out as one run-on string. The degradation
-       * is folded in rather than left to the chips: naming the row REPLACES its
-       * children for a screen reader, so a tag that only existed as a chip
-       * would stop being announced at all.
+       * be every chip in the row read out as one run-on string. What the
+       * duration measured is folded in rather than left to a tooltip: naming
+       * the row REPLACES its children for a screen reader, so a qualifier that
+       * only existed as a `title` would stop being announced at all.
        */
-      aria-label={[`${type.label} ${span.name}`, status.label, ...degraded].join(', ')}
+      aria-label={[`${type.label} ${name}`, status.label, durationLabel].join(', ')}
       // The ARIA treeview's roving tabindex: exactly one row is reachable by
       // tab, and the arrow keys move which one that is.
       tabIndex={focused ? 0 : -1}
       onClick={() => onSelect?.(row.id)}
       className={cn(
-        'flex h-7 items-center gap-2 border-l-2 pr-2 text-xs text-foreground',
+        'border-l-2 text-xs text-foreground',
         status.row,
         selected ? 'border-l-accent bg-accent-muted' : 'border-l-background',
       )}
       style={{ paddingLeft: row.depth * INDENT_PX }}
     >
-      <ExpandToggle row={row} onToggle={onToggle} />
+      <div className="flex h-7 items-center gap-2 pr-2">
+        <ExpandToggle row={row} name={name} onToggle={onToggle} />
 
-      <span data-slot="span-type" className={cn('shrink-0', type.tint)}>
-        <type.Icon size={12} aria-hidden="true" />
-      </span>
-
-      <span data-slot="span-name" className="min-w-0 flex-1 truncate">
-        {span.name}
-      </span>
-
-      {degraded.map((tag) => (
-        <span
-          key={tag}
-          data-slot="degraded-tag"
-          title={`degraded capture: ${tag}`}
-          aria-label={`degraded capture: ${tag}`}
-          className={SPAN_VISUALS.degradedChip}
-        >
-          {tag}
+        <span data-slot="span-type" className={cn('shrink-0', type.tint)}>
+          <type.Icon size={12} aria-hidden="true" />
         </span>
-      ))}
 
-      {/*
-       * The status glyph carries its own word in `title` and `aria-label`.
-       * `design-system.md`'s accessibility baseline forbids conveying status by
-       * colour alone, and the row tint on its own would do exactly that.
-       *
-       * `role="img"` is what makes the label count: this element has no text of
-       * its own, and a name on a plain span (whose role is generic) is dropped
-       * by the accessible-name computation. The histogram next door names its
-       * bars the same way.
-       */}
-      <span
-        data-slot="span-status"
-        role="img"
-        title={status.label}
-        aria-label={status.label}
-        className={cn('shrink-0', status.tint)}
-      >
-        <status.Icon size={12} aria-hidden="true" />
-      </span>
+        <span data-slot="span-name" className="min-w-0 flex-1 truncate">
+          {name}
+        </span>
 
-      <RowChips values={subtreeChips(row.node, now)} showErrors={row.hasChildren} />
+        {/*
+         * The status glyph carries its own word in `title` and `aria-label`.
+         * `design-system.md`'s accessibility baseline forbids conveying status
+         * by colour alone, and the row tint on its own would do exactly that.
+         *
+         * `role="img"` is what makes the label count: this element has no text
+         * of its own, and a name on a plain span (whose role is generic) is
+         * dropped by the accessible-name computation. The histogram next door
+         * names its bars the same way.
+         */}
+        <span
+          data-slot="span-status"
+          role="img"
+          title={status.label}
+          aria-label={status.label}
+          className={cn('shrink-0', status.tint)}
+        >
+          <status.Icon size={12} aria-hidden="true" />
+        </span>
+
+        <span
+          data-slot="span-metrics"
+          data-duration-source={durationSource}
+          title={durationLabel}
+          className="shrink-0"
+        >
+          {/*
+           * `showErrors` is false, and that is a choice rather than a hedge. An
+           * event's only possible child is a folded turn, whose own header
+           * renders its stored `error_count` one row down — so the rollup
+           * reading is not lost, it renders where the number is stored. On the
+           * event itself the chip could only ever read `1 err`, beside a status
+           * glyph that already carries the word and an 8% row wash.
+           */}
+          <RowChips values={eventChips(event)} showErrors={false} />
+        </span>
+      </div>
+
+      {input === null && output === null ? null : (
+        <div data-slot="span-payload" className="flex items-center gap-2 pb-1 pl-6 pr-2">
+          {input === null ? null : (
+            <span
+              data-slot="span-input"
+              className={cn('min-w-0 truncate', SPAN_VISUALS.payloadChip)}
+            >
+              {input}
+            </span>
+          )}
+          {output === null ? null : (
+            <span
+              data-slot="span-output"
+              className={cn('min-w-0 truncate', SPAN_VISUALS.payloadChip)}
+            >
+              {output}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function ExpandToggle({ row, onToggle }: { row: SpanRowModel; onToggle?: (id: string) => void }) {
+function ExpandToggle({
+  row,
+  name,
+  onToggle,
+}: {
+  row: EventRowModel;
+  name: string;
+  onToggle?: (id: string) => void;
+}) {
   if (!row.hasChildren) {
-    // The space is held so names line up whether or not a span has children.
+    // The space is held so names line up whether or not an event has children.
     return <span data-slot="span-expand-space" aria-hidden="true" className="w-3.5 shrink-0" />;
   }
   const Glyph = row.expanded ? ChevronDown : ChevronRight;
@@ -163,7 +245,7 @@ function ExpandToggle({ row, onToggle }: { row: SpanRowModel; onToggle?: (id: st
        * This is the mouse's affordance; the keyboard expands with the arrows.
        */
       tabIndex={-1}
-      aria-label={row.expanded ? `collapse ${row.node.span.name}` : `expand ${row.node.span.name}`}
+      aria-label={row.expanded ? `collapse ${name}` : `expand ${name}`}
       onClick={(event) => {
         event.stopPropagation();
         onToggle?.(row.id);
@@ -178,8 +260,8 @@ function ExpandToggle({ row, onToggle }: { row: SpanRowModel; onToggle?: (id: st
 /**
  * The three-chip metric strip, plus the error count when there is one.
  *
- * Shared with `TraceGroup` so a turn header and a sub-agent header cannot spell
- * the same four numbers two different ways.
+ * Shared with `TraceGroup` so a turn header and an event row cannot spell the
+ * same four numbers two different ways.
  *
  * ===========================================================================
  * THE ERROR COUNT IS A LOCAL CHIP, NOT A FOURTH `MetricChip` SLOT.

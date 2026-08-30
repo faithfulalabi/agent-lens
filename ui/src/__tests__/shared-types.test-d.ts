@@ -1,23 +1,33 @@
-// Compile-only assertion: the UI can import shared entity types via the
-// `@shared` alias and they type-check in the browser (bundler) context.
+// Compile-only assertion: the UI can import the shared types via the `@shared`
+// alias, and the v2 wire rows type-check in the browser (bundler) context.
 // Vite/tsc strip these type-only imports at build time — no Node builtins leak
 // into the browser bundle. This file emits no runtime code.
+//
+// Task 5.2 repointed the second half. `Span`, `Trace` and `Session` were plan
+// 001's shapes and the screens no longer build them; what the browser actually
+// consumes is `TurnRow` and `EventRow` off `GET /api/sessions/:id`. `tsc` is the
+// only thing that reads this file — it is outside vitest's include — which is
+// why the check has to live in a type position rather than in an assertion.
 
-import type { Span, Trace, Session } from '@shared/entities.ts';
+import type { CaptureMode, SessionStatus } from '@shared/entities.ts';
+import type { EventRow, TurnRow } from '@/lib/api';
 
 // Force the compiler to resolve and structurally check each imported type.
 // If the alias broke or a field were removed, `tsc --noEmit` would fail here.
-type _AssertSpan = Span['span_type'] extends
-  | 'llm_call'
-  | 'tool_call'
-  | 'thinking'
-  | 'subagent'
-  | 'generic'
+type _AssertSessionStatus = SessionStatus extends 'live' | 'complete' | 'interrupted'
   ? true
   : never;
+type _AssertCaptureMode = CaptureMode extends 'full' | 'transcript_only' ? true : never;
 
-type _AssertTrace = Trace['id'] extends string ? true : never;
-type _AssertSession = Session['capture_mode'] extends 'full' | 'transcript_only'
-  ? true
-  : never;
-export type SharedTypesResolve = [_AssertSpan, _AssertTrace, _AssertSession];
+// The two fields Task 5.2 turned on: the fold predicate reads `parent_event_id`
+// and the tool-call row reads `input`. Both are nullable, and a narrowing that
+// forgot it would fail here.
+type _AssertTurn = TurnRow['parent_event_id'] extends string | null ? true : never;
+type _AssertEvent = EventRow['input'] extends string | null ? true : never;
+
+export type SharedTypesResolve = [
+  _AssertSessionStatus,
+  _AssertCaptureMode,
+  _AssertTurn,
+  _AssertEvent,
+];

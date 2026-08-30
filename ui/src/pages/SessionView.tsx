@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'r
 
 import { createApiClient, type ApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/use-async';
-import { buildTreeModel, flatten } from '@/lib/span-tree';
+import { buildTurnGroups, flatten } from '@/lib/turn-tree';
 import {
   initialExpanded,
-  loadSessionSpans,
+  loadSessionDetail,
   needsReseed,
   rowsChangedAction,
   type SessionData,
@@ -26,7 +26,7 @@ import { TruncationNotice } from '@/components/session/TruncationNotice';
  * component emits its pending branch and nothing else. So every decision that
  * could be got wrong lives somewhere a unit test can reach it: the fetch loop,
  * the opening expansion state, the truncation copy and the navigation action
- * are all in `@/lib/session-data`; the row model is `@/lib/span-tree`; the
+ * are all in `@/lib/session-data`; the row model is `@/lib/turn-tree`; the
  * keyboard is `@/lib/tree-nav`; and every surface on screen below is a props-in
  * component with its own render assertions. What is left here is wiring.
  *
@@ -80,14 +80,15 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   const client = useMemo(() => api ?? createApiClient(), [api]);
 
   /*
-   * One clock reading for the whole screen, taken once. Reading it during
-   * render would let two rows disagree about when "now" is; Task 6.2 owns the
-   * ticking.
+   * One clock reading, taken once, for the one surface that needs one: a live
+   * session's header has no `ended_at` to close its elapsed time against. The
+   * tree below reads no clock at all — an event carries the duration the
+   * projector measured. Task 6.2 owns the ticking.
    */
   const [now] = useState(() => Date.now());
 
   const state = useAsync<SessionData>(sessionId, (signal) =>
-    loadSessionSpans(client, sessionId, { signal }),
+    loadSessionDetail(client, sessionId, { signal }),
   );
   const data = state.kind === 'ok' ? state.value : null;
 
@@ -109,11 +110,11 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   const [seededFor, setSeededFor] = useState<string | null>(null);
   if (needsReseed(data, seededFor) && data !== null) {
     setSeededFor(data.session.id);
-    setNav(initialNavState(initialExpanded(data.traces)));
+    setNav(initialNavState(initialExpanded(data.turns)));
   }
 
   const model = useMemo(
-    () => buildTreeModel(data?.traces ?? [], data?.spansByTrace ?? new Map()),
+    () => buildTurnGroups(data?.turns ?? [], data?.eventsByTurn ?? new Map()),
     [data],
   );
   const rows = useMemo(() => flatten(model, nav.expandedIds), [model, nav.expandedIds]);
@@ -184,9 +185,8 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
       {data === null ? null : (
         <TruncationNotice
           shown={data.shown}
-          truncated={data.truncated}
-          tracesTruncated={data.tracesTruncated}
-          unmatchedSpanCount={model.unmatchedSpanCount}
+          hasMore={data.hasMore}
+          unmatchedEventCount={model.unmatchedEventCount}
         />
       )}
 
@@ -196,7 +196,6 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
             rows={rows}
             selectedId={nav.selectedId}
             focusedIndex={nav.focusedIndex}
-            now={now}
             onKeyDown={onKeyDown}
             onSelect={onSelect}
             onToggle={onToggle}
