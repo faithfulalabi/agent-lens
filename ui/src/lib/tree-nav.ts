@@ -37,7 +37,7 @@
  * resets the field rather than leaving a dangling id behind.
  */
 
-import type { Row } from './span-tree.js';
+import type { Row } from './turn-tree.js';
 
 export interface NavState {
   /** `undefined` at mount, and after a model swap that dropped the selection. */

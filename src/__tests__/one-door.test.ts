@@ -234,11 +234,12 @@ const SUPPRESSIONS: readonly Suppression[] = [
     line: '// applied to the static page (which bootstraps the token same-origin instead).',
     why: 'the browser sense of origin, in a comment about same-origin token bootstrap',
   },
-  {
-    key: 'shared/entities.ts#tool_use_id#1',
-    line: '/** `tool_use_id` where available, else derived from the opening raw event. */',
-    why: 'doc comment on Span.id. REASON REWRITTEN A SECOND TIME BY TASK 5.1 — 4.5 rewrote it once already, and 5.1 deleted `Message`, so the sentence naming three surviving types became false again while the ordinal still bound and nothing went red. That is exactly the rot this list\'s stale check cannot catch. What is true now: `Span` and `Trace` survive because seven UI files still import them, `Message` is gone with the six other unconstructed plan-001 types, nothing reads the field, and Task 5.2 deletes `Span`/`Trace` with the tree that renders them',
-  },
+  // `shared/entities.ts#tool_use_id#1` WAS HERE, AND ITS THIRD REWRITE WAS ITS
+  // DELETION. The entry exempted the doc comment on `Span.id`, and Task 5.2
+  // deleted `Span` with the tree that rendered it — so the line the suppression
+  // stored no longer exists, the stale check reds on a rewrite, and removing the
+  // entry is the only edit that is true. `src/shared/entities.ts` now holds two
+  // string unions and names no harness field at all.
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#1',
     line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',

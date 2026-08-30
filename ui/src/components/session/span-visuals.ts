@@ -49,7 +49,19 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import type { SpanStatus, SpanType } from '@shared/entities.ts';
+import type { EventKind, EventStatus } from '@/lib/turn-tree';
+
+/**
+ * The manifest's own five visual keys — the vocabulary of the SPAN-TYPE PALETTE,
+ * not of `events.kind`.
+ *
+ * `design-system.md:78-83` ships six span-type tokens; one is the turn header's,
+ * so five remain, and the palette is what this union names. `events.kind` has
+ * SEVEN values and is a different vocabulary — {@link VISUAL_OF_KIND} is the map
+ * between them. Merging the two would orphan `subagent` (no event kind is a
+ * sub-agent; a sub-agent is a folded TURN) and crush four kinds onto `generic`.
+ */
+export type SpanTypeKey = 'llm_call' | 'tool_call' | 'thinking' | 'subagent' | 'generic';
 
 export interface SpanTypeVisual {
   /** The icon's tint, straight off the spec's span-type palette. */
@@ -74,17 +86,21 @@ export interface SpanStatusVisual {
 }
 
 export interface SpanVisualManifest {
-  readonly type: Record<SpanType, SpanTypeVisual>;
-  readonly status: Record<SpanStatus, SpanStatusVisual>;
-  /** The turn header's own icon, which is not a `SpanType`. */
+  readonly type: Record<SpanTypeKey, SpanTypeVisual>;
+  readonly status: Record<EventStatus, SpanStatusVisual>;
+  /** The turn header's own icon, which is not a `SpanTypeKey`. */
   readonly trace: SpanTypeVisual;
   /**
-   * The neutral badge a turn with a non-prompt trigger carries. Informational
+   * The neutral badge a turn whose kind is not `human` carries. Informational
    * rather than degraded, so it is the metric-chip atom's muted spelling.
    */
   readonly triggerBadge: string;
-  /** The warning-toned chip naming a degradation tag on a span. */
-  readonly degradedChip: string;
+  /**
+   * The same neutral atom, for the input and output previews an event row
+   * carries on its second line. `design-system.md:143` spells it once and both
+   * consumers use that spelling; nothing new is invented here.
+   */
+  readonly payloadChip: string;
   /**
    * The error count beside a header's chips.
    *
@@ -96,19 +112,6 @@ export interface SpanVisualManifest {
    */
   readonly errorChip: string;
 }
-
-/**
- * The degradation tags the normalizer writes.
- *
- * Stated as a closed list rather than "any tag": `seeded` is a tag too, and a
- * warning chip on every seeded span would be a warning about nothing.
- */
-export const DEGRADED_TAGS: readonly string[] = [
-  'degraded',
-  'transcript_only',
-  'synthetic_open',
-  'unattributed',
-];
 
 export const SPAN_VISUALS = {
   type: {
@@ -135,16 +138,25 @@ export const SPAN_VISUALS = {
   },
   trace: { tint: 'text-span-turn', Icon: MessageSquare, label: 'turn' },
   triggerBadge: 'rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-muted',
-  degradedChip: 'rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-warning',
+  payloadChip: 'rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-muted',
   errorChip: 'font-mono text-2xs text-error',
 } as const satisfies SpanVisualManifest;
 
 /**
- * Which degradation tags a span carries, in the manifest's own order.
+ * The visual an `events.kind` draws with — seven kinds onto five palette keys.
  *
- * Order taken from {@link DEGRADED_TAGS} rather than from `Span.tags` so two
- * spans degraded the same way never draw their chips in different orders.
+ * A map rather than a rekeying of {@link SPAN_VISUALS}, and the reason is the
+ * palette: `subagent` belongs to a folded TURN and no event kind is one, while
+ * four of the seven kinds are honestly generic. Rekeying would orphan one token
+ * and crowd another, and this map is the shape the plan-001 adapter already had
+ * — only its home changed.
  */
-export function degradedTagsOf(tags: readonly string[]): string[] {
-  return DEGRADED_TAGS.filter((tag) => tags.includes(tag));
-}
+export const VISUAL_OF_KIND: Record<EventKind, SpanTypeVisual> = {
+  tool_call: SPAN_VISUALS.type.tool_call,
+  thinking: SPAN_VISUALS.type.thinking,
+  text: SPAN_VISUALS.type.llm_call,
+  prompt: SPAN_VISUALS.type.generic,
+  error: SPAN_VISUALS.type.generic,
+  compaction: SPAN_VISUALS.type.generic,
+  unknown: SPAN_VISUALS.type.generic,
+};

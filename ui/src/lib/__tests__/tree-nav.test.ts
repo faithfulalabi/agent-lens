@@ -1,32 +1,39 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 
-import { buildTreeModel, flatten, type Row, type TreeModel } from '../span-tree';
+import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree';
 import { initialNavState, navReducer, type NavState } from '../tree-nav';
-import { makeSpan, makeSpanTree, makeTrace, type SpanTreeSpec } from './fixtures';
+import { makeTurnRow, makeTurnTree, type TurnTreeSpec } from './fixtures';
 
 /*
  * Tests 6 and 7 of Task 5.3a — the keyboard matrix, and the property that
  * makes AC2 true rather than merely asserted.
  *
+ * ★ THE REDUCER ITSELF IS UNTOUCHED BY TASK 5.2. Only its fixtures moved: the
+ * span forest became a turn tree, so the shape below is now one turn owning two
+ * events, with two `task_notification` turns folded under the second of them.
+ * It flattens to the same nine rows at the same five depths the span fixture
+ * did, which is the point — the reducer indexes rows and knows nothing else.
+ *
  * `fast-check` resolves from the root devDependencies by node walk-up; the
  * same import already works in route-match.test.ts.
  */
 
-const TRACE = makeTrace({ id: 'seed-s0:1' });
-
-const SHAPE: SpanTreeSpec[] = [
+const SHAPE: TurnTreeSpec[] = [
   {
-    id: 'a',
-    children: [{ id: 'a1', children: [{ id: 'a1a' }, { id: 'a1b' }] }, { id: 'a2' }],
+    id: 'seed-s0:1',
+    seq: 1,
+    events: [{ name: 'a' }, { name: 'b' }],
+    folded: [
+      { id: 'f1', seq: 2, events: [{ name: 'c' }, { name: 'd' }] },
+      { id: 'f2', seq: 3, events: [{ name: 'e' }, { name: 'f' }] },
+    ],
   },
-  { id: 'b', children: [{ id: 'b1' }] },
-  { id: 'c' },
 ];
 
-function modelOf(specs: SpanTreeSpec[] = SHAPE): TreeModel {
-  const spans = makeSpanTree(specs);
-  return buildTreeModel([TRACE], new Map([[TRACE.id, spans]]));
+function modelOf(specs: TurnTreeSpec[] = SHAPE): TreeModel {
+  const tree = makeTurnTree(specs);
+  return buildTurnGroups(tree.turns, tree.eventsByTurn);
 }
 
 const MODEL = modelOf();
@@ -56,10 +63,28 @@ function openState(model: TreeModel = MODEL): NavState {
 /* --------------------------------------------------------------- Test 6 --- */
 
 describe('the keyboard matrix moves focus over the flattened rows', () => {
-  const ROWS = ['seed-s0:1', 'a', 'a1', 'a1a', 'a1b', 'a2', 'b', 'b1', 'c'];
+  const ROWS = [
+    'seed-s0:1',
+    'seed-s0:1-ev-0',
+    'seed-s0:1-ev-1',
+    'f1',
+    'f1-ev-0',
+    'f1-ev-1',
+    'f2',
+    'f2-ev-0',
+    'f2-ev-1',
+  ];
 
   it('flattens the fixture to the row list the rest of this file assumes', () => {
     expect(rowsFor(openState()).map((row) => row.id)).toEqual(ROWS);
+  });
+
+  it('nests the two folded turns under the event that spawned them', () => {
+    // Not decoration: the reducer's parent walk is "the nearest row above at a
+    // shallower depth", so a flat fixture would make Escape and ArrowLeft pass
+    // for the wrong reason.
+    const depths = new Map(rowsFor(openState()).map((row) => [row.id, row.depth]));
+    expect([...depths.values()]).toEqual([0, 1, 1, 2, 3, 3, 2, 3, 3]);
   });
 
   it('starts with focus at the top and nothing selected', () => {
@@ -94,7 +119,7 @@ describe('the keyboard matrix moves focus over the flattened rows', () => {
 
   it('jumps to the first and last row with Home and End', () => {
     const atEnd = press(openState(), 'End');
-    expect(focusedId(atEnd)).toBe('c');
+    expect(focusedId(atEnd)).toBe('f2-ev-1');
     expect(focusedId(press(atEnd, 'Home'))).toBe('seed-s0:1');
   });
 
@@ -108,50 +133,50 @@ describe('the keyboard matrix moves focus over the flattened rows', () => {
     expect(opened.focusedIndex, 'opening a row must not also move focus').toBe(0);
 
     const descended = press(opened, 'ArrowRight');
-    expect(focusedId(descended)).toBe('a');
+    expect(focusedId(descended)).toBe('seed-s0:1-ev-0');
   });
 
   it('does nothing on ArrowRight at a leaf', () => {
-    const atLeaf = pressAll(openState(), ['j', 'j', 'j']);
-    expect(focusedId(atLeaf)).toBe('a1a');
+    const atLeaf = pressAll(openState(), ['j', 'j', 'j', 'j']);
+    expect(focusedId(atLeaf)).toBe('f1-ev-0');
     expect(press(atLeaf, 'ArrowRight')).toBe(atLeaf);
   });
 
   it('closes an open row with ArrowLeft, then ascends from the closed one', () => {
-    const atA1 = pressAll(openState(), ['j', 'j']);
-    expect(focusedId(atA1)).toBe('a1');
+    const atF1 = pressAll(openState(), ['j', 'j', 'j']);
+    expect(focusedId(atF1)).toBe('f1');
 
-    const closed = press(atA1, 'ArrowLeft');
-    expect(closed.expandedIds.has('a1')).toBe(false);
-    expect(focusedId(closed), 'closing a row must leave focus on it').toBe('a1');
+    const closed = press(atF1, 'ArrowLeft');
+    expect(closed.expandedIds.has('f1')).toBe(false);
+    expect(focusedId(closed), 'closing a row must leave focus on it').toBe('f1');
     expect(rowsFor(closed).map((row) => row.id)).toEqual([
       'seed-s0:1',
-      'a',
-      'a1',
-      'a2',
-      'b',
-      'b1',
-      'c',
+      'seed-s0:1-ev-0',
+      'seed-s0:1-ev-1',
+      'f1',
+      'f2',
+      'f2-ev-0',
+      'f2-ev-1',
     ]);
 
-    expect(focusedId(press(closed, 'ArrowLeft'))).toBe('a');
+    expect(focusedId(press(closed, 'ArrowLeft'))).toBe('seed-s0:1-ev-1');
   });
 
   it('sets the selection from focus on Enter, never from anywhere else', () => {
-    const atA1a = pressAll(openState(), ['j', 'j', 'j']);
-    const selected = press(atA1a, 'Enter');
-    expect(selected.selectedId).toBe('a1a');
-    expect(selected.focusedIndex).toBe(atA1a.focusedIndex);
+    const atLeaf = pressAll(openState(), ['j', 'j', 'j', 'j']);
+    const selected = press(atLeaf, 'Enter');
+    expect(selected.selectedId).toBe('f1-ev-0');
+    expect(selected.focusedIndex).toBe(atLeaf.focusedIndex);
   });
 
   it('moves focus to the parent on Escape and leaves the selection alone', () => {
-    const selected = pressAll(openState(), ['j', 'j', 'j', 'Enter']);
+    const selected = pressAll(openState(), ['j', 'j', 'j', 'j', 'Enter']);
     const up = press(selected, 'Escape');
-    expect(focusedId(up)).toBe('a1');
-    expect(up.selectedId, 'Escape must not close Task 5.4 s detail pane').toBe('a1a');
+    expect(focusedId(up)).toBe('f1');
+    expect(up.selectedId, 'Escape must not close Task 5.3 s detail pane').toBe('f1-ev-0');
 
     // …and keeps walking up, one level per press.
-    expect(focusedId(press(up, 'Escape'))).toBe('a');
+    expect(focusedId(press(up, 'Escape'))).toBe('seed-s0:1-ev-1');
     expect(focusedId(pressAll(up, ['Escape', 'Escape']))).toBe('seed-s0:1');
   });
 
@@ -161,7 +186,7 @@ describe('the keyboard matrix moves focus over the flattened rows', () => {
   });
 
   it('survives an empty row list', () => {
-    const empty = buildTreeModel([], new Map());
+    const empty = buildTurnGroups([], new Map());
     const state = initialNavState();
     for (const key of ['j', 'k', 'Home', 'End', 'Enter', 'Escape', 'ArrowLeft', 'ArrowRight']) {
       expect(press(state, key, empty)).toEqual(state);
@@ -176,35 +201,35 @@ describe('selection and focus are independent, and both stay legal', () => {
     const before = rowsFor(openState()).map((row) => row.id);
 
     // Select a deep descendant, then walk up and close its ancestor.
-    const selected = pressAll(openState(), ['j', 'j', 'j', 'Enter']);
-    expect(selected.selectedId).toBe('a1a');
+    const selected = pressAll(openState(), ['j', 'j', 'j', 'j', 'Enter']);
+    expect(selected.selectedId).toBe('f1-ev-0');
 
     const closed = pressAll(selected, ['Escape', 'ArrowLeft']);
-    expect(closed.selectedId, 'a collapse must never clear the selection').toBe('a1a');
-    expect(rowsFor(closed).map((row) => row.id)).not.toContain('a1a');
-    expect(focusedId(closed), 'focus belongs on the nearest ancestor still on screen').toBe('a1');
+    expect(closed.selectedId, 'a collapse must never clear the selection').toBe('f1-ev-0');
+    expect(rowsFor(closed).map((row) => row.id)).not.toContain('f1-ev-0');
+    expect(focusedId(closed), 'focus belongs on the nearest ancestor still on screen').toBe('f1');
 
     const reopened = press(closed, 'ArrowRight');
     expect(rowsFor(reopened).map((row) => row.id)).toEqual(before);
-    expect(reopened.selectedId, 'the round trip must restore the selection too').toBe('a1a');
+    expect(reopened.selectedId, 'the round trip must restore the selection too').toBe('f1-ev-0');
   });
 
   it('leaves focus alone when the model only grows', () => {
-    // Task 6.2's live append: new spans arrive below, the reader stays put.
+    // Task 6.2's live append: new events arrive below, the reader stays put.
     const state = pressAll(openState(), ['j', 'j', 'Enter']);
-    const grown = modelOf([...SHAPE, { id: 'd' }]);
+    const grown = modelOf([...SHAPE, { id: 'later', seq: 4, events: [{ name: 'g' }] }]);
     const next = navReducer(state, {
       type: 'rows-changed',
       rows: flatten(grown, state.expandedIds),
       modelIds: grown.rowIds,
     });
     expect(next.focusedIndex).toBe(state.focusedIndex);
-    expect(next.selectedId).toBe('a1');
+    expect(next.selectedId).toBe('seed-s0:1-ev-1');
   });
 
   it('pulls focus back into range when the model shrinks', () => {
     const state = pressAll(openState(), ['End']);
-    const shrunk = modelOf([{ id: 'a' }]);
+    const shrunk = modelOf([{ id: 'seed-s0:1', seq: 1, events: [{ name: 'a' }] }]);
     const next = navReducer(state, {
       type: 'rows-changed',
       rows: flatten(shrunk, state.expandedIds),
@@ -214,16 +239,16 @@ describe('selection and focus are independent, and both stay legal', () => {
   });
 
   it('resets a selection the new model no longer holds', () => {
-    const state = pressAll(openState(), ['j', 'j', 'j', 'Enter']);
-    expect(state.selectedId).toBe('a1a');
-    const swapped = modelOf([{ id: 'z' }]);
+    const state = pressAll(openState(), ['j', 'j', 'j', 'j', 'Enter']);
+    expect(state.selectedId).toBe('f1-ev-0');
+    const swapped = modelOf([{ id: 'z', seq: 9, events: [{ name: 'z' }] }]);
     const next = navReducer(state, {
       type: 'rows-changed',
       rows: flatten(swapped, state.expandedIds),
       modelIds: swapped.rowIds,
     });
     // Mutation check, verified by hand: keeping the id here leaves a dangling
-    // selection that Task 5.4 would open a detail pane for.
+    // selection that Task 5.3 would open a detail pane for.
     expect(next.selectedId).toBeUndefined();
   });
 
@@ -240,11 +265,18 @@ describe('selection and focus are independent, and both stay legal', () => {
       'Home',
       'End',
     ];
-    const SWAPS: SpanTreeSpec[][] = [
+    const SWAPS: TurnTreeSpec[][] = [
       SHAPE,
-      [...SHAPE, { id: 'd', children: [{ id: 'd1' }] }],
-      [{ id: 'a', children: [{ id: 'a1' }] }],
-      [{ id: 'z' }],
+      [...SHAPE, { id: 'later', seq: 4, events: [{ name: 'g' }] }],
+      [
+        {
+          id: 'seed-s0:1',
+          seq: 1,
+          events: [{ name: 'a' }],
+          folded: [{ id: 'f1', seq: 2, events: [{ name: 'c' }] }],
+        },
+      ],
+      [{ id: 'z', seq: 9, events: [{ name: 'z' }] }],
     ];
 
     const step = fc.oneof(
@@ -291,16 +323,18 @@ describe('selection and focus are independent, and both stay legal', () => {
     // The mutation this rules out is subtle: re-anchoring on collapse looks
     // right on screen and quietly breaks the round trip above, because the
     // selection that comes back is not the one that went away.
-    const selected = pressAll(openState(), ['j', 'j', 'j', 'Enter']);
+    const selected = pressAll(openState(), ['j', 'j', 'j', 'j', 'Enter']);
     const closedTurn = pressAll(selected, ['Home', 'ArrowLeft']);
     expect(rowsFor(closedTurn)).toHaveLength(1);
-    expect(closedTurn.selectedId).toBe('a1a');
+    expect(closedTurn.selectedId).toBe('f1-ev-0');
   });
 
-  it('selects a turn row itself, before any span beneath it is opened', () => {
-    const model = buildTreeModel([TRACE], new Map([[TRACE.id, [makeSpan({ id: 'sp-1' })]]]));
+  it('selects a turn row itself, before any event beneath it is opened', () => {
+    const turn = makeTurnRow({ id: 'seed-s0:1' });
+    const tree = makeTurnTree([{ id: turn.id, seq: turn.seq, events: [{ name: 'a' }] }]);
+    const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
     const state = press(initialNavState(), 'Enter', model);
-    expect(state.selectedId).toBe(TRACE.id);
-    expect(model.rowIds.has(TRACE.id)).toBe(true);
+    expect(state.selectedId).toBe(turn.id);
+    expect(model.rowIds.has(turn.id)).toBe(true);
   });
 });

@@ -10,7 +10,7 @@ export const MIN_SHOT_BYTES = 20_000;
 /** How many row labels `report.json` carries. Bounded by the virtual window too. */
 export const MAX_LABELS = 25;
 
-/** The two strings `SessionView`'s detail pane renders until task 4.5 fills it. */
+/** The two strings `SessionView`'s detail pane renders until task 5.3 fills it. */
 const PLACEHOLDER_DETAIL = /^Select a span to see its detail\.$|arrives with the detail pane\.$/;
 
 /** One machine-decidable check. `actual`/`expected` are for the human reading it. */
@@ -41,6 +41,25 @@ export interface ShotRecord {
   bytes: number;
 }
 
+/**
+ * The AC-R1 payload cross-check: did a rendered `tool_call` row actually carry
+ * its input and its output, as fetched from the wire?
+ *
+ * `null` on `Observations.toolCallInline` means NO qualifying row was inside the
+ * virtual window — an observation, never a pass. The corpus decides whether the
+ * check has anything to look at, so a green tick there would be a claim about
+ * the archive rather than about the screen.
+ */
+export interface ToolCallProbe {
+  eventId: string;
+  /** Whitespace-normalised prefix of the wire `input` that was looked for. */
+  inputPrefix: string;
+  /** The same, for the wire `text` — the tool's output. */
+  outputPrefix: string;
+  inputMatched: boolean;
+  outputMatched: boolean;
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -51,6 +70,12 @@ export interface Observations {
   /** `data-slot="back-to-sessions"` anchors on the open session screen. */
   backLinks: number;
   spanRowCount: number;
+  /** `data-slot="trace-group"` headers in the window — turn groups at any depth. */
+  turnGroupCount: number;
+  /** Responses whose path is `/api/sessions/:id`. StrictMode doubles REQUESTS. */
+  detailResponses: number;
+  /** `null` when no rendered tool_call row carried both halves. See the type. */
+  toolCallInline: ToolCallProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -85,6 +110,8 @@ export interface RenderGateReport {
   windowLastIndex: number | null;
   renderedRows: number | null;
   totalRows: number | null;
+  turnGroupCount: number | null;
+  detailResponses: number | null;
   detail: DetailTexts | null;
   shots: ShotRecord[];
   consoleErrors: string[];
@@ -158,7 +185,7 @@ export function buildReport(input: BuildReportInput): RenderGateReport {
 
   if (result !== null) assertions.push(...driveAssertions(result));
 
-  const warnings = result === null ? [] : placeholderWarnings(result.detail);
+  const warnings = result === null ? [] : driveWarnings(result);
 
   return {
     task,
@@ -172,6 +199,8 @@ export function buildReport(input: BuildReportInput): RenderGateReport {
     windowLastIndex: result?.windowLastIndex ?? null,
     renderedRows: result?.renderedRows ?? null,
     totalRows: result?.totalRows ?? null,
+    turnGroupCount: result?.turnGroupCount ?? null,
+    detailResponses: result?.detailResponses ?? null,
     detail: result?.detail ?? null,
     shots: [...(result?.shots ?? [])],
     consoleErrors: [...(result?.consoleErrors ?? [])],
@@ -202,6 +231,26 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       actual: String(result.spanRowCount),
       expected: '>= 1',
     },
+    {
+      // AC2's group-by, seen from the browser. Counted at ANY depth: a
+      // `task_notification` turn folds under the Agent event that spawned it,
+      // so a depth-0 count is arithmetically wrong on a folded session.
+      name: 'turn-groups',
+      ok: result.turnGroupCount >= 1,
+      actual: String(result.turnGroupCount),
+      expected: '>= 1',
+    },
+    {
+      // AC1: one request fills the screen. RESPONSES, not requests —
+      // `main.tsx` wraps the app in StrictMode, so the effect double-invokes
+      // and the first fetch is aborted after it is issued. Two requests always
+      // reach the wire; exactly one response comes back and fills the screen.
+      name: 'session-detail-responses',
+      ok: result.detailResponses === 1,
+      actual: `${result.detailResponses} response(s)`,
+      expected: 'exactly one GET /api/sessions/:id response',
+    },
+    ...toolCallAssertions(result.toolCallInline),
     {
       name: 'console-errors',
       ok: result.consoleErrors.length === 0,
@@ -241,16 +290,52 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
 }
 
 /**
- * The pane still shows 4.5's placeholder. The transition assertions above hold
- * either way, so this is context for the visual sign-off, never a failure.
+ * The payload cross-check, asserted ONLY when the window held something to
+ * check. An absent row is a fact about the corpus, so it is reported as a
+ * warning instead — the same shape task 5.1 gave `range-straddle: none in
+ * corpus`, and for the same reason: a check that cannot fail is not a pass.
  */
-function placeholderWarnings(detail: DetailTexts): string[] {
-  const stale = (['t0', 't1', 't2'] as const).filter((key) => PLACEHOLDER_DETAIL.test(detail[key]));
-  if (stale.length === 0) return [];
+function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
+  if (probe === null) return [];
   return [
-    `detail pane still renders the pre-4.5 placeholder at ${stale.join(', ')} — ` +
-      'the transitions are real, the content is not',
+    {
+      name: 'tool-call-inline',
+      ok: probe.inputMatched && probe.outputMatched,
+      actual:
+        `${probe.eventId}: input ${probe.inputMatched ? 'found' : 'MISSING'} ` +
+        `(${quote(probe.inputPrefix)}), output ${probe.outputMatched ? 'found' : 'MISSING'} ` +
+        `(${quote(probe.outputPrefix)})`,
+      expected: 'the rendered row text contains a prefix of both its input and its output',
+    },
   ];
+}
+
+/**
+ * Context for the AC-R2 eye. Never affects `ok`.
+ *
+ * Two independent notes: the detail pane may still render the pre-5.3
+ * placeholder, and the virtual window may have held no `tool_call` row carrying
+ * both halves of its payload.
+ */
+function driveWarnings(result: DriveResult): string[] {
+  const warnings: string[] = [];
+  const stale = (['t0', 't1', 't2'] as const).filter((key) =>
+    PLACEHOLDER_DETAIL.test(result.detail[key]),
+  );
+  if (stale.length > 0) {
+    warnings.push(
+      `detail pane still renders the pre-5.3 placeholder at ${stale.join(', ')} — ` +
+        'the transitions are real, the content is not',
+    );
+  }
+  if (result.toolCallInline === null) {
+    warnings.push(
+      'tool-call-inline: none in window — OBSERVED, NOT ASSERTED. No rendered ' +
+        'tool_call row carried both an input and an output, so the payload ' +
+        'cross-check had nothing to look at on this session.',
+    );
+  }
+  return warnings;
 }
 
 function describeIndex(index: string | null): string {
@@ -304,6 +389,8 @@ export function renderContactSheet(report: RenderGateReport): string {
     '<h2>Detail pane</h2>',
     detailTable(report.detail),
     '<h2>Row labels</h2>',
+    `<p>${report.turnGroupCount === null ? 'unknown' : report.turnGroupCount} turn group(s) ` +
+      `in the window; ${fmt(report.detailResponses)} session-detail response(s).</p>`,
     `<p>${report.labels.length} of up to ${MAX_LABELS}, from the virtualizer's rendered window ` +
       `[${fmt(report.windowFirstIndex)}, ${fmt(report.windowLastIndex)}] ` +
       `of ${fmt(report.totalRows)} total row(s); ${fmt(report.renderedRows)} rendered.</p>`,

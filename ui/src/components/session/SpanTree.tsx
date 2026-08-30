@@ -1,7 +1,7 @@
 import { useRef, type KeyboardEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-import type { Row } from '@/lib/span-tree';
+import type { Row } from '@/lib/turn-tree';
 
 import { TraceGroup } from './TraceGroup';
 import { TreeSpanRow } from './SpanRow';
@@ -13,9 +13,9 @@ import { TreeSpanRow } from './SpanRow';
  * ===========================================================================
  * ONE ROW LIST, ONE VIRTUALIZER, ONE RENDERER.
  * ===========================================================================
- * `rows` is Task 5.3a's single flattened list and it carries turn headers and
- * span rows alike, so this component switches on `row.kind` rather than being
- * wrapped once per turn. A virtualizer per turn would give a ten-turn session
+ * `rows` is `turn-tree.ts`'s single flattened list and it carries turn headers
+ * and event rows alike, so this component switches on `row.kind` rather than
+ * being wrapped once per turn. A virtualizer per turn would give a ten-turn session
  * ten independent scroll areas, and "5,000 spans in one window" would quietly
  * become "500 spans in ten windows" — with the keyboard indexing one list while
  * the scrollbar indexed another.
@@ -52,7 +52,11 @@ import { TreeSpanRow } from './SpanRow';
  * lost by using the browser's own.
  */
 
-/** Row height before measurement. The span row's own height, in pixels. */
+/**
+ * Row height before measurement, in pixels — an ESTIMATE, never a commitment.
+ * An event row carrying an input or an output preview is taller, and
+ * `measureElement` below corrects every rendered row against the real DOM.
+ */
 const ESTIMATED_ROW_PX = 28;
 
 /** Rows rendered beyond the viewport, so a fast scroll does not show gaps. */
@@ -64,7 +68,6 @@ export interface SpanTreeProps {
   selectedId?: string | undefined;
   /** An index into `rows`, so the focused row is on screen by construction. */
   focusedIndex: number;
-  now: number | Date;
   /**
    * The viewport to assume before one has been measured. See the header — this
    * is the difference between a static render emitting rows and emitting none.
@@ -81,7 +84,6 @@ export function SpanTree({
   rows,
   selectedId,
   focusedIndex,
-  now,
   initialRect,
   estimateSize = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
@@ -131,7 +133,7 @@ export function SpanTree({
               className="absolute left-0 w-full"
               style={{ top: item.start }}
             >
-              {row.kind === 'trace' ? (
+              {row.kind === 'turn' ? (
                 <TraceGroup
                   row={row}
                   selected={row.id === selectedId}
@@ -144,7 +146,6 @@ export function SpanTree({
                   row={row}
                   selected={row.id === selectedId}
                   focused={item.index === focusedIndex}
-                  now={now}
                   {...(onSelect === undefined ? {} : { onSelect })}
                   {...(onToggle === undefined ? {} : { onToggle })}
                 />
