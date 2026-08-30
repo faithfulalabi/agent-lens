@@ -65,7 +65,7 @@ export interface SessionsProps {
 export function Sessions({ router = defaultRouter(), api }: SessionsProps = {}) {
   const [range, setRange] = useState<TimeRange>('3d');
   const [project, setProject] = useState<string | undefined>(undefined);
-  const [sort, setSort] = useState<SortColumn>('started_at');
+  const [sort, setSort] = useState<SortColumn>('last_activity_at');
   const [direction, setDirection] = useState<SortDirection>('desc');
   const [cursor, setCursor] = useState(-1);
 

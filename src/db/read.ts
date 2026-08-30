@@ -118,6 +118,8 @@ export interface TurnRow {
   id: string;
   seq: number;
   kind: string;
+  /** The `Agent` call a `task_notification` turn answers, else null. */
+  parent_event_id: string | null;
   title: string;
   started_at: string;
   ended_at: string | null;
@@ -428,7 +430,7 @@ export function readSessionHeader(db: DatabaseSync, id: string): SessionDetailHe
 
 // --- Turns -----------------------------------------------------------------
 
-const TURN_COLUMNS = `id, seq, kind, title, started_at, ended_at, duration_ms, duration_source,
+const TURN_COLUMNS = `id, seq, kind, parent_event_id, title, started_at, ended_at, duration_ms, duration_source,
      tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, est_cost,
      tool_call_count, error_count, first_seq, last_seq`;
 

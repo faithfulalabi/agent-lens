@@ -3,7 +3,7 @@
 // Vite/tsc strip these type-only imports at build time — no Node builtins leak
 // into the browser bundle. This file emits no runtime code.
 
-import type { Span, Trace, Session, Message } from '@shared/entities.ts';
+import type { Span, Trace, Session } from '@shared/entities.ts';
 
 // Force the compiler to resolve and structurally check each imported type.
 // If the alias broke or a field were removed, `tsc --noEmit` would fail here.
@@ -20,11 +20,4 @@ type _AssertTrace = Trace['id'] extends string ? true : never;
 type _AssertSession = Session['capture_mode'] extends 'full' | 'transcript_only'
   ? true
   : never;
-type _AssertMessage = Message['role'] extends string ? true : never;
-
-export type SharedTypesResolve = [
-  _AssertSpan,
-  _AssertTrace,
-  _AssertSession,
-  _AssertMessage,
-];
+export type SharedTypesResolve = [_AssertSpan, _AssertTrace, _AssertSession];

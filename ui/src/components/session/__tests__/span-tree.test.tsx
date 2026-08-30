@@ -24,6 +24,7 @@ import {
   makeTrace,
   rowsForSpans,
 } from '../../../lib/__tests__/fixtures';
+import { hrefFor } from '../../../lib/route-match';
 import { SpanTree } from '../SpanTree';
 import { TreeSpanRow } from '../SpanRow';
 import { TraceGroup } from '../TraceGroup';
@@ -708,6 +709,23 @@ describe('chips are read off the server’s rollups, never resummed (AC4-render)
     expect(markup).toContain('7 turns');
     expect(markup).toContain('5m 0s');
     expect(markup).toContain(session.project_path);
+  });
+
+  it('a session header offers a way back to the list (AC3, Test 9)', () => {
+    /*
+     * ★ Task 5.1. Before it there was no return control on this screen at all —
+     * a reader who opened a session by deep link had the browser's back button
+     * and nothing else. A real anchor rather than a history call: `history.back()`
+     * on a fresh tab leaves agent-lens entirely.
+     */
+    const markup = renderToStaticMarkup(<SessionHeader session={makeSession()} now={NOW} />);
+
+    expect(markup).toContain('data-slot="back-to-sessions"');
+    expect(markup).toContain(`href="${hrefFor({ name: 'sessions' })}"`);
+    expect(hrefFor({ name: 'sessions' }), 'the list lives at the root').toBe('/');
+    // Icon-only would be unannounceable; the accessibility baseline asks for a
+    // label on every control that is not its own text.
+    expect(markup).toContain('aria-label="Back to sessions"');
   });
 
   it('a session with no errors renders no error chip', () => {

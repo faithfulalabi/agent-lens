@@ -333,6 +333,8 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
     expect(turnAt(result, 4).error_count).toBe(0);
     expect(turnAt(result, 5).error_count).toBe(1);
 
+    // This fixture's notification names no call, so nothing here can fold. The
+    // positive limb is in the `parent_event_id` describe below.
     for (const turn of result.turns) expect(turn.parent_event_id).toBeUndefined();
     for (const event of result.events) expect(event.attrs).toBe('{}');
   });
@@ -369,6 +371,54 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
     expect(types).toEqual(new Set(['system', 'user', 'assistant']));
     const compaction = result.events.find((event) => event.kind === 'compaction');
     expect(compaction?.raw_subtype).toBe('compact_boundary');
+  });
+});
+
+describe('Task 5.1 — turns.parent_event_id names the Agent call a machinery turn answers', () => {
+  it('stamps the Agent call, across turns', () => {
+    // `toolu_marker` is called in turn 0 and answered in turn 4, which is the
+    // whole reason the index is built over the finished event array rather than
+    // during emission.
+    const result = project('async-agent.jsonl');
+
+    expect(turnAt(result, 4)).toMatchObject({
+      kind: 'task_notification',
+      parent_event_id: 'toolu_marker',
+    });
+    expect(turnAt(result, 5).parent_event_id).toBe('toolu_structured');
+
+    // Non-vacuity: the id is a real event on the same projection.
+    const call = result.events.find((event) => event.id === 'toolu_marker');
+    expect(call?.name).toBe('Agent');
+
+    // And nothing else is stamped.
+    const stamped = result.turns.filter((turn) => turn.parent_event_id !== undefined);
+    expect(stamped.map((turn) => turn.seq)).toEqual([4, 5]);
+  });
+
+  it('leaves a notification that names a Bash call unstamped', () => {
+    // `tools.ts` rule 3: a notification is not Agent-exclusive, and folding a
+    // `Bash` away would hide real output.
+    const result = project('notification-non-agent.jsonl');
+    const turn = turnAt(result, 1);
+
+    expect(turn.kind).toBe('task_notification');
+    expect(turn.parent_event_id).toBeUndefined();
+    // Non-vacuity: the call it names IS on the projection, under another name.
+    expect(result.events.find((event) => event.id === 'toolu_bash')?.name).toBe('Bash');
+  });
+
+  it('leaves a notification that names no call unstamped', () => {
+    const result = project('turn-kinds.jsonl');
+    const turn = turnAt(result, 2);
+
+    expect(turn.kind).toBe('task_notification');
+    expect(turn.parent_event_id).toBeUndefined();
+  });
+
+  it('stamps an Agent call whose only answer is the notification', () => {
+    const result = project('notification-no-result.jsonl');
+    expect(turnAt(result, 1).parent_event_id).toBe('toolu_noresult');
   });
 });
 

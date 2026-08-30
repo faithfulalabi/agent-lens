@@ -79,6 +79,8 @@ const TURN_ROW_KEYS = [
   'id',
   'seq',
   'kind',
+  // Task 5.1: the Agent call a task_notification turn answers.
+  'parent_event_id',
   'title',
   'started_at',
   'ended_at',

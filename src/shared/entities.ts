@@ -1,6 +1,13 @@
 // Type-only entity definitions mirroring `spec/data-model.md` §Entities verbatim.
 // Type-only (interfaces + string-literal unions) so importing from the browser
 // (ui/) costs nothing at runtime and leaks no Node builtins into the bundle.
+//
+// SEVEN TYPES WENT IN TASK 5.1: Payload, MessageRole, Message, RawEventSource,
+// RawEventStatus, RawEvent and TailerOffset. Nothing constructed any of them
+// after the v2 cutover — the hook path, the payload store and the tailer
+// offsets all went with plan 001 — and the last importer was one compile-only
+// assertion. `Span` and `Trace` STAY: seven UI files still import them, and
+// Task 5.2 deletes them with the tree that renders them.
 
 /** Session lifecycle status (data-model §Session). */
 export type SessionStatus = 'live' | 'complete' | 'interrupted';
@@ -102,60 +109,4 @@ export interface Span {
   tags: string[];
   /** harness-specific overflow (JSON object). */
   attrs: Record<string, unknown>;
-}
-
-/** Content-addressed blob store (data-model §Payload). */
-export interface Payload {
-  /** `sha256(content)` */
-  id: string;
-  content: Uint8Array;
-  byte_size: number;
-  mime_hint?: string;
-}
-
-/** Message role in the thread-view projection (data-model §Message). */
-export type MessageRole =
-  | 'system'
-  | 'user'
-  | 'assistant'
-  | 'tool_use'
-  | 'tool_result'
-  | 'thinking';
-
-/** Materialized thread-view projection row, rebuildable from raw. */
-export interface Message {
-  id: string;
-  trace_id: string;
-  span_id?: string;
-  seq: number;
-  role: MessageRole;
-  payload_id: string;
-}
-
-/** Where a raw event originated (data-model §RawEvent). */
-export type RawEventSource = 'hook' | 'transcript' | 'backfill' | 'spool_replay';
-
-/** Processing outcome for an archived envelope (data-model §RawEvent). */
-export type RawEventStatus = 'processed' | 'degraded' | 'dead_letter';
-
-/** Every envelope that ever arrived, verbatim — the archive + dead-letter queue. */
-export interface RawEvent {
-  /** the envelope `event_id` (idempotency key). */
-  id: string;
-  session_id: string;
-  source: RawEventSource;
-  hook_name?: string;
-  received_at: string;
-  status: RawEventStatus;
-  error?: string;
-  raw: Uint8Array;
-}
-
-/** Tailer resume point per transcript file (data-model §TailerOffset). */
-export interface TailerOffset {
-  transcript_path: string;
-  session_id: string;
-  committed_offset: number;
-  /** inode/size + head-hash fingerprint — detects rotation and in-place rewrites. */
-  file_identity?: string;
 }

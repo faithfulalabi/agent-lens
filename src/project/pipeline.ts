@@ -81,7 +81,10 @@ export interface ProjectedTurn {
   session_id: string;
   seq: number;
   kind: TurnKind;
-  /** Always absent here. Task 5.1 owns folding machinery under its Agent call. */
+  /**
+   * The `Agent` call this machinery turn answers, or absent. Set only for
+   * `task_notification`, and only when the call it names is an `Agent`.
+   */
   parent_event_id: string | undefined;
   title: string;
   started_at: string;
@@ -354,6 +357,10 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
   const titleOf = new Map<number, string>();
   const toolResults = new Map<string, ToolResult>();
   const notifications: TaskNotification[] = [];
+  // The turn -> call direction. `joinToolCalls` walks events and never needed
+  // it; the fold does, because a turn cannot otherwise reach its own
+  // notification's call id.
+  const calledBy = new Map<number, string>();
   let previewText: string | undefined;
 
   let segment = 0;
@@ -419,7 +426,11 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     // Read off the same string `turnKind` classifies on, so a line is a
     // notification here exactly when it opens a `task_notification` turn there.
     const notification = taskNotification(text);
-    if (notification !== undefined) notifications.push(notification);
+    if (notification !== undefined) {
+      notifications.push(notification);
+      const called = notification.toolCallId;
+      if (called !== undefined && !calledBy.has(segment)) calledBy.set(segment, called);
+    }
 
     if (text === '') continue;
     if (!titleOf.has(segment)) titleOf.set(segment, text);
@@ -537,6 +548,14 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     else own.push(event);
   }
 
+  // A call's `events.id` IS the id its notification names, so one index over the
+  // finished array answers the fold across turns: an `Agent` started in turn 3
+  // and answered in turn 17.
+  const nameOfEvent = new Map<string, string>();
+  for (const event of events) {
+    if (event.name !== undefined) nameOfEvent.set(event.id, event.name);
+  }
+
   const turns: ProjectedTurn[] = [];
   for (const [owner, own] of eventsOf) {
     const seq = turns.length;
@@ -549,18 +568,26 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     const ended_at = stamps.reduce((a, b) => (a > b ? a : b), stamps[0] ?? '');
     const reported = reportedDuration.get(owner);
     const lead = leadOf.get(owner)!;
+    const kind = turnKind(
+      lines[lead]!,
+      humanAt[lead]!,
+      prose(blocksAt[lead]!),
+      compactedSegments.has(owner),
+    );
+
+    // Gated on the name, per `tools.ts` rule 3: a notification names a `Bash` or
+    // a `SendMessage` on 7 of the 161 that resolve, and folding those away would
+    // hide real work. Gated on the kind too, because that is the column's
+    // written contract (`db/schema.ts`).
+    const called = kind === 'task_notification' ? calledBy.get(owner) : undefined;
 
     turns.push({
       id: `${ctx.session_id}:${seq}`,
       session_id: ctx.session_id,
       seq,
-      kind: turnKind(
-        lines[lead]!,
-        humanAt[lead]!,
-        prose(blocksAt[lead]!),
-        compactedSegments.has(owner),
-      ),
-      parent_event_id: undefined,
+      kind,
+      parent_event_id:
+        called !== undefined && nameOfEvent.get(called) === 'Agent' ? called : undefined,
       title: (titleOf.get(owner) ?? '').slice(0, MAX_TITLE_CHARS),
       started_at,
       ended_at,

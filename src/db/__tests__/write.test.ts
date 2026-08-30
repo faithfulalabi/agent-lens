@@ -175,6 +175,38 @@ describe('projectSession is one unit of work (AC1)', () => {
     expect(row.projected_at).not.toBeNull();
   });
 
+  it('stores the fold key a machinery turn was stamped with (Task 5.1)', () => {
+    // The one end-to-end limb of the fold: `pipeline.ts` computes the key,
+    // `write.ts` binds it and `read.ts` selects it. Every earlier fixture leaves
+    // the column null, so without a NON-null value the round trip is untested.
+    const db = cache();
+    const { path } = plant('fold', [
+      humanLine('launch an agent', TS(0)),
+      toolCallLine('toolu_agent', 'Agent', TS(1)),
+      toolResultLine('toolu_agent', 'launched in the background', TS(2)),
+      machineryLine(
+        '<task-notification>\n<tool-use-id>toolu_agent</tool-use-id>\n<status>done</status>',
+        TS(3),
+      ),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    const stored = db
+      .prepare(`SELECT seq, kind, parent_event_id FROM turns WHERE session_id = ? ORDER BY seq`)
+      .all(id) as { seq: number; kind: string; parent_event_id: string | null }[];
+
+    expect(stored.map((turn) => turn.kind)).toEqual(['human', 'task_notification']);
+    expect(stored[0]?.parent_event_id).toBeNull();
+    expect(stored[1]?.parent_event_id).toBe('toolu_agent');
+    // Non-vacuity: the id it stores is a real `Agent` row on the same session.
+    expect(
+      (db.prepare('SELECT name FROM events WHERE id = ?').get('toolu_agent') as { name: string })
+        .name,
+    ).toBe('Agent');
+  });
+
   it('every projected field lands in the column that carries its name', () => {
     // The events insert binds 33 columns POSITIONALLY. A wrong count throws, but
     // a wrong ORDER is silent, so the round trip is asserted rather than read.

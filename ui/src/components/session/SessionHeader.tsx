@@ -1,6 +1,9 @@
+import { ChevronLeft } from 'lucide-react';
+
 import type { Session } from '@shared/entities.ts';
 
 import { cn } from '@/lib/utils';
+import { hrefFor } from '@/lib/route-match';
 import { formatCost, formatDuration, formatTokens } from '@/lib/format';
 
 import { MetricChip } from './MetricChip';
@@ -25,6 +28,15 @@ import { SPAN_VISUALS } from './span-visuals';
  *
  * The clock is a parameter, so a live session's elapsed time is assertable
  * rather than whatever the machine happened to think when the test ran.
+ *
+ * ===========================================================================
+ * THE WAY BACK IS AN ANCHOR, NOT A HISTORY CALL.
+ * ===========================================================================
+ * Task 5.1 added it: before that there was no return control on this screen at
+ * all. `history.back()` would send a reader who arrived by deep link wherever
+ * they were before agent-lens, so the control is a real link at the list's own
+ * href — right on a middle-click, right on a fresh tab, and reachable by the
+ * keyboard for free.
  */
 
 export interface SessionHeaderProps {
@@ -40,6 +52,16 @@ export function SessionHeader({ session, now }: SessionHeaderProps) {
       data-slot="session-header"
       className="flex h-12 items-center gap-3 border-b border-border px-3 text-sm text-foreground"
     >
+      <a
+        href={hrefFor({ name: 'sessions' })}
+        data-slot="back-to-sessions"
+        aria-label="Back to sessions"
+        className="flex shrink-0 items-center gap-1 text-2xs uppercase tracking-widest text-muted transition-colors hover:text-foreground"
+      >
+        <ChevronLeft size={12} aria-hidden="true" />
+        Sessions
+      </a>
+
       <h1 data-slot="session-project" className="min-w-0 flex-1 truncate font-medium">
         {session.project_path}
       </h1>

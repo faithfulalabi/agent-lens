@@ -83,9 +83,16 @@ export async function startDevServer(
   const scope = projects === undefined ? 'all projects' : projects.join(', ');
   // Before `startServer`: the sweep's first tick runs before the socket binds,
   // so a line printed afterwards leaves the user watching a silent hang.
+  //
+  // TWO DIRECTORIES, NAMED SEPARATELY. The measurement walks the transcript
+  // tree; the sweep this line announces reads `<dataDir>/archive` and nothing
+  // else, and nothing here copies one into the other. One sentence naming only
+  // the measured tree read as though the sweep indexed it, which is how an
+  // empty archive looked like a broken product rather than a missing step.
   console.log(
-    `agent-lens dev: indexing the archive for ${files} file(s) / ${mib(bytes)} MiB ` +
-      `under ${transcriptRoot} (${scope})…`,
+    `agent-lens dev: indexing ${join(dataDir, 'archive')} — ` +
+      `${files} file(s) / ${mib(bytes)} MiB of transcripts under ${transcriptRoot} (${scope}) ` +
+      'are what `agent-lens archive` mirrors into it…',
   );
 
   const handle = await startServer({

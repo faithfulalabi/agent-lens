@@ -12,7 +12,7 @@
 //   * An OVERALL DEADLINE. A wait that never settles must produce an exit code,
 //     not a hung AFK run.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Page } from 'playwright-core';
@@ -28,13 +28,14 @@ import {
 } from './report.js';
 
 /**
- * The six `data-slot` values the gate drives. `data-slot` carries no styling
+ * The seven `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  */
 export const SELECTORS = {
   sessionCount: 'session-list-count',
   sessionRow: 'session-row',
+  backToSessions: 'back-to-sessions',
   traceRow: 'trace-group',
   traceExpand: 'trace-expand',
   spanRow: 'span-row',
@@ -119,6 +120,48 @@ export function parseArgv(argv: readonly string[]): { task: string } {
     );
   }
   return { task };
+}
+
+/* ------------------------------------------------------- precondition --- */
+
+/**
+ * The data directory the drive will sweep. Mirrors `startDevServer`'s own
+ * default, because the gate has to check the archive BEFORE booting the server
+ * that would otherwise index nothing and report a product failure.
+ */
+export function devDataDir(): string {
+  return process.env.AGENT_LENS_DEV_DIR ?? join(repoRoot(), '.agent-lens-dev');
+}
+
+/**
+ * Why the gate must not run yet, or `null`.
+ *
+ * ★ AN ENVIRONMENT FAULT MUST NOT READ AS A PRODUCT FAULT. Nothing in the boot
+ * path mirrors the corpus into `<dataDir>/archive`: `startServer` points the
+ * sweep at that directory and `scanCorpus` walks it and nothing else. On a
+ * clean checkout it is empty, the sweep indexes zero files, and `session-count`
+ * fails for a reason that has nothing to do with the UI. So the refusal happens
+ * before the drive, names the command that fixes it, and writes no report
+ * claiming a FAIL.
+ */
+export function archiveRefusal(dataDir: string): string | null {
+  const archive = join(dataDir, 'archive');
+  if (existsSync(archive) && jsonlCount(archive) > 0) return null;
+  return (
+    `render-gate: ${archive} holds no .jsonl transcript, so the sweep would index nothing ` +
+    'and every reading would be empty for an environment reason. ' +
+    'Run `node bin/agent-lens.js archive --dataDir .agent-lens-dev` first.'
+  );
+}
+
+function jsonlCount(root: string): number {
+  try {
+    return readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((name) =>
+      name.endsWith('.jsonl'),
+    ).length;
+  } catch {
+    return 0;
+  }
 }
 
 /* --------------------------------------------------------------- the run --- */
@@ -280,6 +323,10 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
 
   const sessionId = await openFirstSession(page);
 
+  // The way back to the list, counted on the screen that has to offer one.
+  // Absent on `main`, so this reading is red before task 5.1 and green after.
+  const backLinks = await page.locator(slot(SELECTORS.backToSessions)).count();
+
   // T0: the pane before anything is selected. Read BEFORE the expand, so the
   // transition assertions have a real pre-selection baseline.
   const detailPane = page.locator(slot(SELECTORS.spanDetail));
@@ -311,6 +358,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       sessionId,
       sessionCountRaw,
       sessionCount,
+      backLinks,
       spanRowCount,
       detail,
       consoleErrors,
@@ -546,5 +594,13 @@ function printSummary(report: RenderGateReport, outDir: string): void {
 }
 
 if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  process.exitCode = await runRenderGate(parseArgv(process.argv.slice(2)));
+  const options = parseArgv(process.argv.slice(2));
+  const refusal = archiveRefusal(devDataDir());
+  if (refusal === null) {
+    process.exitCode = await runRenderGate(options);
+  } else {
+    // 2, not 1: the gate did not run, so this is not an assertion failing.
+    console.error(refusal);
+    process.exitCode = 2;
+  }
 }

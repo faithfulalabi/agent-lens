@@ -237,7 +237,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   {
     key: 'shared/entities.ts#tool_use_id#1',
     line: '/** `tool_use_id` where available, else derived from the opening raw event. */',
-    why: 'doc comment on Span.id. REASON REWRITTEN BY TASK 4.5 — it used to say "the read itself lives in the plan-001 modules quarantined above", and those modules are gone, so the sentence became false while the ordinal still bound and nothing went red. That is exactly the rot this list\'s stale check cannot catch. What is true now: `Span`/`Trace`/`Message` survive because six UI files still import them, nothing reads the field, and Task 5.1 deletes the types when the UI stops',
+    why: 'doc comment on Span.id. REASON REWRITTEN A SECOND TIME BY TASK 5.1 — 4.5 rewrote it once already, and 5.1 deleted `Message`, so the sentence naming three surviving types became false again while the ordinal still bound and nothing went red. That is exactly the rot this list\'s stale check cannot catch. What is true now: `Span` and `Trace` survive because seven UI files still import them, `Message` is gone with the six other unconstructed plan-001 types, nothing reads the field, and Task 5.2 deletes `Span`/`Trace` with the tree that renders them',
   },
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#1',

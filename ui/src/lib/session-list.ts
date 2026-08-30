@@ -19,9 +19,7 @@
  *   - Nothing below reads an ambient clock. `now` is a parameter everywhere.
  */
 
-import type { Session } from '@shared/entities.ts';
-
-import type { ApiClient, SessionListRow, SessionsQuery } from './api.js';
+import type { ApiClient, SessionListRow, SessionsQuery, TurnRow } from './api.js';
 import type { Router } from './router.js';
 
 /* ----------------------------------------------------------- row counts --- */
@@ -72,16 +70,12 @@ export const LIST_LIMIT = 1000;
 /**
  * The lower bound of a range, as an ISO instant.
  *
- * ★ NO LONGER SENT TO THE SERVER, AND CALLED BY NOTHING TODAY. `src/server/api.ts`
- * reads only `limit/offset/sort/project/q`, and `parsePageParams` ignores an
- * unknown param rather than 400-ing — so a `?from` sent here would be a
- * narrowing the reader set and the server silently never applied. Ruled at the
- * phase-4 gate: a silently-ignored narrowing is worse than a removed one.
- *
- * It survives as the written record of what each range MEANT, on the same
- * standing as `ui/src/lib/sse.ts`'s unwired client: Task 5.1 owns restoring the
- * feature, and doing so means giving the route a `from` param — not putting this
- * value back on the query string against a server that would drop it.
+ * ★ NOT A QUERY PARAM. `src/server/api.ts` reads only
+ * `limit/offset/sort/project/q`, and `parsePageParams` ignores an unknown param
+ * rather than 400-ing — so a `?from` sent there would be a narrowing the reader
+ * set and the server never applied. Task 5.1 was ruled to narrow on the client
+ * over the one page instead of widening the route, so this value is what
+ * {@link withinRange} compares against and nothing puts it on a URL.
  */
 export function rangeBounds(range: TimeRange, now: number | Date): { from?: string } {
   if (range === 'all') return {};
@@ -89,31 +83,56 @@ export function rangeBounds(range: TimeRange, now: number | Date): { from?: stri
   return { from: new Date(millis - RANGE_DAYS[range] * DAY_MS).toISOString() };
 }
 
+/**
+ * The rows of `page` whose LAST ACTIVITY falls inside `range`.
+ *
+ * ★ `last_activity_at`, NEVER `started_at`. The range answers "what have I been
+ * working on", so a session opened seven days ago and typed into three minutes
+ * ago belongs in `3d`. Selecting on the start instant answers "what did I
+ * begin", which is a different question and drops exactly the long-running
+ * sessions the reader is most likely to want back.
+ */
+export function withinRange(
+  page: readonly SessionListRow[],
+  range: TimeRange,
+  now: number | Date,
+): SessionListRow[] {
+  const { from } = rangeBounds(range, now);
+  if (from === undefined) return [...page];
+  const bound = Date.parse(from);
+  return page.filter((row) => {
+    const at = Date.parse(row.last_activity_at);
+    // An unparseable stamp keeps its row: hiding a session because its clock is
+    // unreadable is the worse of the two failures.
+    return !Number.isFinite(at) || at >= bound;
+  });
+}
+
 /* ---------------------------------------------------------------- load ---- */
 
 export interface SessionListData {
   /**
-   * The in-range page, NOT narrowed by project — it drives the project
+   * The in-range rows, NOT narrowed by project — they drive the project
    * selector's options, the histogram, and `no_match_for_project`'s count.
    */
-  sessions: Session[];
-  /** The in-range page hit {@link LIST_LIMIT}; more rows exist behind it. */
+  sessions: SessionListRow[];
+  /** Rows exist behind the page, so the in-range set above may be short. */
   truncated: boolean;
   /**
-   * How many sessions exist with no range at all, counted only when the
-   * in-range page came back empty. `null` means "not asked, because there was
-   * nothing to explain".
+   * How many rows of the SAME page fell outside the range. Never null now that
+   * one page answers both questions, so `0` means "everything fetched is in
+   * range" rather than "nobody asked".
    */
-  outsideRangeCount: number | null;
-  /** The PROBE's own `has_more` — see the note on {@link loadSessionList}. */
+  outsideRangeCount: number;
+  /** The outside-range COUNT is a floor rather than a total. */
   outsideRangeTruncated: boolean;
   /**
-   * The server's own answer for `project` inside the range, fetched only when
-   * the client-side narrowing found nothing in a page that was truncated.
-   * `null` means the page above is authoritative and no second question needed
+   * The server's own answer for `project`, narrowed to the range here, fetched
+   * only when the client-side pass found nothing in a page that was truncated.
+   * `null` means the rows above are authoritative and no second question needed
    * asking.
    */
-  projectSessions: Session[] | null;
+  projectSessions: SessionListRow[] | null;
 }
 
 export interface LoadOptions {
@@ -128,72 +147,66 @@ export interface LoadOptions {
  * One request on the hot path, and at most one more in an already-empty state.
  *
  * ===========================================================================
- * TWO TRUNCATION FLAGS, NOT ONE.
+ * ONE UNFILTERED PAGE ANSWERS BOTH QUESTIONS.
  * ===========================================================================
- * `truncated` is the in-range page's `has_more`. The unfiltered probe fires
- * only when that page is EMPTY, and the server derives `has_more` from a
- * `LIMIT n+1` row — so zero rows means `has_more === false` by construction.
- * Degrading the outside-range count to `N+` off `truncated` would therefore
- * make that branch unreachable. The probe reports its own `has_more`, and that
- * is what {@link SessionListData.outsideRangeTruncated} carries.
+ * Task 5.1 was ruled to narrow by range on the client rather than to widen
+ * `/api/sessions` with a `from` param. So the request carries no range, the
+ * page holds every recent session, and {@link withinRange} splits it. The
+ * second, byte-identical "unfiltered probe" that used to run on an empty
+ * in-range page is DELETED rather than left dead: it repeated the request it
+ * was meant to widen, which is why `outside_range` was unreachable before.
  *
  * ===========================================================================
- * `all` SKIPS THE PROBE.
+ * TWO TRUNCATION FLAGS, NOT ONE. THEY ANSWER DIFFERENT QUESTIONS.
  * ===========================================================================
- * `rangeBounds('all')` sets no lower bound, so the probe would be byte-identical
- * to the request just made. An empty page under `all` means an empty database,
- * which is `never_captured` — exactly what a count of zero yields.
+ * Both now read the SAME page's `has_more`, and collapsing them into one field
+ * would still be wrong, because two different sentences degrade on them:
+ *
+ *   - `truncated` -> "are there in-range rows I did not see?" It degrades the
+ *     row count and `no_match_for_project`'s total to `N+`.
+ *   - `outsideRangeTruncated` -> "is the outside-range COUNT a floor?" It
+ *     degrades the `outside_range` sentence.
+ *
+ * They will part company the moment anything narrows before the split — a
+ * server-side `from`, a second page, a project-scoped fetch — and a single flag
+ * would then quietly answer the wrong one of the two.
  *
  * ===========================================================================
  * THE PROJECT RE-QUERY IS A TRUTH GUARD, NOT AN OPTIMISATION.
  * ===========================================================================
- * The project narrowing is client-side over ONE page. A project whose in-range
- * sessions all sit past {@link LIST_LIMIT} is invisible to that narrowing, and
- * the screen would then say "no sessions in this project in this range" while
- * the database holds some. Degrading the COUNT to `N+` does not repair a false
- * CLAIM. So when — and only when — a TRUNCATED page narrows to nothing, the
- * question is put to the server, which supports `?project` natively and has a
- * composite index for exactly this shape. An untruncated page is already the
- * whole in-range set, so zero matches in it is the true answer and no second
- * request is warranted.
+ * The project narrowing is client-side over ONE page. A project whose sessions
+ * all sit past {@link LIST_LIMIT} is invisible to that narrowing, and the screen
+ * would then say "no sessions in this project in this range" while the database
+ * holds some. Degrading the COUNT to `N+` does not repair a false CLAIM. So when
+ * — and only when — a TRUNCATED page narrows to nothing, the question is put to
+ * the server, which supports `?project` natively and has a composite index for
+ * exactly this shape. Its answer is unranged too, so it goes through
+ * {@link withinRange} as well: feeding raw rows in would let sessions the reader
+ * has excluded by time reappear under a project narrowing, and would put an
+ * out-of-range total into an in-range sentence.
  */
 export async function loadSessionList(
   api: ApiClient,
-  // `now` is unread here since task 4.5 removed the range param from the query;
-  // it stays on `LoadOptions` because the caller passes one bag to this and to
-  // `volumeBuckets`, which does read it.
-  { range, project, signal }: LoadOptions,
+  { range, now, project, signal }: LoadOptions,
 ): Promise<SessionListData> {
   const options = signal === undefined ? undefined : { signal };
   const page = await api.listSessions({ limit: LIST_LIMIT }, options);
+  const inRange = withinRange(page.items, range, now);
 
   const data: SessionListData = {
-    sessions: page.items.map(toSession),
+    sessions: inRange,
     truncated: page.has_more,
-    outsideRangeCount: null,
-    outsideRangeTruncated: false,
+    outsideRangeCount: page.items.length - inRange.length,
+    outsideRangeTruncated: page.has_more,
     projectSessions: null,
   };
 
-  if (page.items.length === 0) {
-    if (range === 'all') {
-      // An empty page under `all` IS the empty database: there is no wider
-      // question left to ask, and asking it would repeat this exact request.
-      data.outsideRangeCount = 0;
-      return data;
-    }
-    const probe = await api.listSessions({ limit: LIST_LIMIT }, options);
-    data.outsideRangeCount = probe.items.length;
-    data.outsideRangeTruncated = probe.has_more;
-    return data;
-  }
-
-  if (needsProjectProof(data.sessions, page.has_more, project)) {
+  if (needsProjectProof(inRange, page.has_more, project)) {
     const narrowed = await api.listSessions(
       { project, limit: LIST_LIMIT } satisfies SessionsQuery,
       options,
     );
-    data.projectSessions = narrowed.items.map(toSession);
+    data.projectSessions = withinRange(narrowed.items, range, now);
   }
 
   return data;
@@ -203,24 +216,43 @@ export async function loadSessionList(
  * Would claiming "no sessions in this project" be a guess rather than a fact?
  *
  * Only when a project was actually asked for, the page stopped short of the
- * whole in-range set, and no row of that project appears in what did arrive.
+ * whole set, and no row of that project appears in what did arrive.
  */
 function needsProjectProof(
-  items: readonly Session[],
+  items: readonly SessionListRow[],
   hasMore: boolean,
   project: string | undefined,
 ): project is string {
   if (project === undefined || project === '' || !hasMore) return false;
-  return !items.some((session) => session.project_path === project);
+  return !items.some((row) => row.project_path === project);
 }
 
 /* -------------------------------------------------------------- select ---- */
 
-/** The columns the header strip can sort by. */
-export const SORT_COLUMNS = ['started_at', 'project_path', 'total_tokens', 'est_cost'] as const;
+/**
+ * The columns the header strip can sort by — project and time, and nothing else.
+ *
+ * Cut from four at the phase-5 gate: four controls read as a tab bar whose only
+ * feedback is a chevron. The time column is `last_activity_at`, the same instant
+ * the range narrows on, so the strip and the range can never disagree about
+ * which moment the screen is ordered by.
+ */
+export const SORT_COLUMNS = ['project_path', 'last_activity_at'] as const;
 
 export type SortColumn = (typeof SORT_COLUMNS)[number];
 export type SortDirection = 'asc' | 'desc';
+
+/**
+ * What each sort control is called.
+ *
+ * Beside the constant it labels rather than inside the component, so the strip's
+ * test can iterate the two together and a column added without a label reds
+ * instead of rendering an empty button.
+ */
+export const COLUMN_LABELS: Record<SortColumn, string> = {
+  project_path: 'Project',
+  last_activity_at: 'Active',
+};
 
 export interface SelectOptions {
   project?: string;
@@ -242,31 +274,55 @@ export interface SelectOptions {
  * another. The caller keeps them in step by putting the project in the load
  * key, so the two can never be a render apart.
  */
-export function selectRows(data: SessionListData, options: SelectOptions): Session[] {
+export function selectRows(data: SessionListData, options: SelectOptions): SessionListRow[] {
   const pool = data.projectSessions ?? data.sessions;
   const narrowed =
     options.project === undefined || options.project === ''
       ? pool
-      : pool.filter((session) => session.project_path === options.project);
+      : pool.filter((row) => row.project_path === options.project);
 
   const sign = options.direction === 'asc' ? 1 : -1;
   return [...narrowed].sort((a, b) => {
-    const ordered = compareBy(a, b, options.sort);
+    // Both sortable columns are ISO or path strings, so one comparison serves.
+    const ordered = a[options.sort].localeCompare(b[options.sort]);
     return ordered !== 0 ? sign * ordered : a.id.localeCompare(b.id);
   });
 }
 
-function compareBy(a: Session, b: Session, column: SortColumn): number {
-  if (column === 'started_at') return a.started_at.localeCompare(b.started_at);
-  if (column === 'project_path') return a.project_path.localeCompare(b.project_path);
-  return a[column] - b[column];
+/** Every project present in the page, sorted, for the narrowing control. */
+export function projectsIn(rows: readonly SessionListRow[]): string[] {
+  return [...new Set(rows.map((row) => row.project_path))].sort((a, b) => a.localeCompare(b));
 }
 
-/** Every project present in the page, sorted, for the narrowing control. */
-export function projectsIn(sessions: readonly Session[]): string[] {
-  return [...new Set(sessions.map((session) => session.project_path))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+/**
+ * The text a row is labelled with: the harness's own title, else its first human
+ * prompt, else the project it ran in.
+ *
+ * ★ THE REJECTION RULE IS STRUCTURAL, AND IT NAMES NO HARNESS STRING. A stored
+ * label that opens with a tag bracket is markup the harness wrote to itself, not
+ * prose a person typed, and 194 of 647 turn titles in the measured archive are
+ * exactly that. Matching against a list of tag names here would put a second
+ * reader of harness vocabulary outside `src/transcript/`, which RFC §7 forbids;
+ * the SHAPE of the value is enough and stays true when the tag names change.
+ */
+export function rowLabel(row: SessionListRow): string {
+  for (const candidate of [row.title, row.preview]) {
+    const text = candidate?.trim() ?? '';
+    if (text !== '' && !text.startsWith('<')) return text;
+  }
+  return row.project_path;
+}
+
+/**
+ * Does this turn belong UNDER an Agent call rather than beside it?
+ *
+ * Task 5.2 renders the fold; this is the predicate it renders from, exported
+ * here so the boundary is assigned rather than left to whoever merges second.
+ * Structural on purpose — `kind` and a foreign key, no harness string — so it
+ * opens no second door.
+ */
+export function foldsUnderAgent(turn: Pick<TurnRow, 'kind' | 'parent_event_id'>): boolean {
+  return turn.kind === 'task_notification' && turn.parent_event_id !== null;
 }
 
 /* ------------------------------------------------------------ histogram --- */
@@ -286,7 +342,10 @@ export interface BucketOptions {
 }
 
 /**
- * Session starts, counted into a constant number of contiguous buckets.
+ * Session ACTIVITY, counted into a constant number of contiguous buckets.
+ *
+ * Counted on `last_activity_at`, the same instant the range narrows on, so a bar
+ * can never sit outside the window its own row was selected by.
  *
  * Constant rather than range-dependent so the component draws the same number of
  * bars whatever the range, and never an empty pane: no sessions yields
@@ -295,11 +354,11 @@ export interface BucketOptions {
  * Buckets are half-open (`start <= t < end`) so a session landing exactly on an
  * internal boundary is counted once, never twice and never zero times. The last
  * bucket closes at its end so `now` itself still lands somewhere. For `all` the
- * window runs from the oldest start to `now`, because there is no other lower
+ * window runs from the oldest activity to `now`, because there is no other lower
  * bound to draw against.
  */
 export function volumeBuckets(
-  sessions: readonly Session[],
+  sessions: readonly SessionListRow[],
   { range, now, bucketCount }: BucketOptions,
 ): VolumeBucket[] {
   const end = typeof now === 'number' ? now : now.getTime();
@@ -313,7 +372,7 @@ export function volumeBuckets(
   }));
 
   for (const session of sessions) {
-    const at = Date.parse(session.started_at);
+    const at = Date.parse(session.last_activity_at);
     if (!Number.isFinite(at) || at < start || at > end) continue;
     const index = Math.min(bucketCount - 1, Math.floor((at - start) / width));
     const bucket = buckets[index];
@@ -322,9 +381,9 @@ export function volumeBuckets(
   return buckets;
 }
 
-function windowStart(sessions: readonly Session[], range: TimeRange, end: number): number {
+function windowStart(sessions: readonly SessionListRow[], range: TimeRange, end: number): number {
   if (range !== 'all') return end - RANGE_DAYS[range] * DAY_MS;
-  const starts = sessions.map((s) => Date.parse(s.started_at)).filter(Number.isFinite);
+  const starts = sessions.map((s) => Date.parse(s.last_activity_at)).filter(Number.isFinite);
   const oldest = starts.length === 0 ? end - DAY_MS : Math.min(...starts);
   // A single session, or several in the same millisecond, would give a
   // zero-width window and every bucket the same bounds.
@@ -349,7 +408,7 @@ export type EmptyState =
 
 export function emptyStateOf(
   data: SessionListData,
-  rows: readonly Session[],
+  rows: readonly SessionListRow[],
   { project }: { project?: string },
 ): EmptyState {
   if (rows.length > 0) return { kind: 'none' };
@@ -361,9 +420,12 @@ export function emptyStateOf(
       truncated: data.truncated,
     };
   }
-  const outside = data.outsideRangeCount;
-  if (outside !== null && outside > 0) {
-    return { kind: 'outside_range', count: outside, truncated: data.outsideRangeTruncated };
+  if (data.outsideRangeCount > 0) {
+    return {
+      kind: 'outside_range',
+      count: data.outsideRangeCount,
+      truncated: data.outsideRangeTruncated,
+    };
   }
   return { kind: 'never_captured' };
 }
@@ -474,52 +536,13 @@ export function cursorIntent(
  */
 export function applyIntent(
   intent: CursorIntent,
-  rows: readonly Session[],
+  rows: readonly SessionListRow[],
   router: Router,
 ): number | null {
   if (intent.kind === 'move') return intent.index;
   if (intent.kind === 'ignore') return null;
-  const session = rows[intent.index];
-  if (session === undefined) return null;
-  router.navigate({ name: 'session', sessionId: session.id });
+  const row = rows[intent.index];
+  if (row === undefined) return null;
+  router.navigate({ name: 'session', sessionId: row.id });
   return intent.index;
-}
-
-// --- The plan-001 adapter. Task 5.1 deletes this, with the `turn_count` fix
-// --- and `last_activity_at` the same ruling assigns it.
-
-/**
- * One `GET /api/sessions` row, in the shape the list screens still consume.
- *
- * Task 4.5's UI scope is compile-and-contract: the wire changed, the screens did
- * not, and the phase-4 ruling puts the screens in 5.1. Every field the v2 row
- * cannot supply is given a STATED default here rather than a plausible
- * invention, so a wrong number on screen traces to one line in one file.
- */
-function toSession(row: SessionListRow): Session {
-  const session: Session = {
-    id: row.id,
-    // The only harness this product reads, and the column no longer exists.
-    harness: 'claude-code',
-    project_path: row.project_path,
-    started_at: row.started_at,
-    // `live` is stamped by the server off `last_activity_at`; nothing in v2
-    // distinguishes `interrupted`, so it is not invented here.
-    status: row.live ? 'live' : 'complete',
-    // Every session is transcript-derived now, which is what this value meant.
-    capture_mode: 'transcript_only',
-    total_tokens: row.tokens_in + row.tokens_out,
-    tokens_in: row.tokens_in,
-    tokens_out: row.tokens_out,
-    tokens_cache_read: 0,
-    tokens_cache_write: 0,
-    est_cost: row.est_cost ?? 0,
-    tool_call_count: row.tool_call_count,
-    error_count: row.error_count,
-    trace_count: row.turn_count,
-  };
-  if (row.git_branch !== null) session.git_branch = row.git_branch;
-  if (row.model !== null) session.model = row.model;
-  if (!row.live) session.ended_at = row.last_activity_at;
-  return session;
 }
