@@ -74,10 +74,10 @@ function tempDir(prefix: string): string {
  *
  * `--port 0` keeps it off 4470, which `port.test.ts:39` holds in a parallel
  * worker, and no test here ever re-binds a child's freed ephemeral port — the
- * flake `kill-collector.test.ts:154-158` rules against, and a non-discriminator
+ * flake plan 001's kill-collector suite ruled against, and a non-discriminator
  * besides (an unhandled signal kills the process, so the OS reclaims the socket
- * either way). An empty transcript root keeps the boot catch-up, which runs
- * before `bind()`, off the developer's real `~/.claude/projects`.
+ * either way). A fresh data dir and an empty transcript root keep the sweep's
+ * first tick, which runs before `bind()`, off the developer's real archive.
  */
 async function boot(dataDir = tempDir('agent-lens-sig-')): Promise<Collector> {
   const transcriptRoot = tempDir('agent-lens-sig-tr-');
@@ -125,16 +125,15 @@ async function outcome(collector: Collector): Promise<Outcome> {
 
 /**
  * Attach a real `/api/stream` client and hold its body open — the production
- * sequence (server closes first, client still attached) that no existing test
- * exercises, because they all cancel the reader first (`helpers.ts:213`,
- * `stream-deltas.test.ts:485-489`).
+ * sequence (server closes first, client still attached) that every other stream
+ * test avoids, because they all cancel the reader first.
  *
  * Resolving `fetch` is a sufficient handshake, not an approximation: hono's
  * `streamSSE` invokes the route callback *synchronously* before returning the
  * Response (`hono/dist/helper/streaming/sse.js` — `run(stream, cb, onError)`
- * precedes `c.newResponse(...)`), and `broadcaster.subscribe` is the first
- * statement in that callback, ahead of its first `await`. So the subscription is
- * registered before a single response header reaches this process.
+ * precedes `c.newResponse(...)`). A 200 with a body in hand therefore means the
+ * server is already holding an open response body that nothing will ever end on
+ * its own — which is the whole premise of the four tests below.
  */
 async function attachStream(collector: Collector): Promise<void> {
   const res = await fetch(`http://127.0.0.1:${collector.port}/api/stream`, {
@@ -175,11 +174,14 @@ describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', 
       const collector = await boot();
       await attachStream(collector);
       collector.child.kill(signal);
-      // Red before the Broadcaster drain in the most literal way available: the
-      // child never exits, `server.close` waiting on a response body nothing will
-      // ever end, and this test dies on its timeout. This is the AC an open
-      // browser tab on the shipped UI depends on — `ui/src/lib/sse.ts:39`
-      // connects to exactly this endpoint.
+      // ★ THE DETECTOR FOR THE SSE DRAIN, and it fails in the most literal way
+      // available: without `server.closeAllConnections()` in `startServer.close()`
+      // the child never exits — `server.close` waits on a response body nothing
+      // will ever end — and this test dies on its 30 s timeout. Plan 001 drained
+      // through `broadcaster.shutdown()`; task 4.5 deleted that and the founder
+      // ruled the native call is the replacement. This is the AC an open browser
+      // tab on the shipped UI depends on — `ui/src/lib/sse.ts:39` connects to
+      // exactly this endpoint.
       expect(await outcome(collector)).toEqual({ code: 0, signal: null, config: null });
     },
     SPAWN_TIMEOUT_MS,
@@ -200,8 +202,8 @@ describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', 
 
       const result = await outcome(collector);
       expect(result).toEqual({ code: 0, signal: null, config: null });
-      // A second `handle.close()` runs `db.close()` twice; the `closing` guard is
-      // what stops that surfacing as an uncaught ERR_INVALID_STATE.
+      // A second `handle.close()` closes the database twice; the `closing` guard
+      // is what stops that surfacing as an uncaught ERR_INVALID_STATE.
       expect(collector.stderr()).not.toMatch(/ERR_INVALID_STATE/);
     },
     SPAWN_TIMEOUT_MS,

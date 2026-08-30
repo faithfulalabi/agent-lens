@@ -7,9 +7,20 @@ const srcDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(srcDir, '..');
 
 describe('repo layout conforms to the tech plan', () => {
-  it('has the five src module directories', () => {
-    for (const mod of ['cli', 'server', 'capture', 'db', 'shared']) {
+  it('has the barrelled src module directories', () => {
+    for (const mod of ['cli', 'server', 'shared']) {
       expect(existsSync(resolve(srcDir, mod, 'index.ts'))).toBe(true);
+    }
+  });
+
+  // `src/capture/` went with the hook pipeline in task 4.5, and `src/db/`'s
+  // barrel went with it — `db/` is now deep-imported like `transcript/`, so the
+  // absence is asserted rather than left for someone to helpfully restore.
+  it('has no capture module and no db barrel', () => {
+    expect(existsSync(resolve(srcDir, 'capture'))).toBe(false);
+    expect(existsSync(resolve(srcDir, 'db', 'index.ts'))).toBe(false);
+    for (const file of ['open.ts', 'read.ts', 'write.ts', 'schema.ts', 'freshness.ts']) {
+      expect(existsSync(resolve(srcDir, 'db', file)), file).toBe(true);
     }
   });
 
@@ -24,9 +35,12 @@ describe('repo layout conforms to the tech plan', () => {
     expect(existsSync(resolve(srcDir, 'transcript', 'index.ts'))).toBe(false);
   });
 
-  it('has all six CLI command stubs', () => {
-    for (const cmd of ['start', 'hook', 'install', 'uninstall', 'doctor', 'import']) {
-      expect(existsSync(resolve(srcDir, 'cli', 'commands', `${cmd}.ts`))).toBe(true);
+  it('has the three CLI commands, and none of the deleted four', () => {
+    for (const cmd of ['start', 'doctor', 'archive']) {
+      expect(existsSync(resolve(srcDir, 'cli', 'commands', `${cmd}.ts`)), cmd).toBe(true);
+    }
+    for (const cmd of ['hook', 'install', 'uninstall', 'import']) {
+      expect(existsSync(resolve(srcDir, 'cli', 'commands', `${cmd}.ts`)), cmd).toBe(false);
     }
   });
 

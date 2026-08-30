@@ -1,6 +1,0 @@
-{
-  "session_id": "sess-fixture",
-  "hook_event_name": "UserPromptSubmit",
-  "prompt_id": "prompt-1",
-  "prompt": "list the files"
-}

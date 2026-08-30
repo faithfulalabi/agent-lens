@@ -1,9 +1,9 @@
 // AC4, static half — the read-only guarantee over `~/.claude/projects`; the
-// behavioural half is `capture/__tests__/read-only.test.ts`. Static analysis
-// cannot decide that a write target *is* `dataDir`, so this pins a reviewed
-// inventory, asserted both ways. The key is `<file>#<ordinal>`: keying on
-// `{file, callee, pathExpr}` would collapse `cli/hook.ts`'s two identical
-// `mkdirSync(logsDir, …)` calls, and `<file>:<line>` would red on line shifts.
+// behavioural half is `archive/__tests__/source-readonly.test.ts`. Static
+// analysis cannot decide that a write target *is* `dataDir`, so this pins a
+// reviewed inventory, asserted both ways. The key is `<file>#<ordinal>`: keying
+// on `{file, callee, pathExpr}` would collapse two byte-identical calls in one
+// module, and `<file>:<line>` would red on line shifts.
 
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ import ts from 'typescript';
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 
 // `open`/`openSync` are handled separately — write-capable or not depending on
-// flags. Omitting them would make "zero writes in the tailer" an artifact.
+// flags. Omitting them would make "zero writes in the accessor" an artifact.
 const WRITE_CALLEES = new Set([
   'appendFile',
   'appendFileSync',
@@ -200,41 +200,6 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     why: 'writes the one JSONL line to the fd from #2; no path of its own, and O_APPEND is what puts it at EOF',
   },
   {
-    key: 'capture/replay.ts#1',
-    callee: 'rmSync',
-    why: 'deletes a spool file under <dataDir>/spool once it has been replayed',
-  },
-  {
-    key: 'capture/spool.ts#1',
-    callee: 'mkdirSync',
-    why: 'creates <dataDir>/spool before the adapter writes into it',
-  },
-  {
-    key: 'capture/spool.ts#2',
-    callee: 'appendFileSync',
-    why: 'appends one spooled envelope to spoolFile(sessionId, dataDir)',
-  },
-  {
-    key: 'cli/hook.ts#1',
-    callee: 'mkdirSync',
-    why: "creates the CLI's own <dataDir>/logs dir before the failure log",
-  },
-  {
-    key: 'cli/hook.ts#2',
-    callee: 'appendFileSync',
-    why: 'appends a hook failure to <dataDir>/logs — diagnostics, never a transcript',
-  },
-  {
-    key: 'cli/hook.ts#3',
-    callee: 'mkdirSync',
-    why: 'byte-identical sibling of #1 on the second failure path; the ordinal is what separates them',
-  },
-  {
-    key: 'cli/hook.ts#4',
-    callee: 'appendFileSync',
-    why: "the second failure path's log append, same <dataDir>/logs target",
-  },
-  {
     key: 'db/open.ts#1',
     callee: 'rmSync',
     why: "removes <dataDir>/cache.db and its -wal/-shm siblings when user_version does not match SCHEMA_VERSION. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm']. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and the removal runs only while THIS process holds the cache lock — unlinking under a live handle forks the database silently, which is why the lock is taken before the open. `force: true` is load-bearing: a first run on an empty data dir reads user_version 0, takes this branch, and finds no -wal/-shm to remove",
@@ -242,7 +207,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'render-gate/index.ts#1',
     callee: 'mkdirSync',
-    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root; the gate only READS ~/.claude/projects, through the tailer",
+    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root; the gate only READS the archive, through the corpus sweep",
   },
   {
     key: 'render-gate/index.ts#2',
@@ -331,7 +296,6 @@ const OPEN_SITES: readonly string[] = [
   // Two: the frame's temp and the sidecar's, both created with O_CREAT|O_EXCL.
   "archive/seal.ts:'wx'",
   "archive/seal.ts:'wx'",
-  "capture/tailer.ts:'r'",
 ];
 
 // The three helpers below are what the real assertions and their mutation controls
@@ -381,7 +345,7 @@ function taskCitations(manifest: readonly ManifestEntry[] = WRITE_SITES): Map<st
   return out;
 }
 
-/** Write-site keys for one module. Shared by the tailer assertion and its control. */
+/** Write-site keys for one module. Shared by a real assertion and its control. */
 function writeKeysOf(writes: readonly Site[] = scanAll().writes, file?: string): string[] {
   return writes
     .filter((s) => file === undefined || s.file === file)
@@ -534,56 +498,67 @@ describe('AC4 (static) — every write-capable fs call in src/ is reviewed', () 
     expect(scanAll().writes.filter((s) => s.callee === 'fchmod')).toEqual([]);
   });
 
-  it('the tailer writes nothing, and its only openSync is read-only', () => {
-    // `npm run dev` backfills real transcripts through this module.
-    expect(writeKeysOf(undefined, 'capture/tailer.ts')).toEqual([]);
+  it('the archive accessor writes nothing, and both its opens are read-only', () => {
+    // Re-pointed from the deleted `capture/tailer.ts` by task 4.5. TWO rows, not
+    // one: `archive/read.ts` opens the hot path and falls back to the sealed
+    // twin on ENOENT, so it is the only surviving module that opens for reading
+    // and never for writing. No surviving file has exactly ONE such open, which
+    // is why the old single-element shape could not be preserved.
+    expect(writeKeysOf(undefined, 'archive/read.ts')).toEqual([]);
 
     // …which would be vacuous if `openSync` were simply off the scan. The whole-repo
     // row set stays exhaustive; the archive's writing opens are reviewed in WRITE_SITES.
     expect(openRowsOf()).toEqual([...OPEN_SITES].sort());
 
-    // The row that keeps the `writes` assertion above honest: positive and
+    // The rows that keep the `writes` assertion above honest: positive and
     // non-empty, so a scan that stopped seeing `openSync` reds here first.
-    expect(openRowsOf(undefined, 'capture/tailer.ts')).toEqual(["capture/tailer.ts:'r'"]);
+    expect(openRowsOf(undefined, 'archive/read.ts')).toEqual([
+      "archive/read.ts:'r'",
+      "archive/read.ts:'r'",
+    ]);
   });
 });
 
 describe('the guard reds when the property it protects is broken', () => {
-  const TAILER_FILE = 'capture/tailer.ts';
-  const TAILER_SRC = readFileSync(join(SRC_DIR, TAILER_FILE), 'utf8');
+  const READER_FILE = 'archive/read.ts';
+  const READER_SRC = readFileSync(join(SRC_DIR, READER_FILE), 'utf8');
 
   // Controls drive the same helpers the real assertions call. Re-deriving the
   // comparison inline here would prove nothing: softening a real assertion body
   // would leave an inline control green.
 
-  it('the unmutated tailer source, through the same seam, is clean', () => {
+  it('the unmutated accessor source, through the same seam, is clean', () => {
     // Proves the mutation below reds because of the appended line, not because
     // feeding `scan` fixture text is itself enough to trip the guard.
-    const clean = scan(TAILER_FILE, TAILER_SRC);
+    const clean = scan(READER_FILE, READER_SRC);
 
     expect(unreviewedKeys(clean.writes, WRITE_SITES).unexpected).toEqual([]);
     expect(clean.writes).toEqual([]);
-    expect(openRowsOf(clean.opens, TAILER_FILE)).toEqual(["capture/tailer.ts:'r'"]);
+    expect(openRowsOf(clean.opens, READER_FILE)).toEqual([
+      "archive/read.ts:'r'",
+      "archive/read.ts:'r'",
+    ]);
   });
 
-  it('a writing openSync in the tailer reds every assertion that guards it', () => {
+  it('a writing openSync in the accessor reds every assertion that guards it', () => {
     // `'a'` fails isReadOnlyFlags, so the mutant lands in `writes` too. The call
     // binds to the file's own `openSync` import, which is what fsBindings resolves.
-    const mutated = scan(TAILER_FILE, `${TAILER_SRC}\nopenSync('/tmp/x', 'a');\n`);
+    const mutated = scan(READER_FILE, `${READER_SRC}\nopenSync('/tmp/x', 'a');\n`);
 
-    // Load-bearing: the helper is handed tailer sites directly, so a future
-    // `.filter(s => s.file !== 'capture/tailer.ts')` in the real body cannot hide.
+    // Load-bearing: the helper is handed the accessor's sites directly, so a
+    // future `.filter(s => s.file !== 'archive/read.ts')` in the real body cannot
+    // hide.
     const { unexpected } = unreviewedKeys(mutated.writes, WRITE_SITES);
     expect(unexpected).toHaveLength(1);
-    expect(unexpected[0]).toMatch(/^capture\/tailer\.ts#1 /);
+    expect(unexpected[0]).toMatch(/^archive\/read\.ts#1 /);
 
-    expect(writeKeysOf(mutated.writes, TAILER_FILE)).toContain('capture/tailer.ts#1');
+    expect(writeKeysOf(mutated.writes, READER_FILE)).toContain('archive/read.ts#1');
 
-    const tailerRows = openRowsOf(mutated.opens, TAILER_FILE);
-    expect(tailerRows).not.toEqual(["capture/tailer.ts:'r'"]);
-    expect(tailerRows).toContain("capture/tailer.ts:'a'");
+    const readerRows = openRowsOf(mutated.opens, READER_FILE);
+    expect(readerRows).not.toEqual(["archive/read.ts:'r'", "archive/read.ts:'r'"]);
+    expect(readerRows).toContain("archive/read.ts:'a'");
 
-    const swapped = [...scanAll().opens.filter((s) => s.file !== TAILER_FILE), ...mutated.opens];
+    const swapped = [...scanAll().opens.filter((s) => s.file !== READER_FILE), ...mutated.opens];
     expect(openRowsOf(swapped)).not.toEqual([...OPEN_SITES].sort());
   });
 

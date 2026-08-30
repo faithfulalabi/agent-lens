@@ -21,7 +21,7 @@
 
 import type { Session } from '@shared/entities.ts';
 
-import type { ApiClient, SessionsQuery } from './api.js';
+import type { ApiClient, SessionListRow, SessionsQuery } from './api.js';
 import type { Router } from './router.js';
 
 /* ----------------------------------------------------------- row counts --- */
@@ -70,11 +70,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const LIST_LIMIT = 1000;
 
 /**
- * The server-side lower bound for a range.
+ * The lower bound of a range, as an ISO instant.
  *
- * `to` is deliberately absent: "up to now" is what its absence already means,
- * and omitting it keeps the planner on `idx_sessions_started_at` with a single
- * bound rather than a pair.
+ * ★ NO LONGER SENT TO THE SERVER, AND CALLED BY NOTHING TODAY. `src/server/api.ts`
+ * reads only `limit/offset/sort/project/q`, and `parsePageParams` ignores an
+ * unknown param rather than 400-ing — so a `?from` sent here would be a
+ * narrowing the reader set and the server silently never applied. Ruled at the
+ * phase-4 gate: a silently-ignored narrowing is worse than a removed one.
+ *
+ * It survives as the written record of what each range MEANT, on the same
+ * standing as `ui/src/lib/sse.ts`'s unwired client: Task 5.1 owns restoring the
+ * feature, and doing so means giving the route a `from` param — not putting this
+ * value back on the query string against a server that would drop it.
  */
 export function rangeBounds(range: TimeRange, now: number | Date): { from?: string } {
   if (range === 'all') return {};
@@ -152,14 +159,16 @@ export interface LoadOptions {
  */
 export async function loadSessionList(
   api: ApiClient,
-  { range, now, project, signal }: LoadOptions,
+  // `now` is unread here since task 4.5 removed the range param from the query;
+  // it stays on `LoadOptions` because the caller passes one bag to this and to
+  // `volumeBuckets`, which does read it.
+  { range, project, signal }: LoadOptions,
 ): Promise<SessionListData> {
-  const bounds = rangeBounds(range, now);
   const options = signal === undefined ? undefined : { signal };
-  const page = await api.listSessions({ ...bounds, limit: LIST_LIMIT }, options);
+  const page = await api.listSessions({ limit: LIST_LIMIT }, options);
 
   const data: SessionListData = {
-    sessions: page.items,
+    sessions: page.items.map(toSession),
     truncated: page.has_more,
     outsideRangeCount: null,
     outsideRangeTruncated: false,
@@ -179,12 +188,12 @@ export async function loadSessionList(
     return data;
   }
 
-  if (needsProjectProof(page.items, page.has_more, project)) {
+  if (needsProjectProof(data.sessions, page.has_more, project)) {
     const narrowed = await api.listSessions(
-      { ...bounds, project, limit: LIST_LIMIT } satisfies SessionsQuery,
+      { project, limit: LIST_LIMIT } satisfies SessionsQuery,
       options,
     );
-    data.projectSessions = narrowed.items;
+    data.projectSessions = narrowed.items.map(toSession);
   }
 
   return data;
@@ -474,4 +483,43 @@ export function applyIntent(
   if (session === undefined) return null;
   router.navigate({ name: 'session', sessionId: session.id });
   return intent.index;
+}
+
+// --- The plan-001 adapter. Task 5.1 deletes this, with the `turn_count` fix
+// --- and `last_activity_at` the same ruling assigns it.
+
+/**
+ * One `GET /api/sessions` row, in the shape the list screens still consume.
+ *
+ * Task 4.5's UI scope is compile-and-contract: the wire changed, the screens did
+ * not, and the phase-4 ruling puts the screens in 5.1. Every field the v2 row
+ * cannot supply is given a STATED default here rather than a plausible
+ * invention, so a wrong number on screen traces to one line in one file.
+ */
+function toSession(row: SessionListRow): Session {
+  const session: Session = {
+    id: row.id,
+    // The only harness this product reads, and the column no longer exists.
+    harness: 'claude-code',
+    project_path: row.project_path,
+    started_at: row.started_at,
+    // `live` is stamped by the server off `last_activity_at`; nothing in v2
+    // distinguishes `interrupted`, so it is not invented here.
+    status: row.live ? 'live' : 'complete',
+    // Every session is transcript-derived now, which is what this value meant.
+    capture_mode: 'transcript_only',
+    total_tokens: row.tokens_in + row.tokens_out,
+    tokens_in: row.tokens_in,
+    tokens_out: row.tokens_out,
+    tokens_cache_read: 0,
+    tokens_cache_write: 0,
+    est_cost: row.est_cost ?? 0,
+    tool_call_count: row.tool_call_count,
+    error_count: row.error_count,
+    trace_count: row.turn_count,
+  };
+  if (row.git_branch !== null) session.git_branch = row.git_branch;
+  if (row.model !== null) session.model = row.model;
+  if (!row.live) session.ended_at = row.last_activity_at;
+  return session;
 }

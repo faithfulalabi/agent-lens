@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readToken } from '../shared/index.js';
-import { resolveTranscriptRoot } from '../capture/tailer.js';
+import { resolveTranscriptRoot } from '../archive/paths.js';
 import { readConfig, type RuntimeConfig } from '../server/config.js';
 import { resolveUiDir } from '../server/static-ui.js';
 import { startServer } from '../server/start.js';
@@ -22,7 +22,8 @@ export interface DevServerOptions {
   /** Slug dirs to tail, or `'all'`; defaults to the slug of `process.cwd()`. */
   projects?: readonly string[] | 'all';
   uiDir?: string;
-  tailIntervalMs?: number;
+  /** Corpus-sweep period in ms, forwarded to `startServer`; `0` disables it. */
+  sweepIntervalMs?: number;
 }
 
 export interface DevServerHandle {
@@ -80,22 +81,18 @@ export async function startDevServer(
   const uiDir = options.uiDir ?? join(repoRoot(), 'ui');
   const { files, bytes } = measureCorpus(transcriptRoot, projects);
   const scope = projects === undefined ? 'all projects' : projects.join(', ');
-  // Before `startServer`: its catch-up pass runs before the socket binds, so a
-  // line printed afterwards leaves the user watching a silent hang.
+  // Before `startServer`: the sweep's first tick runs before the socket binds,
+  // so a line printed afterwards leaves the user watching a silent hang.
   console.log(
-    `agent-lens dev: backfilling ${files} file(s) / ${mib(bytes)} MiB ` +
-      `from ${transcriptRoot} (${scope})…`,
+    `agent-lens dev: indexing the archive for ${files} file(s) / ${mib(bytes)} MiB ` +
+      `under ${transcriptRoot} (${scope})…`,
   );
 
   const handle = await startServer({
     port: 0,
     dataDir,
     transcriptRoot,
-    firstSight: 'backfill',
-    projects,
-    // Historical sessions are all long-silent; one tick flips them to interrupted.
-    sweepIntervalMs: 0,
-    tailIntervalMs: options.tailIntervalMs,
+    sweepIntervalMs: options.sweepIntervalMs,
   });
 
   // Without this catch, anything thrown below strands the bound collector.

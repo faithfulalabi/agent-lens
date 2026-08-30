@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../../../App';
 import { createRouter } from '../../../lib/router';
 import { fakeHistoryPort } from '../../../lib/__tests__/helpers';
-import { makePage, makeSession, makeTrace, stubApiClient } from '../../../lib/__tests__/fixtures';
+import { makeDetail, makeTurnRow, stubApiClient } from '../../../lib/__tests__/fixtures';
 
 /*
  * Test 20 — `App.tsx` routes `session` and `trace` to the session view, inside
@@ -35,11 +35,10 @@ import { makePage, makeSession, makeTrace, stubApiClient } from '../../../lib/__
  * edit. `route-match.ts` and its test are under a standing do-not-touch rule.
  */
 
-/** A client that answers the session view's two requests with an empty session. */
+/** A client that answers the session view's one request with an empty session. */
 function emptySessionApi() {
   return stubApiClient({
-    getSession: () => Promise.resolve({ session: makeSession(), traces: makePage([makeTrace()]) }),
-    listSpans: () => Promise.resolve(makePage([])),
+    getSession: () => Promise.resolve(makeDetail({ turns: [makeTurnRow()] })),
   });
 }
 

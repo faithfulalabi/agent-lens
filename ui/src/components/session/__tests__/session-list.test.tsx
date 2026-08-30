@@ -13,6 +13,7 @@ import { hrefFor } from '../../../lib/route-match';
 import { createRouter } from '../../../lib/router';
 import { fakeHistoryPort } from '../../../lib/__tests__/helpers';
 import { makePage, makeSession, stubApiClient } from '../../../lib/__tests__/fixtures';
+import type { SessionListRow } from '../../../lib/api';
 import { designSystemLines, userFlowPath, userFlowText } from '../../../__tests__/spec-doc';
 import { SessionListView } from '../SessionListView';
 import { EmptyState } from '../EmptyState';
@@ -445,7 +446,7 @@ describe('RangeControl', () => {
 
 describe('Sessions renders under environment: node with both ports injected (Test 24)', () => {
   it('renders the pending branch without touching the address bar or the bootstrap', () => {
-    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<Session>([])) });
+    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<SessionListRow>([])) });
     const router = createRouter(fakeHistoryPort('/'));
 
     /*
@@ -466,7 +467,7 @@ describe('Sessions renders under environment: node with both ports injected (Tes
   });
 
   it('keeps the range control on screen while a load is pending', () => {
-    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<Session>([])) });
+    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<SessionListRow>([])) });
     const markup = renderToStaticMarkup(
       <Sessions router={createRouter(fakeHistoryPort('/'))} api={api} />,
     );

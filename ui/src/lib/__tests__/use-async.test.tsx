@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { useAsync } from '../use-async';
-import { makePage, makeSession, stubApiClient } from './fixtures';
+import { makePage, makeSessionRow, stubApiClient } from './fixtures';
 
 /*
  * AC1 (hook half) — Test 2 of the task plan.
@@ -31,7 +31,7 @@ const SOURCE = readFileSync(MODULE_PATH, 'utf8');
 
 function Probe() {
   const api = stubApiClient({
-    listSessions: () => Promise.resolve(makePage([makeSession()])),
+    listSessions: () => Promise.resolve(makePage([makeSessionRow()])),
   });
   const state = useAsync('sessions:3d', (signal) => api.listSessions({}, { signal }));
   return <span>{state.kind}</span>;

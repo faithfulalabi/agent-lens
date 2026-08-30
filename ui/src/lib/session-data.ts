@@ -1,6 +1,6 @@
 /*
- * Loading one session's turns and spans, and the two pure decisions the
- * page module would otherwise bury inside an effect (Task 5.3b).
+ * Loading one session's turns and events, and the two pure decisions the page
+ * module would otherwise bury inside an effect (Task 5.3b).
  *
  * The `ui` vitest project runs under `environment: 'node'`, where an effect
  * never fires. Anything expressed as a decision inside `pages/SessionView.tsx`
@@ -10,38 +10,46 @@
  * network and no rendering.
  *
  * ===========================================================================
- * EVERY REQUEST STATES ITS OWN `limit`. THIS IS THE WHOLE POINT OF THE FILE.
+ * THE EVENT PAGE IS A CURSOR, NOT AN OFFSET WINDOW.
  * ===========================================================================
- * The read API defaults `?limit` to 100 and CLAMPS rather than rejecting
- * (`src/server/read-api.ts`), so an implicit limit does not fail loudly — a
- * 5,000-span session quietly loads 100 spans and the tree renders a truncated
- * session that looks complete. Flow 3 forbids exactly that: a partial trace may
- * never be presented as a whole one. So the limits below are stated, the loop
- * follows `has_more`, and anything the client cap stops short of is reported as
- * {@link SessionData.truncated} for the notice strip to say out loud.
+ * `GET /api/sessions/:id` answers `next_seq` and `has_more`, and the next
+ * request passes `from_seq: next_seq`. Task 4.5 rewrote the old
+ * `?limit`/`?offset` loop onto it, because an offset window renumbers its whole
+ * page whenever the file grows mid-scroll — which is the state a live tail is in
+ * by definition. `limit` is still stated on every request: the server CLAMPS
+ * rather than rejecting, so an implicit limit does not fail loudly, and Flow 3
+ * forbids presenting a partial trace as a whole one. Anything the client cap
+ * stops short of is reported as {@link SessionData.truncated} for the notice
+ * strip to say out loud.
  *
- * The server's own ceiling cannot be imported: `read-api.ts` pulls in
- * `../db/reads.js`, which needs `node:sqlite`. The constants below are
- * `ui`-local and name that ceiling in prose instead.
+ * ===========================================================================
+ * ★ THE `Trace`/`Span` ADAPTER BELOW IS TASK 5.1'S TO DELETE.
+ * ===========================================================================
+ * The v2 route answers `turns` and `events`; the screens still consume plan
+ * 001's `Trace` and `Span`. Task 4.5's scope is compile-and-contract — the ruling
+ * at the phase-4 gate is explicit that 5.1 builds the screens — so the mapping
+ * lives here, in ONE place, marked, rather than being spread through
+ * `pages/SessionView.tsx` and `lib/span-tree.ts`. Every field it cannot source
+ * from the wire is given a stated default rather than a plausible invention.
  */
 
 import type { Session, Span, Trace } from '@shared/entities.ts';
 
-import type { ApiClient } from './api.js';
+import type { ApiClient, EventRow, SessionDetailBody, TurnRow } from './api.js';
 import type { Row, TreeModel } from './span-tree.js';
 import type { NavAction } from './tree-nav.js';
 
 /**
  * Turns per session request.
  *
- * The server's own ceiling is 10,000 and its default is 100. A session with
- * more than a thousand turns is not a session anybody scrolls, and the spans
+ * The server's ceiling is 10,000 and its detail default is 1,000. A session with
+ * more than a thousand turns is not a session anybody scrolls, and events
  * belonging to turns past this page are counted rather than dropped —
  * `TreeModel.unmatchedSpanCount` is exactly that count.
  */
 export const TRACE_PAGE = 1000;
 
-/** Spans per request. Half the server's 10,000 ceiling, so no page is clamped. */
+/** Events per request. Half the server's 10,000 ceiling, so no page is clamped. */
 export const SPAN_PAGE = 5000;
 
 /**
@@ -76,20 +84,21 @@ export interface LoadSessionOptions {
 }
 
 /**
- * The session, its turns, and every span the cap allows — bucketed by turn.
+ * The session, its turns, and every event the cap allows — bucketed by turn.
  *
  * ===========================================================================
  * THE CALLER BUCKETS, AND THE CALLER IS THIS FUNCTION.
  * ===========================================================================
  * `buildTreeModel(traces, spansByTrace)` takes a map keyed by `trace_id`, which
  * makes bucketing somebody's job. It is deliberately NOT the page module's: doing
- * it there would put a real decision — which turn a span belongs to — behind
+ * it there would put a real decision — which turn an event belongs to — behind
  * the effect boundary, where this project can assert nothing about it. Here it
  * is a unit test with a stub client.
  *
- * The loop guards its own termination. A page answering `has_more` with no
- * items would otherwise spin forever against a server bug, and an unbounded
- * client loop is a frozen tab rather than an error anybody can read.
+ * The loop guards its own termination. A page answering `has_more` with an empty
+ * event array, or with a `next_seq` that does not advance, would otherwise spin
+ * forever against a server bug, and an unbounded client loop is a frozen tab
+ * rather than an error anybody can read.
  */
 export async function loadSessionSpans(
   api: ApiClient,
@@ -97,36 +106,137 @@ export async function loadSessionSpans(
   { cap = SPAN_CAP, limit = SPAN_PAGE, signal }: LoadSessionOptions = {},
 ): Promise<SessionData> {
   const options = signal === undefined ? undefined : { signal };
-  const detail = await api.getSession(sessionId, { limit: TRACE_PAGE }, options);
 
-  const spansByTrace = new Map<string, Span[]>();
-  let shown = 0;
+  const first = await api.getSession(sessionId, { limit }, options);
+  const events: EventRow[] = [...first.events];
+  let cursor = first.next_seq;
+  let hasMore = first.has_more;
   let truncated = false;
 
-  for (;;) {
-    const page = await api.listSpans(sessionId, { limit, offset: shown }, options);
-    for (const span of page.items) {
-      const bucket = spansByTrace.get(span.trace_id);
-      if (bucket === undefined) spansByTrace.set(span.trace_id, [span]);
-      else bucket.push(span);
-    }
-    shown += page.items.length;
-
-    if (!page.has_more || page.items.length === 0) break;
-    if (shown >= cap) {
+  while (hasMore) {
+    if (events.length >= cap) {
       truncated = true;
       break;
     }
+    const page = await api.getSession(sessionId, { limit, from_seq: cursor }, options);
+    if (page.events.length === 0 || page.next_seq <= cursor) break;
+    events.push(...page.events);
+    cursor = page.next_seq;
+    hasMore = page.has_more;
+  }
+
+  const spansByTrace = new Map<string, Span[]>();
+  for (const event of events) {
+    const span = toSpan(event);
+    const bucket = spansByTrace.get(span.trace_id);
+    if (bucket === undefined) spansByTrace.set(span.trace_id, [span]);
+    else bucket.push(span);
   }
 
   return {
-    session: detail.session,
-    traces: detail.traces.items,
-    tracesTruncated: detail.traces.has_more,
+    session: toSession(first),
+    traces: first.turns.slice(0, TRACE_PAGE).map((turn) => toTrace(sessionId, turn)),
+    tracesTruncated: first.turns.length > TRACE_PAGE,
     spansByTrace,
     truncated,
-    shown,
+    shown: events.length,
   };
+}
+
+// --- The plan-001 adapter. Task 5.1 deletes this whole block. ---------------
+
+/** Every `SpanType` the fold can produce, by the `events.kind` that carries it. */
+const SPAN_TYPE_OF: Readonly<Record<string, Span['span_type']>> = {
+  tool_call: 'tool_call',
+  thinking: 'thinking',
+  text: 'llm_call',
+  prompt: 'generic',
+  error: 'generic',
+  compaction: 'generic',
+  unknown: 'generic',
+};
+
+const SPAN_STATUS: readonly Span['status'][] = ['running', 'ok', 'error', 'denied', 'unknown'];
+
+function toSpan(event: EventRow): Span {
+  const status = SPAN_STATUS.find((known) => known === event.status);
+  const span: Span = {
+    id: event.id,
+    trace_id: event.turn_id,
+    span_type: SPAN_TYPE_OF[event.kind] ?? 'generic',
+    name: event.name ?? event.kind,
+    // A row the projector left unlabelled is `unknown`, never a fabricated `ok`.
+    status: status ?? 'unknown',
+    started_at: event.ts,
+    // `source` is always `transcript` now: the hook path is gone, so every event
+    // came out of a `.jsonl`. Kept as a field only because `Span` declares it.
+    source: 'transcript',
+    tags: [],
+    attrs: {},
+  };
+  if (event.model !== null) span.model = event.model;
+  if (event.tokens_in !== null) span.tokens_in = event.tokens_in;
+  if (event.tokens_out !== null) span.tokens_out = event.tokens_out;
+  if (event.est_cost !== null) span.est_cost = event.est_cost;
+  return span;
+}
+
+function toTrace(sessionId: string, turn: TurnRow): Trace {
+  const trace: Trace = {
+    id: turn.id,
+    session_id: sessionId,
+    turn_seq: turn.seq,
+    // `turns.kind` is the v2 vocabulary (human/task_notification/slash_command/
+    // compaction/system/unknown) and does not map onto `TraceTrigger`; only the
+    // compaction arm has a counterpart, so the rest are honestly `unknown`.
+    trigger: turn.kind === 'compaction' ? 'compaction' : turn.kind === 'human' ? 'user_prompt' : 'unknown',
+    prompt_preview: turn.title,
+    started_at: turn.started_at,
+    // A turn with no end is still running — the same reading `ended_at: null`
+    // has on the row.
+    status: turn.ended_at === null ? 'live' : 'complete',
+    total_tokens:
+      turn.tokens_in + turn.tokens_out + turn.tokens_cache_read + turn.tokens_cache_write,
+    tokens_in: turn.tokens_in,
+    tokens_out: turn.tokens_out,
+    tokens_cache_read: turn.tokens_cache_read,
+    tokens_cache_write: turn.tokens_cache_write,
+    est_cost: turn.est_cost ?? 0,
+    duration_ms: turn.duration_ms ?? 0,
+    tool_call_count: turn.tool_call_count,
+    error_count: turn.error_count,
+  };
+  if (turn.ended_at !== null) trace.ended_at = turn.ended_at;
+  return trace;
+}
+
+function toSession(detail: SessionDetailBody): Session {
+  const row = detail.session;
+  const session: Session = {
+    id: row.id,
+    // The only harness this product reads, and the column no longer exists.
+    harness: 'claude-code',
+    project_path: row.project_path,
+    started_at: row.started_at,
+    // `live` is stamped by the server off `last_activity_at`; nothing in v2
+    // distinguishes `interrupted`, so it is not invented here.
+    status: row.live ? 'live' : 'complete',
+    // Every session is transcript-derived now, which is what this value meant.
+    capture_mode: 'transcript_only',
+    total_tokens: row.tokens_in + row.tokens_out,
+    tokens_in: row.tokens_in,
+    tokens_out: row.tokens_out,
+    tokens_cache_read: 0,
+    tokens_cache_write: 0,
+    est_cost: row.est_cost ?? 0,
+    tool_call_count: row.tool_call_count,
+    error_count: row.error_count,
+    trace_count: row.turn_count,
+  };
+  if (row.git_branch !== null) session.git_branch = row.git_branch;
+  if (row.model !== null) session.model = row.model;
+  if (!row.live) session.ended_at = row.last_activity_at;
+  return session;
 }
 
 /* ------------------------------------------------------ the notice strip --- */

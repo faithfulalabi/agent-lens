@@ -219,10 +219,10 @@ declare const document: {
 };
 
 async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
-  const dev = await startDevServer({
-    // The gate reads a static corpus; a live tail would only add noise.
-    tailIntervalMs: 60_000,
-  }).catch((err: unknown) => {
+  // The corpus sweep runs at its default period: after task 4.5 it is what
+  // indexes the archive at all, so disabling it would drive the gate against an
+  // empty list rather than a quiet one.
+  const dev = await startDevServer().catch((err: unknown) => {
     throw new Error(devServerHint(err));
   });
   ctx.onCleanup(() => dev.close());

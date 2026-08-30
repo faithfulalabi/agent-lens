@@ -1,5 +1,8 @@
-// These path helpers are copied from `src/capture/tailer.ts`, not imported:
-// that module pulls in the DB layer, and with it `node:sqlite`.
+// The sole owner of the three transcript path helpers — `resolveTranscriptRoot`,
+// `resolveDataDir` and `canonicalizeTranscriptPath`. They were copied here from
+// plan 001's `src/capture/tailer.ts` rather than imported, because that module
+// pulled in the DB layer and with it `node:sqlite`; Task 4.5 deleted it, so
+// there is no second copy left to drift from.
 //
 // This is also the module that owns every archive write, so the two safety
 // primitives every writer needs live here rather than above them:

@@ -219,15 +219,15 @@ describe('the v2 DDL survives the transport (AC1)', () => {
     expect(Object.keys(module).sort()).toEqual(['SCHEMA_DDL', 'SCHEMA_VERSION']);
   });
 
-  it('carries no migration runner, and creates no second migrations tree', () => {
-    // Scoped to the NEW module on purpose. `src/db/migrations/` is live plan-001
-    // code, imported at db/migrate.ts:7 and reached from server/start.ts on every
-    // boot; TASK 4.5 deletes it, not this task, and layout.test.ts still requires
-    // db/index.ts to exist.
+  it('carries no migration runner, and creates no migrations tree at all', () => {
+    // Task 4.5 deleted `src/db/migrations/` and `db/migrate.ts`, so the scope
+    // this test used to carve out is gone: there is no second tree to be scoped
+    // AWAY from, and the assertion is now simply that neither exists.
     for (const file of ['schema.ts', 'open.ts']) {
       expect(readFileSync(join(DB_DIR, file), 'utf8')).not.toMatch(/from\s+'\.[^']*migrat/);
     }
-    expect(existsSync(join(DB_DIR, 'migrations-v2'))).toBe(false);
+    expect(existsSync(join(DB_DIR, 'migrations'))).toBe(false);
+    expect(existsSync(join(DB_DIR, 'migrate.ts'))).toBe(false);
   });
 });
 

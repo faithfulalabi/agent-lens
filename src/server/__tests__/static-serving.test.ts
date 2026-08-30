@@ -22,9 +22,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { freshDb } from '../../capture/__tests__/fixtures.js';
-import { buildApp } from '../app.js';
-import { Broadcaster } from '../sse.js';
+import { buildApiApp } from '../app.js';
+import { openCache } from '../../db/__tests__/fixtures/index.js';
+import { fileEnv } from '../../db/__tests__/fixtures/index.js';
 import { BOOTSTRAP_MARKER, resolveUiDir } from '../static-ui.js';
 import {
   bootTestServer,
@@ -287,17 +287,17 @@ describe('AC2 — path traversal', () => {
 });
 
 describe('AC2 — the SPA fallback is the last route in the app', () => {
-  it('shadows anything registered after buildApp, specific paths included', async () => {
+  it('shadows anything registered after buildApiApp, specific paths included', async () => {
     // The one-way door, documented executably. Hono matches in registration
-    // order and first match wins, so `buildApp`'s `app.get('*')` claims every
+    // order and first match wins, so `buildApiApp`'s `app.get('*')` claims every
     // later registration — which is why the UI routes go in last and why
     // nothing may be bolted on afterwards.
-    const db = freshDb();
+    const db = openCache();
     try {
-      const app = buildApp({
+      const app = buildApiApp({
         db,
         token: 'tok',
-        broadcaster: new Broadcaster(),
+        env: fileEnv(),
         uiDir: makeFakeUiDist(join(tempDir('ui'), 'dist')),
       });
       app.get('/later-specific', (c) => c.text('LATE SPECIFIC'));
@@ -307,7 +307,7 @@ describe('AC2 — the SPA fallback is the last route in the app', () => {
         const res = await app.request(path, { headers: { host: 'localhost' } });
         expect(res.status).toBe(200);
         const body = await res.text();
-        expect(body, `${path} reached a handler registered after buildApp`).toContain(
+        expect(body, `${path} reached a handler registered after buildApiApp`).toContain(
           '<div id="root">',
         );
         expect(body).not.toContain('LATE');
@@ -349,7 +349,7 @@ describe('AC4 — a missing or stale ui/dist degrades, never crashes', () => {
 
     const health = await fetch(s.url('/api/health'), { headers: { [TOKEN_HEADER]: s.token } });
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ processed: expect.any(Number) });
+    expect(await health.json()).toMatchObject({ ok: true, sessions_indexed: expect.any(Number) });
 
     const missing = await fetch(s.url('/api/nope'), { headers: { [TOKEN_HEADER]: s.token } });
     expect(missing.status).toBe(404);

@@ -186,17 +186,21 @@ describe('AC1 — src/project/ is pure, asserted over the source text', () => {
   });
 });
 
-describe('AC2 — no ancestor walk survives outside the quarantined module', () => {
-  it('finds the 128-hop walker in capture/merge.ts and nowhere else', () => {
+describe('AC2 — no ancestor walk survives anywhere under src/', () => {
+  it('finds the 128-hop walker in no file at all', () => {
     const walker = /MAX_ANCESTOR_HOPS|promptIdViaAncestors/;
-    const carriers = sources(SRC_DIR)
+    const scanned = sources(SRC_DIR);
+    const carriers = scanned
       .filter((file) => walker.test(read(file)))
       .map((file) => file.slice(SRC_DIR.length + 1));
 
-    // Non-vacuous today, and reds the day the walker is copied forward. Task 4.5
-    // deletes `capture/merge.ts`, which reds this too — correctly, because the
-    // expectation is then simply `[]`.
-    expect(carriers).toEqual(['capture/merge.ts']);
+    // ★ THE NON-VACUITY GUARD BELONGS HERE, on `sources(SRC_DIR)`, and nowhere
+    // else in this file guards it: `:180-187` guards `identifiers()` and the
+    // `sources()` check at `:144` runs over PROJECT_DIR. Task 4.5 deleted
+    // `capture/merge.ts`, so this expectation is now `[]` — and an empty walk,
+    // for any reason at all, would satisfy that without the line below.
+    expect(scanned.length).toBeGreaterThan(20);
+    expect(carriers).toEqual([]);
   });
 });
 

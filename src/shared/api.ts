@@ -26,6 +26,11 @@ export interface Page<T> {
 }
 
 /**
+ * ⚠️ STALE AS OF TASK 4.5, kept because six UI files still import the entity
+ * types beside it and Task 5.1 deletes both together. `GET /api/sessions/:id`
+ * now answers `{session, turns, events, next_seq, has_more, fingerprint}`, which
+ * `ui/src/lib/api.ts` declares; nothing constructs the shape below any more.
+ *
  * `GET /api/sessions/:id` — the session summary plus its traces.
  *
  * The trace list is a nested `Page<Trace>` rather than a bare array: a session's
@@ -38,6 +43,9 @@ export interface SessionDetail {
 }
 
 /**
+ * ⚠️ STALE AS OF TASK 4.5: the route is gone and `GET /api/events/:id/content`
+ * replaces it. Kept alongside `SessionDetail` above, on the same schedule.
+ *
  * `GET /api/payloads/:id[?range=start-end]` — a payload slice with the metadata
  * the UI needs to decide whether to offer "Show full".
  *

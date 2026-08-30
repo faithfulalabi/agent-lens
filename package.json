@@ -20,7 +20,6 @@
     "dev:ui": "npm --prefix ui run dev",
     "render-gate": "tsx src/render-gate/index.ts",
     "test": "vitest run",
-    "snapshots:update": "AGENT_LENS_UPDATE_SNAPSHOTS=1 vitest run -u src/capture/__tests__/golden-replay.test.ts",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",
     "build": "tsc -p tsconfig.node.json && npm --prefix ui run build",
     "lint": "eslint .",

@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { DatabaseSync } from 'node:sqlite';
 import { DriftCounter } from '../../transcript/drift.js';
 import { classifyLine, type ParsedLine } from '../../transcript/line.js';
 import { offsetLines, type OffsetLine } from '../../transcript/__tests__/fixtures.js';
@@ -36,4 +37,41 @@ export function classifyProjectFixture(name: string): {
     }),
   );
   return { lines, drift, offsets };
+}
+
+/**
+ * Columns whose value comes from the checkout rather than from the transcript:
+ * absolute paths, the filesystem clock, and the projector stamp
+ * `projector-version.test.ts` already owns. Including any of them would make a
+ * committed snapshot machine-specific and therefore un-reviewable.
+ */
+const VOLATILE_COLUMNS = new Set([
+  'source_path',
+  'archive_path',
+  'file_mtime_ms',
+  'projected_mtime_ms',
+  'projected_at',
+  'projector_version',
+]);
+
+type Row = Record<string, unknown>;
+
+function rows(db: DatabaseSync, sql: string): Row[] {
+  return db.prepare(sql).all() as Row[];
+}
+
+/**
+ * The whole projection as canonical, line-diffable JSON — the successor to plan
+ * 001's `capture/__tests__/golden.ts:projectionSnapshot`, over the three v2
+ * tables. Every table is ordered by a stable key, never by rowid.
+ */
+export function projectionSnapshot(db: DatabaseSync): string {
+  const strip = (row: Row): Row =>
+    Object.fromEntries(Object.entries(row).filter(([key]) => !VOLATILE_COLUMNS.has(key)));
+  const snapshot = {
+    sessions: rows(db, 'SELECT * FROM sessions ORDER BY id').map(strip),
+    turns: rows(db, 'SELECT * FROM turns ORDER BY session_id, seq'),
+    events: rows(db, 'SELECT * FROM events ORDER BY session_id, seq'),
+  };
+  return `${JSON.stringify(snapshot, null, 2)}\n`;
 }

@@ -1,8 +1,12 @@
 /*
  * The typed read-API client (Task 5.1c, AC1).
  *
- * Five methods, one per route registered by `src/server/read-api.ts`, returning
- * the shared wire types verbatim. Two rules shape everything below:
+ * Two methods, against two of the ten routes `src/server/api.ts` registers.
+ * Task 4.5 deleted the other three — `listSpans`, `listMessages` and
+ * `getPayload` — with the routes they called: the tool-call fold makes a span
+ * list an event page, and `/api/traces/:id/messages` and `/api/payloads/:id` do
+ * not exist. `/api/events/:id/content` replaces the last of them and Task 5.3
+ * writes its client. Two rules shape everything below:
  *
  * 1. **Every path is origin-relative.** `ui/src/__tests__/no-egress.test.ts`
  *    fails the build on any new absolute URL literal in the bundle, and "zero
@@ -22,10 +26,99 @@
  * exhaustively and a dead server never looks like an HTTP 500.
  */
 
-import type { Message, Session, Span } from '@shared/entities.ts';
-import type { Page, PayloadSlice, SessionDetail } from '@shared/api.ts';
+import type { Page } from '@shared/api.ts';
 
 import { readBootstrap, type Bootstrap } from './bootstrap.js';
+
+/*
+ * The v2 response shapes, declared here rather than in `src/shared/api.ts`.
+ *
+ * They are the browser's half of the contract and nothing server-side needs
+ * them; Task 5.1 owns consolidating the wire types when it rewrites the screens,
+ * and putting them in the shared module first would mean editing a file this
+ * cutover otherwise only reads.
+ */
+
+/** One row of `GET /api/sessions`. `live` is stamped by the server, never stored. */
+export interface SessionListRow {
+  id: string;
+  title: string | null;
+  preview: string | null;
+  project_path: string;
+  git_branch: string | null;
+  model: string | null;
+  started_at: string;
+  last_activity_at: string;
+  turn_count: number;
+  tool_call_count: number;
+  error_count: number;
+  tokens_in: number;
+  tokens_out: number;
+  est_cost: number | null;
+  agent_count: number;
+  has_drift: boolean;
+  live: boolean;
+}
+
+/** One row of the `turns` array on the detail response. */
+export interface TurnRow {
+  id: string;
+  seq: number;
+  kind: string;
+  title: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_ms: number | null;
+  tokens_in: number;
+  tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  est_cost: number | null;
+  tool_call_count: number;
+  error_count: number;
+  first_seq: number;
+  last_seq: number;
+}
+
+/** One row of the `events` array — the tool_use/tool_result fold, already done. */
+export interface EventRow {
+  id: string;
+  turn_id: string;
+  seq: number;
+  kind: string;
+  ts: string;
+  name: string | null;
+  status: string | null;
+  duration_ms: number | null;
+  text: string | null;
+  text_bytes: number | null;
+  output_storage: string | null;
+  model: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  est_cost: number | null;
+  child_session_id: string | null;
+  agent_type: string | null;
+  raw_type: string;
+}
+
+/**
+ * `GET /api/sessions/:id` — the header, its turns, and ONE PAGE of events.
+ *
+ * The event page is a CURSOR, not an offset window: `next_seq` is where the
+ * following request starts, and `has_more` says whether to make one. An offset
+ * scheme would renumber the whole page whenever the file grew mid-scroll, which
+ * is the state a live tail is in by definition.
+ */
+export interface SessionDetailBody {
+  session: SessionListRow & { projection: { state: string; error?: string | null } };
+  turns: TurnRow[];
+  events: EventRow[];
+  next_seq: number;
+  has_more: boolean;
+  /** The live-tail epoch. Empty when the archive had no bytes to fold. */
+  fingerprint: string;
+}
 
 /** Discriminant shared by every failure this client throws. */
 export type ApiErrorKind = 'auth' | 'http' | 'network';
@@ -94,16 +187,25 @@ export interface PageQuery {
   offset?: number;
 }
 
-/** `GET /api/sessions` filters. Empty strings are omitted, as the server does. */
+/**
+ * `GET /api/sessions` filters. Empty strings are omitted, as the server does.
+ *
+ * ★ NO `from`/`to`. `src/server/api.ts` reads only `limit/offset/sort/project/q`
+ * and `parsePageParams` IGNORES an unknown param rather than 400-ing, so a range
+ * narrowing sent here would silently no-op — set by the reader, never applied by
+ * the server. Removed rather than left, so whoever restores the feature finds an
+ * obvious gap instead of a lie. Ruled at the phase-4 gate.
+ */
 export interface SessionsQuery extends PageQuery {
-  from?: string;
-  to?: string;
   project?: string;
+  q?: string;
+  sort?: 'recent' | 'cost' | 'tokens' | 'errors';
 }
 
-/** `GET /api/sessions/:id/spans` — `?trace=` narrows to a single turn. */
-export interface SpansQuery extends PageQuery {
-  trace?: string;
+/** `GET /api/sessions/:id` — `from_seq` is the event cursor, not an offset. */
+export interface SessionDetailQuery {
+  limit?: number;
+  from_seq?: number;
 }
 
 /** Per-request cancellation, passed straight through to `fetch`. */
@@ -112,12 +214,12 @@ export interface RequestOptions {
 }
 
 export interface ApiClient {
-  listSessions(query?: SessionsQuery, options?: RequestOptions): Promise<Page<Session>>;
-  getSession(id: string, page?: PageQuery, options?: RequestOptions): Promise<SessionDetail>;
-  listSpans(id: string, query?: SpansQuery, options?: RequestOptions): Promise<Page<Span>>;
-  listMessages(traceId: string, page?: PageQuery, options?: RequestOptions): Promise<Page<Message>>;
-  /** `range` is the raw `start-end` string; `end` is omissible (`1024-`). */
-  getPayload(id: string, range?: string, options?: RequestOptions): Promise<PayloadSlice>;
+  listSessions(query?: SessionsQuery, options?: RequestOptions): Promise<Page<SessionListRow>>;
+  getSession(
+    id: string,
+    query?: SessionDetailQuery,
+    options?: RequestOptions,
+  ): Promise<SessionDetailBody>;
 }
 
 export interface ApiClientOptions {
@@ -161,23 +263,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
   return {
     listSessions: (query = {}, options) =>
-      request<Page<Session>>('/api/sessions', { ...query }, options),
+      request<Page<SessionListRow>>('/api/sessions', { ...query }, options),
 
-    getSession: (id, page = {}, options) =>
-      request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`, { ...page }, options),
-
-    listSpans: (id, query = {}, options) =>
-      request<Page<Span>>(`/api/sessions/${encodeURIComponent(id)}/spans`, { ...query }, options),
-
-    listMessages: (traceId, page = {}, options) =>
-      request<Page<Message>>(
-        `/api/traces/${encodeURIComponent(traceId)}/messages`,
-        { ...page },
+    getSession: (id, query = {}, options) =>
+      request<SessionDetailBody>(
+        `/api/sessions/${encodeURIComponent(id)}`,
+        { ...query },
         options,
       ),
-
-    getPayload: (id, range, options) =>
-      request<PayloadSlice>(`/api/payloads/${encodeURIComponent(id)}`, { range }, options),
   };
 }
 

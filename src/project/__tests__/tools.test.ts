@@ -114,6 +114,9 @@ describe('AC2 — the status ladder, four arms and the order that decides two', 
   });
 
   it('leaves a call nothing answered `running`, with no output and no duration', () => {
+    // The successor to `merge-e2e.test.ts` test 17a's in-flight arm (plan 001):
+    // the call was issued and no result reached us, so it is honestly still open.
+    // Defaulting an unanswered `tool_use` to `ok` fabricates a success.
     const pending = callAt(project('tool-join.jsonl'), 'toolu_unjoined');
 
     expect(pending).toMatchObject({

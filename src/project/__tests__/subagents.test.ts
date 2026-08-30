@@ -411,12 +411,14 @@ describe('AC4 — the spawning tool is the literal Agent', () => {
     expect(scanTrees(/Subagent(Start|Stop)/)).toStrictEqual([]);
   });
 
-  it('…and the same scanner over the quarantined module DOES hit', () => {
-    // Non-vacuity. `capture/normalizer.ts` holds the only occurrences in `src/`
-    // and is `LEGACY_TREES`-quarantined until task 4.5, so a scope that hid a
-    // live read would look identical to a clean one without this control.
-    expect(
-      scanFiles([join(SRC_DIR, 'capture', 'normalizer.ts')], /Subagent(Start|Stop)/).length,
-    ).toBeGreaterThan(0);
+  it('…and the same scanner over the captured manifest DOES hit', () => {
+    // Non-vacuity, and after task 4.5 it is SEMANTICALLY STRONGER than the
+    // `capture/normalizer.ts` control it replaces. No non-test carrier of these
+    // two hook names survives under `src/`, so the scan above would look
+    // identical whether the scope was right or empty. The scrubbed manifest is
+    // the record that the real harness DID emit them — which is exactly the fact
+    // the assertion above says the projector ignores.
+    const manifest = join(SRC_DIR, '..', 'fixtures', 'scrubbed', 'subagent', 'manifest.json');
+    expect(scanFiles([manifest], /Subagent(Start|Stop)/).length).toBeGreaterThan(0);
   });
 });

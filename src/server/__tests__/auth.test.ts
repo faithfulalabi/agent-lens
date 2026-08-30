@@ -8,7 +8,6 @@ import { resolveBindHosts } from '../middleware/host-guard.js';
 import {
   bootTestServer,
   cleanupDir,
-  makeTestEnvelope,
   rawRequest,
   TOKEN_HEADER,
   type TestServer,
@@ -24,31 +23,27 @@ afterEach(async () => {
   }
 });
 
-async function eventCount(s: TestServer): Promise<number> {
-  const events = (await (
-    await fetch(s.url('/api/events'), { headers: { [TOKEN_HEADER]: s.token } })
-  ).json()) as unknown[];
-  return events.length;
+/** The corpus as the API reports it. A booted test server sweeps nothing, so 0. */
+async function sessionCount(s: TestServer): Promise<number> {
+  const body = (await (
+    await fetch(s.url('/api/sessions'), { headers: { [TOKEN_HEADER]: s.token } })
+  ).json()) as { items: unknown[] };
+  return body.items.length;
 }
 
 describe('token auth on /api/*', () => {
-  it('rejects ingest without a token (401) and writes no row', async () => {
+  it('rejects a write without a token (401), and the corpus stays untouched', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/ingest'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(makeTestEnvelope()),
-    });
+    const res = await fetch(server.url('/api/warm'), { method: 'POST' });
     expect(res.status).toBe(401);
-    expect(await eventCount(server)).toBe(0);
+    expect(await sessionCount(server)).toBe(0);
   });
 
-  it('rejects ingest with a wrong token (401)', async () => {
+  it('rejects a write with a wrong token (401)', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/ingest'), {
+    const res = await fetch(server.url('/api/warm'), {
       method: 'POST',
-      headers: { [TOKEN_HEADER]: 'nope', 'content-type': 'application/json' },
-      body: JSON.stringify(makeTestEnvelope()),
+      headers: { [TOKEN_HEADER]: 'nope' },
     });
     expect(res.status).toBe(401);
   });
@@ -60,15 +55,15 @@ describe('token auth on /api/*', () => {
     await res.body?.cancel();
   });
 
-  it('rejects /api/events without a token (401)', async () => {
+  it('rejects /api/sessions without a token (401)', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/events'));
+    const res = await fetch(server.url('/api/sessions'));
     expect(res.status).toBe(401);
   });
 
-  it('rejects /api/events with a wrong token (401)', async () => {
+  it('rejects /api/sessions with a wrong token (401)', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/events'), {
+    const res = await fetch(server.url('/api/sessions'), {
       headers: { [TOKEN_HEADER]: 'nope' },
     });
     expect(res.status).toBe(401);
@@ -83,11 +78,11 @@ describe('token auth on /api/*', () => {
     await res.body?.cancel();
   });
 
-  // The Task 6.1 delta streams, both halves of the token check. `sess-1` does
-  // NOT exist in a fresh data dir, which is the point: the guards run as
-  // middleware, so an unknown session with a bad token is a 401, never the 404
-  // the handler would have returned.
-  it.each(['/api/stream/sessions', '/api/stream/sessions/sess-1'])(
+  // Both halves of the token check on a parameterised route. `sess-1` does NOT
+  // exist in a fresh data dir, which is the point: the guards run as middleware,
+  // so an unknown session with a bad token is a 401, never the 404 the handler
+  // would have returned.
+  it.each(['/api/sessions/sess-1', '/api/search?q=x'])(
     'rejects %s without a token (401)',
     async (path) => {
       server = await bootTestServer();
@@ -97,7 +92,7 @@ describe('token auth on /api/*', () => {
     },
   );
 
-  it.each(['/api/stream/sessions', '/api/stream/sessions/sess-1'])(
+  it.each(['/api/sessions/sess-1', '/api/search?q=x'])(
     'rejects %s with a wrong token (401)',
     async (path) => {
       server = await bootTestServer();
@@ -109,10 +104,8 @@ describe('token auth on /api/*', () => {
 
   it('accepts requests with the correct token', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/ingest'), {
-      method: 'POST',
-      headers: { [TOKEN_HEADER]: server.token, 'content-type': 'application/json' },
-      body: JSON.stringify(makeTestEnvelope()),
+    const res = await fetch(server.url('/api/sessions'), {
+      headers: { [TOKEN_HEADER]: server.token },
     });
     expect(res.status).toBe(200);
   });
@@ -123,24 +116,23 @@ describe('host-header guard', () => {
     server = await bootTestServer();
     const res = await rawRequest(
       server.handle.port,
-      '/api/ingest',
+      '/api/warm',
       {
         [TOKEN_HEADER]: server.token,
         'content-type': 'application/json',
         host: 'evil.com',
       },
       'POST',
-      JSON.stringify(makeTestEnvelope()),
     );
     expect(res.status).toBe(403);
-    expect(await eventCount(server)).toBe(0);
+    expect(await sessionCount(server)).toBe(0);
   });
 
   it.each(['localhost', '127.0.0.1', '[::1]'])(
     'allows loopback Host %s',
     async (host) => {
       server = await bootTestServer();
-      const res = await rawRequest(server.handle.port, '/api/events', {
+      const res = await rawRequest(server.handle.port, '/api/sessions', {
         [TOKEN_HEADER]: server.token,
         host: `${host}:${server.handle.port}`,
       });
@@ -153,12 +145,11 @@ describe('host-header guard', () => {
   // it, hence the asset and deep-link rows.
   it.each([
     '/',
-    '/api/events',
+    '/api/sessions',
     '/api/stream',
-    // The Task 6.1 delta streams inherit the same guards, and an unknown session
-    // id must not become an exception to them.
-    '/api/stream/sessions',
-    '/api/stream/sessions/sess-1',
+    // A parameterised route inherits the same guards, and an unknown session id
+    // must not become an exception to them.
+    '/api/sessions/sess-1',
     '/assets/app-abc123.js',
     '/session/abc',
     '/session/abc/trace/3',
@@ -204,7 +195,7 @@ describe('the UI is reachable without a token; /api/* is not', () => {
 
   it('still 401s /api/* without a token, and never answers it with SPA HTML', async () => {
     server = await bootTestServer();
-    const res = await fetch(server.url('/api/events'));
+    const res = await fetch(server.url('/api/sessions'));
     expect(res.status).toBe(401);
     expect((await res.text()).startsWith('<')).toBe(false);
   });
@@ -237,9 +228,9 @@ describe('--host (non-loopback bind)', () => {
       port: 0,
       dataDir: dir,
       host: '0.0.0.0',
-      // Bypasses `bootTestServer`, so opt out of the tailer explicitly: the boot
-      // catch-up would otherwise scan the developer's real `~/.claude/projects`.
-      tailIntervalMs: 0,
+      // Bypasses `bootTestServer`, so opt out of the sweep explicitly: its first
+      // tick would otherwise walk the developer's real `~/.agent-lens/archive`.
+      sweepIntervalMs: 0,
     });
     const token = readToken(dir)!;
 
@@ -255,20 +246,20 @@ describe('--host (non-loopback bind)', () => {
     expect(interfaceHost).toBeDefined();
 
     // Auth intact: resolved interface Host + missing token -> 401.
-    const noToken = await rawRequest(handle.port, '/api/events', {
+    const noToken = await rawRequest(handle.port, '/api/sessions', {
       host: `${interfaceHost}:${handle.port}`,
     });
     expect(noToken.status).toBe(401);
 
     // Rebinding defense intact: spoofed Host -> 403 even with a valid token.
-    const spoofed = await rawRequest(handle.port, '/api/events', {
+    const spoofed = await rawRequest(handle.port, '/api/sessions', {
       [TOKEN_HEADER]: token,
       host: 'evil.com',
     });
     expect(spoofed.status).toBe(403);
 
     // Exposed server actually reachable: resolved interface Host + valid token -> 200.
-    const ok = await rawRequest(handle.port, '/api/events', {
+    const ok = await rawRequest(handle.port, '/api/sessions', {
       [TOKEN_HEADER]: token,
       host: `${interfaceHost}:${handle.port}`,
     });
@@ -278,7 +269,7 @@ describe('--host (non-loopback bind)', () => {
   it('does not warn on a default loopback bind', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dir = mkdtempSync(join(tmpdir(), 'agent-lens-host-'));
-    handle = await startServer({ port: 0, dataDir: dir, tailIntervalMs: 0 });
+    handle = await startServer({ port: 0, dataDir: dir, sweepIntervalMs: 0 });
     expect(warn).not.toHaveBeenCalled();
   });
 });

@@ -1,22 +1,9 @@
-// The schema contract module: envelope + entity types, deterministic event-ID
-// derivation, and the local auth-token helper. Imported identically by adapter,
-// tailer, and server (types also by the UI). Zero runtime dependencies — Node
-// builtins only.
-
-export type {
-  Envelope,
-  EnvelopeSource,
-  MakeEnvelopeInput,
-} from './envelope.js';
-export { makeEnvelope } from './envelope.js';
-
-export type {
-  EventIdInput,
-  HookEventIdInput,
-  TranscriptEventIdInput,
-  GenericEventIdInput,
-} from './event-id.js';
-export { deriveEventId, canonicalJson } from './event-id.js';
+// The schema contract module: entity types, the bundled pricing table, and the
+// local auth-token helper. Imported by the server (types also by the UI). Zero
+// runtime dependencies — Node builtins only.
+//
+// The envelope and event-id halves went with the hook path in Task 4.5: v2 reads
+// transcripts, so there is no envelope to shape and no id to derive.
 
 export type {
   Session,

@@ -5,9 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { runInNewContext } from 'node:vm';
 import { readToken, TOKEN_HEADER } from '../../shared/index.js';
-import { DB_FILE } from '../../db/index.js';
-import type { SweepResult } from '../../capture/inactivity.js';
-import type { TailResult } from '../../capture/tailer.js';
+import { CACHE_DB_FILE } from '../../db/open.js';
 import { startServer, type ServerHandle } from '../start.js';
 
 /** A booted test server plus its temp data dir and convenience accessors. */
@@ -26,23 +24,12 @@ export interface TestServer {
 /** Extra `startServer` wiring a test can request. */
 export interface BootOptions {
   dataDir?: string;
+  /** Corpus-sweep period in ms; defaults to `0` — a test opts IN to sweeping. */
   sweepIntervalMs?: number;
-  /** Silence threshold the sweep applies; without it a test cannot age a session. */
-  sweepTimeoutMs?: number;
-  onSweep?: (result: SweepResult) => void;
   /** `ui/dist` override; defaults to a fresh `makeFakeUiDist()`. */
   uiDir?: string;
   /** Transcript root override; defaults to a fresh EMPTY temp dir. */
   transcriptRoot?: string;
-  /** Tail period in ms; defaults to `0` — a test opts IN to tailing. */
-  tailIntervalMs?: number;
-  /** Forwarded to the tailer; `'backfill'` reads unknown files from zero. */
-  firstSight?: 'eof' | 'backfill';
-  /** Forwarded to the tailer; restricts discovery to these slug directories. */
-  projects?: readonly string[];
-  onTail?: (result: TailResult) => void;
-  /** SSE heartbeat period in ms; defaults to the production 15s. */
-  heartbeatMs?: number;
 }
 
 /** The fingerprint-shaped basename every fake bundle's assets share. */
@@ -86,12 +73,12 @@ export function makeFakeUiDist(dir = mkdtempSync(join(tmpdir(), 'agent-lens-ui-'
  * either the legacy positional data dir or an options bag forwarded to
  * `startServer`.
  *
- * `transcriptRoot` and `tailIntervalMs` default the same way `uiDir` does, and
+ * `transcriptRoot` and `sweepIntervalMs` default the same way `uiDir` does, and
  * for the same reason spelled out on {@link makeFakeUiDist}: the production
- * default is the developer's real `~/.claude/projects` (20 MB / 4000 lines / a
- * dozen unrelated projects on a working machine), which every server test would
- * otherwise scan synchronously before the socket binds. A fresh EMPTY root plus
- * tailing OFF means a test opts IN to the tailer and says exactly what it feeds it.
+ * default is the developer's real `~/.claude/projects` and `~/.agent-lens`
+ * (a dozen unrelated projects on a working machine), which every server test
+ * would otherwise walk synchronously before the socket binds. A fresh EMPTY root
+ * plus the sweep OFF means a test opts IN and says exactly what it feeds it.
  */
 export async function bootTestServer(
   options: string | BootOptions = {},
@@ -108,16 +95,9 @@ export async function bootTestServer(
   const handle = await startServer({
     port: 0,
     dataDir,
-    sweepIntervalMs: opts.sweepIntervalMs,
-    sweepTimeoutMs: opts.sweepTimeoutMs,
-    onSweep: opts.onSweep,
+    sweepIntervalMs: opts.sweepIntervalMs ?? 0,
     uiDir,
     transcriptRoot,
-    tailIntervalMs: opts.tailIntervalMs ?? 0,
-    firstSight: opts.firstSight,
-    projects: opts.projects,
-    onTail: opts.onTail,
-    heartbeatMs: opts.heartbeatMs,
   });
   const token = readToken(dataDir)!;
   return {
@@ -136,99 +116,18 @@ export async function bootTestServer(
 }
 
 /**
- * Open a second read connection to a booted server's SQLite file, so an
- * HTTP-level test can assert on tables the API does not expose. WAL allows the
- * concurrent reader; the caller closes the handle.
+ * Open a second read connection to a booted server's cache.db, so an HTTP-level
+ * test can assert on tables the API does not expose. WAL allows the concurrent
+ * reader; the caller closes the handle. It takes NO lock — `openDb`'s
+ * single-instance lock is held by the server under test.
  */
 export function openTestDb(dataDir: string): DatabaseSync {
-  return new DatabaseSync(join(dataDir, DB_FILE));
+  return new DatabaseSync(join(dataDir, CACHE_DB_FILE));
 }
 
 /** Delete a temp data dir tree. */
 export function cleanupDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
-}
-
-// --- SSE frame reading -----------------------------------------------------
-// One reader, shared. This lived as byte-near copies in `ingest.test.ts` and
-// `read-api.test.ts` (the second literally said "mirrors ingest.test.ts") until
-// Task 6.1 needed a third; both call sites now import from here.
-
-/** One parsed SSE frame: its `event:` name, raw `data:` text, and `id:` if present. */
-export interface SseFrame {
-  event: string;
-  data: string;
-  id?: string;
-}
-
-/** Split one `\n\n`-terminated SSE frame into its fields. */
-function parseFrame(raw: string): SseFrame {
-  const frame: SseFrame = { event: '', data: '' };
-  const dataLines: string[] = [];
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) frame.event = line.slice('event:'.length).trim();
-    else if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
-    else if (line.startsWith('id:')) frame.id = line.slice('id:'.length).trim();
-  }
-  frame.data = dataLines.join('\n');
-  return frame;
-}
-
-/**
- * Read SSE frames off a streaming response until `stop` says to finish (or the
- * deadline passes), then cancel the reader. Every frame is yielded to `stop`,
- * heartbeats included, so a caller can assert on frame ORDER rather than just
- * on the presence of the one it wanted.
- *
- * Deliberately returns raw `data` text: the parse belongs to the caller, because
- * a heartbeat's `data` is the empty string and `JSON.parse('')` is exactly the
- * crash this repo's SSE contract exists to prevent.
- */
-export async function readSseFrames(
-  res: Response,
-  stop: (frame: SseFrame, all: SseFrame[]) => boolean,
-  timeoutMs = 1000,
-): Promise<SseFrame[]> {
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  const frames: SseFrame[] = [];
-  let buf = '';
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf('\n\n')) !== -1) {
-        const raw = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const frame = parseFrame(raw);
-        frames.push(frame);
-        if (stop(frame, frames)) return frames;
-      }
-    }
-    return frames;
-  } finally {
-    await reader.cancel();
-  }
-}
-
-/**
- * Read one SSE frame of the given event type and JSON-parse its data. Throws if
- * no such frame arrives inside `timeoutMs`.
- */
-export async function readOneEvent(
-  res: Response,
-  eventType: string,
-  timeoutMs = 1000,
-): Promise<Record<string, unknown>> {
-  const frames = await readSseFrames(res, (f) => f.event === eventType, timeoutMs);
-  const match = frames.find((f) => f.event === eventType);
-  if (match === undefined) {
-    throw new Error(`no "${eventType}" frame within ${timeoutMs}ms`);
-  }
-  return JSON.parse(match.data) as Record<string, unknown>;
 }
 
 // --- Raw HTTP, and reading the served page ---------------------------------
@@ -301,20 +200,6 @@ export function urlLiterals(html: string): string[] {
     ...[...html.matchAll(/https?:\/\/[^\s"'`<>]+/g)].map((m) => m[0]),
     ...[...html.matchAll(/\?[^\s"'`<>]*=[^\s"'`<>]*/g)].map((m) => m[0]),
   ];
-}
-
-/** A minimal valid hook envelope for ingest tests. */
-export function makeTestEnvelope(overrides: Record<string, unknown> = {}) {
-  return {
-    event_id: 'sess-1:hook:PreToolUse:tool-abc',
-    session_id: 'sess-1',
-    harness: 'claude-code',
-    source: 'hook',
-    hook_name: 'PreToolUse',
-    ts: '2026-07-22T00:00:00.000Z',
-    raw_payload: { tool: 'bash', cmd: 'ls' },
-    ...overrides,
-  };
 }
 
 export { TOKEN_HEADER };

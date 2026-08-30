@@ -9,11 +9,10 @@
 # was regenerated. Asserted by golden-replay.test.ts.
 src/**/__snapshots__/
 
-# Golden fixture sets. `envelopes.jsonl` has no Prettier parser and is skipped
-# anyway, but these directories also carry `.json` sidecars (Task 1.7 commits a
+# Captured fixture sets. `.jsonl` has no Prettier parser and is skipped anyway,
+# but these directories also carry `.json` sidecars (Task 1.7 commits a
 # `manifest.json` per set) that live under the SCRUBBING.md sign-off — a format
 # run must not rewrite data a human signed off on byte-for-byte.
-src/capture/__tests__/fixtures/golden/
 fixtures/
 
 # Generated / vendored, mirroring eslint.config.js's ignore list.

@@ -337,6 +337,22 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
     for (const event of result.events) expect(event.attrs).toBe('{}');
   });
 
+  it('counts a failing call on its own turn, and marks that call `error`', () => {
+    // The successor to `merge-e2e.test.ts` test 17b (plan 001). There, a tool
+    // call that failed with no hook in the session read `ok` and silently zeroed
+    // `error_count`; here every projection is hookless by construction, so the
+    // status and the count are asserted together on the one call that failed.
+    const result = project('tool-join.jsonl');
+    const failing = result.events.find((event) => event.id === 'toolu_err');
+    const turn = result.turns.find((candidate) => candidate.id === failing?.turn_id);
+
+    expect(failing?.status).toBe('error');
+    // `is_error === true` exactly. `toolu_ok`'s result carries `is_error: false`
+    // and `toolu_unjoined` has no result at all, so a `!is_error` reading counts
+    // three here instead of the two that really failed.
+    expect(turn?.error_count).toBe(2);
+  });
+
   it('renders an image as its placeholder, never its payload', () => {
     const result = project('turn-kinds.jsonl');
     const image = result.events.find((event) => event.text?.startsWith('[image') === true);

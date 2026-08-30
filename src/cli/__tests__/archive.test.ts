@@ -376,33 +376,27 @@ describe('the codes a wrapper can tell apart (AC1)', () => {
 });
 
 describe('widening `Command.run` leaves every other command at 0', () => {
-  // `main` now returns `code ?? 0`, so a command that returns `void` keeps its
-  // old code only because `undefined ?? 0` is 0. Nothing exercised that before.
-  it('main(["hook"]) returns 0 — the adapter must never harm a session', async () => {
-    // `commands/hook.ts` binds `stdin` off the `node:process` namespace at import,
-    // so the adapter reads THIS process's stdin and no substitute can reach it.
-    // Closing it is what the harness itself does after writing a payload, and an
-    // empty stdin is the adapter's most adversarial input: it dead-letters, and
-    // must still come back 0. Vitest forks a child per test file, so this ends
-    // nothing outside this one.
+  // `main` returns `code ?? 0`, so a command that returns `void` keeps its old
+  // code only because `undefined ?? 0` is 0. Nothing exercised that before.
+  //
+  // Re-pointed from `hook` to `doctor` by task 4.5: `hook` was the cheapest
+  // non-`archive` command to drive, and it is deleted. `doctor` is the only
+  // remaining `void` command — `start` boots a server — and the pairing with the
+  // unknown-command row above is what makes this a differential rather than an
+  // assertion that everything is 0.
+  it('main(["doctor"]) returns 0 — a void command still reports success', async () => {
     const s = sb();
     mkdirSync(s.dataDir, { recursive: true });
-    const originalDir = process.env.AGENT_LENS_DIR;
-    process.env.AGENT_LENS_DIR = s.dataDir;
-    if (!process.stdin.readableEnded) process.stdin.push(null);
-    try {
-      expect(await silentMain(['hook'])).toBe(EXIT_OK);
-    } finally {
-      if (originalDir === undefined) delete process.env.AGENT_LENS_DIR;
-      else process.env.AGENT_LENS_DIR = originalDir;
-    }
+    expect(
+      await silentMain(['doctor', `--dataDir=${s.dataDir}`, `--transcriptRoot=${s.sourceRoot}`]),
+    ).toBe(EXIT_OK);
   });
 
-  it('a spawned `agent-lens hook` exits 0, never 2', async () => {
+  it('a spawned `agent-lens doctor` exits 0, never 2', async () => {
     const s = sb();
     mkdirSync(s.dataDir, { recursive: true });
 
-    const status = await runCommand(['hook'], s.dataDir);
+    const status = await runCommand(['doctor', `--dataDir=${s.dataDir}`], s.dataDir);
 
     expect(status).toBe(EXIT_OK);
     expect(status).not.toBe(2); // exit 2 blocks a Claude Code session

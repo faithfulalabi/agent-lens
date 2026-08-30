@@ -59,7 +59,7 @@ function parseHostValue(value: string): string {
  *
  * SIGHUP is the one a closed terminal sends, and its Node default action
  * terminates the process without running any exit handler — leaving the SQLite
- * WAL live, the tail timer running, and `config.json` naming a port nothing is
+ * WAL live, the sweep timer running, and `config.json` naming a port nothing is
  * listening on.
  *
  * **Ordering invariant: the handlers are registered before the readiness line
