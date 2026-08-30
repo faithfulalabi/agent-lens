@@ -48,6 +48,8 @@ export interface Observations {
   /** Verbatim, e.g. `"1,204+ sessions"` — the parse is checked against it. */
   sessionCountRaw: string;
   sessionCount: number;
+  /** `data-slot="back-to-sessions"` anchors on the open session screen. */
+  backLinks: number;
   spanRowCount: number;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
@@ -185,6 +187,14 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       ok: Number.isFinite(result.sessionCount) && result.sessionCount > 0,
       actual: `${result.sessionCount} (from ${quote(result.sessionCountRaw)})`,
       expected: '> 0',
+    },
+    {
+      // AC-R1's second blocking reading. An open session with no way back to
+      // the list is the defect task 5.1 was written to close.
+      name: 'back-to-sessions',
+      ok: result.backLinks >= 1,
+      actual: `${result.backLinks} anchor(s)`,
+      expected: '>= 1 on the open session screen',
     },
     {
       name: 'span-rows',

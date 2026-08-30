@@ -39,7 +39,15 @@ import { readBootstrap, type Bootstrap } from './bootstrap.js';
  * cutover otherwise only reads.
  */
 
-/** One row of `GET /api/sessions`. `live` is stamped by the server, never stored. */
+/**
+ * One row of `GET /api/sessions`. `live` is stamped by the server, never stored.
+ *
+ * Every other field is a column `src/db/read.ts`'s `SessionRow` declares and
+ * `src/server/api.ts` spreads onto the response verbatim. Task 4.5 omitted eight
+ * of them here because no screen read them yet; Task 5.1's row does, and a
+ * declared-but-unsent field would fail loudly rather than silently, so the two
+ * shapes are kept in step instead.
+ */
 export interface SessionListRow {
   id: string;
   title: string | null;
@@ -47,6 +55,7 @@ export interface SessionListRow {
   project_path: string;
   git_branch: string | null;
   model: string | null;
+  harness_version: string | null;
   started_at: string;
   last_activity_at: string;
   turn_count: number;
@@ -54,8 +63,19 @@ export interface SessionListRow {
   error_count: number;
   tokens_in: number;
   tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
   est_cost: number | null;
   agent_count: number;
+  sub_tool_call_count: number;
+  sub_error_count: number;
+  sub_tokens_in: number;
+  sub_tokens_out: number;
+  sub_tokens_cache_read: number;
+  sub_tokens_cache_write: number;
+  sub_est_cost: number | null;
+  /** `own` means the sub-agent sweep has not folded the sidecars in yet. */
+  rollup_state: 'own' | 'complete';
   has_drift: boolean;
   live: boolean;
 }
@@ -65,6 +85,8 @@ export interface TurnRow {
   id: string;
   seq: number;
   kind: string;
+  /** The `Agent` call a `task_notification` turn answers, else null. */
+  parent_event_id: string | null;
   title: string;
   started_at: string;
   ended_at: string | null;
@@ -190,11 +212,13 @@ export interface PageQuery {
 /**
  * `GET /api/sessions` filters. Empty strings are omitted, as the server does.
  *
- * ★ NO `from`/`to`. `src/server/api.ts` reads only `limit/offset/sort/project/q`
- * and `parsePageParams` IGNORES an unknown param rather than 400-ing, so a range
- * narrowing sent here would silently no-op — set by the reader, never applied by
- * the server. Removed rather than left, so whoever restores the feature finds an
- * obvious gap instead of a lie. Ruled at the phase-4 gate.
+ * ★ STILL NO `from`/`to`, AND THAT IS NOW A RULING RATHER THAN A GAP.
+ * `src/server/api.ts` reads only `limit/offset/sort/project/q` and
+ * `parsePageParams` IGNORES an unknown param rather than 400-ing, so a range
+ * narrowing sent here would be set by the reader and never applied by the
+ * server. Task 5.1 restored the narrowing on the CLIENT instead, over the one
+ * unfiltered page — see `session-list.ts` for what that costs and why the
+ * truncation flags carry it.
  */
 export interface SessionsQuery extends PageQuery {
   project?: string;

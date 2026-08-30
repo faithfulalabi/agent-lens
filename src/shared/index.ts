@@ -3,7 +3,8 @@
 // runtime dependencies — Node builtins only.
 //
 // The envelope and event-id halves went with the hook path in Task 4.5: v2 reads
-// transcripts, so there is no envelope to shape and no id to derive.
+// transcripts, so there is no envelope to shape and no id to derive. Task 5.1
+// then dropped the seven entity types that went with them.
 
 export type {
   Session,
@@ -16,13 +17,6 @@ export type {
   SpanType,
   SpanStatus,
   SpanSource,
-  Payload,
-  Message,
-  MessageRole,
-  RawEvent,
-  RawEventSource,
-  RawEventStatus,
-  TailerOffset,
 } from './entities.js';
 
 export type { ModelPrice, TokenUsage } from './pricing.js';

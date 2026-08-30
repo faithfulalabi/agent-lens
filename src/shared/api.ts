@@ -7,8 +7,10 @@
 // so anything browser-facing must be imported from this module directly —
 // `import type { Page } from '@shared/api.js'` — the way
 // `ui/src/__tests__/shared-types.test-d.ts` imports `@shared/entities.js`.
-
-import type { Session, Trace } from './entities.js';
+//
+// `SessionDetail` and `PayloadSlice` went in Task 5.1. Both described routes
+// task 4.5 deleted, nothing constructed either, and they carried this module's
+// only entity import.
 
 /**
  * The one pagination envelope, identical on every list the read API serves.
@@ -23,43 +25,4 @@ export interface Page<T> {
   limit: number;
   offset: number;
   has_more: boolean;
-}
-
-/**
- * ⚠️ STALE AS OF TASK 4.5, kept because six UI files still import the entity
- * types beside it and Task 5.1 deletes both together. `GET /api/sessions/:id`
- * now answers `{session, turns, events, next_seq, has_more, fingerprint}`, which
- * `ui/src/lib/api.ts` declares; nothing constructs the shape below any more.
- *
- * `GET /api/sessions/:id` — the session summary plus its traces.
- *
- * The trace list is a nested `Page<Trace>` rather than a bare array: a session's
- * turn count is unbounded, and an unpaginated array here would be a second,
- * implicit paging scheme. Same `?limit`/`?offset` params as every other list.
- */
-export interface SessionDetail {
-  session: Session;
-  traces: Page<Trace>;
-}
-
-/**
- * ⚠️ STALE AS OF TASK 4.5: the route is gone and `GET /api/events/:id/content`
- * replaces it. Kept alongside `SessionDetail` above, on the same schedule.
- *
- * `GET /api/payloads/:id[?range=start-end]` — a payload slice with the metadata
- * the UI needs to decide whether to offer "Show full".
- *
- * Always HTTP 200 with this JSON body — never a 206, never raw bytes.
- * `byte_size` is the FULL stored size; `range` is the clamped, actually-served
- * interval (`end` inclusive, RFC 9110 convention); `truncated` says the two
- * disagree. `content` is UTF-8 decoded non-fatally, so a range that splits a
- * multi-byte sequence yields U+FFFD at the seam rather than an error.
- */
-export interface PayloadSlice {
-  id: string;
-  byte_size: number;
-  mime_hint?: string;
-  range: { start: number; end: number };
-  content: string;
-  truncated: boolean;
 }

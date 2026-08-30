@@ -1,22 +1,24 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
-import type { Session } from '@shared/entities.ts';
-
 import { cn } from '@/lib/utils';
 import { hrefFor } from '@/lib/route-match';
 import { formatCost, formatDuration, formatStartedAt, formatTokens } from '@/lib/format';
+import type { SessionListRow } from '@/lib/api';
 import {
+  COLUMN_LABELS,
   SORT_COLUMNS,
   formatRowCount,
+  rowLabel,
   type SortColumn,
   type SortDirection,
 } from '@/lib/session-list';
 
 import { MetricChip } from './MetricChip';
-import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from './session-visuals';
+import { SESSION_STATUS_VISUALS } from './session-visuals';
 
 /*
- * The session list itself (Task 5.2b) — Flow 3's entry screen.
+ * The session list itself (Task 5.2b, rebuilt on the v2 wire by Task 5.1) —
+ * Flow 3's entry screen.
  *
  * ===========================================================================
  * ONE ANCHOR PER ROW. NO ARIA GRID ROLES.
@@ -35,9 +37,23 @@ import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from './session-visuals'
  * than fake column headers. The tests assert on `href`.
  *
  * ===========================================================================
+ * THE ROW READS THE WIRE. IT ADAPTS NOTHING AND RECOMPUTES NOTHING.
+ * ===========================================================================
+ * Task 4.5 shipped an adapter that dressed a v2 row up as a plan-001 `Session`,
+ * inventing a capture mode and a status the wire does not carry. Task 5.1
+ * deleted it, so every value below is a stored column: `turn_count` is the
+ * projector's human-prompt count, and the label goes through `rowLabel`, which
+ * refuses a stored title that is harness markup rather than prose.
+ *
+ * `rollup_state === 'own'` means the sub-agent sweep has not folded the
+ * sidecars in yet. Those totals then run 2–6x low, so the row shows a skeleton
+ * instead of a number that is wrong — `design-system.md` Loading states, with
+ * the reduced-motion fallback its Motion section requires.
+ *
+ * ===========================================================================
  * COST GOES THROUGH `formatCost`. ALWAYS.
  * ===========================================================================
- * `MetricChip` takes pre-spelled strings, so `String(session.est_cost)` type
+ * `MetricChip` takes pre-spelled strings, so `String(row.est_cost)` type
  * checks and renders `0` — a session that cost nothing measurable reading as a
  * priced one, which is the mapping `design-system.md` calls out by name. The
  * row test seeds a zero-cost session into its fixture and asserts the markup
@@ -47,15 +63,8 @@ import { CAPTURE_MODE_VISUALS, SESSION_STATUS_VISUALS } from './session-visuals'
  * live session's elapsed time is the whole reason that parameter exists.
  */
 
-const COLUMN_LABELS: Record<SortColumn, string> = {
-  started_at: 'Started',
-  project_path: 'Project',
-  total_tokens: 'Tokens',
-  est_cost: 'Cost',
-};
-
 export interface SessionListViewProps {
-  rows: readonly Session[];
+  rows: readonly SessionListRow[];
   sort: SortColumn;
   direction: SortDirection;
   onSortChange: (column: SortColumn) => void;
@@ -105,15 +114,15 @@ export function SessionListView({
 
         {/*
          * The list states its own size. Pushed to the far end of the strip so
-         * it reads as a summary of the rows rather than a fifth sort control.
+         * it reads as a summary of the rows rather than a third sort control.
          */}
         <span data-slot="session-list-count" className="ml-auto text-2xs text-muted">
           {formatRowCount(rows.length, pageTruncated)}
         </span>
       </div>
 
-      {rows.map((session, index) => (
-        <SessionRow key={session.id} session={session} now={now} isCursor={index === cursor} />
+      {rows.map((row, index) => (
+        <SessionRow key={row.id} row={row} now={now} isCursor={index === cursor} />
       ))}
     </div>
   );
@@ -125,52 +134,75 @@ function SortChevron({ direction }: { direction: SortDirection }) {
 }
 
 function SessionRow({
-  session,
+  row,
   now,
   isCursor,
 }: {
-  session: Session;
+  row: SessionListRow;
   now: number | Date;
   isCursor: boolean;
 }) {
-  const status = SESSION_STATUS_VISUALS[session.status];
-  const degraded = CAPTURE_MODE_VISUALS[session.capture_mode];
+  const status = SESSION_STATUS_VISUALS[row.live ? 'live' : 'complete'];
+  const label = rowLabel(row);
+  const active = formatStartedAt(row.last_activity_at, now);
+  const pending = row.rollup_state === 'own';
 
   return (
     <a
-      href={hrefFor({ name: 'session', sessionId: session.id })}
+      href={hrefFor({ name: 'session', sessionId: row.id })}
       data-slot="session-row"
-      aria-label={`${session.project_path}, ${status.label}, started ${formatStartedAt(session.started_at, now)}`}
+      aria-label={
+        `${label}, ${row.project_path}, ${status.label}, ${row.turn_count} turns, ` +
+        `active ${active}${pending ? ', sub-agent totals still being summed' : ''}`
+      }
       className={cn(
         'flex h-9 items-center gap-3 border-b border-border px-3 text-xs text-foreground',
         isCursor && 'bg-surface-raised',
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{session.project_path}</span>
-      <span className="w-24 shrink-0 text-muted">{formatStartedAt(session.started_at, now)}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="w-40 shrink-0 truncate text-muted">{row.project_path}</span>
+      <span className="w-24 shrink-0 text-muted">{active}</span>
 
-      <span className={cn('flex w-24 shrink-0 items-center gap-1', status.badge)}>
+      <span className={cn('flex w-20 shrink-0 items-center gap-1', status.badge)}>
         <span aria-hidden="true" className={cn('size-1.5 rounded-md', status.dot)} />
         {status.label}
       </span>
 
-      {degraded === null ? null : (
-        <span data-slot="degraded-chip" className={degraded.chip}>
-          {degraded.label}
+      {/* Right-aligned mono numerics, per the design system's table rules. */}
+      <span
+        data-slot="session-turns"
+        className="w-16 shrink-0 text-right font-mono text-2xs text-muted"
+      >
+        {formatTokens(row.turn_count)} turns
+      </span>
+
+      {row.agent_count === 0 ? null : pending ? (
+        <span
+          data-slot="session-subs-pending"
+          aria-hidden="true"
+          className="h-3 w-16 shrink-0 animate-pulse rounded-md bg-surface-raised motion-reduce:animate-none"
+        />
+      ) : (
+        <span
+          data-slot="session-subs"
+          className="w-16 shrink-0 text-right font-mono text-2xs text-muted"
+        >
+          +{formatTokens(row.sub_tokens_in + row.sub_tokens_out)}
         </span>
       )}
 
-      {session.error_count > 0 ? (
+      {row.error_count > 0 ? (
         <span data-slot="session-errors" className="font-mono text-2xs text-error">
-          {session.error_count} err
+          {row.error_count} err
         </span>
       ) : null}
 
       <MetricChip
         className="shrink-0"
-        duration={formatDuration(session.started_at, session.ended_at, now)}
-        tokens={`${formatTokens(session.total_tokens)} tok`}
-        cost={formatCost(session.est_cost)}
+        duration={formatDuration(row.started_at, row.live ? undefined : row.last_activity_at, now)}
+        tokens={`${formatTokens(row.tokens_in + row.tokens_out)} tok`}
+        cost={formatCost(row.est_cost)}
       />
     </a>
   );

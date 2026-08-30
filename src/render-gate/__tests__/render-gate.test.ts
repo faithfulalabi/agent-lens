@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,8 @@ import {
   ESTIMATED_ROW_PX,
   IGNORED_PATHS,
   SELECTORS,
+  archiveRefusal,
+  devDataDir,
   parseArgv,
   runRenderGate,
   type DriveOutcome,
@@ -57,6 +59,7 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
     sessionId: 'sess-1',
     sessionCountRaw: '8 sessions',
     sessionCount: 8,
+    backLinks: 1,
     spanRowCount: 4,
     labels: [
       { index: 0, text: 'turn 1: hello' },
@@ -114,6 +117,53 @@ describe('parseArgv (AC1)', () => {
     ['an empty id', ['--task', '']],
   ])('rejects %s', (_label, argv) => {
     expect(() => parseArgv(argv)).toThrow(/render-gate/);
+  });
+});
+
+describe('the empty-archive precondition (AC-R1)', () => {
+  /** A data dir holding an `archive/` with `names` in it. */
+  function dataDirWith(names: readonly string[]): string {
+    const dir = tempRoot();
+    const archive = join(dir, 'archive', 'a-project');
+    mkdirSync(archive, { recursive: true });
+    for (const name of names) writeFileSync(join(archive, name), '{}\n');
+    return dir;
+  }
+
+  it('refuses an archive with no transcript, and names the command that fills it', () => {
+    const refusal = archiveRefusal(dataDirWith([]));
+
+    // Not a bare failure: the whole point is that an environment fault must not
+    // read as a product fault, so the message has to carry the remediation.
+    expect(refusal).toContain('render-gate:');
+    expect(refusal).toContain('node bin/agent-lens.js archive --dataDir .agent-lens-dev');
+    expect(refusal).toContain('.jsonl');
+  });
+
+  it('refuses a data dir with no archive directory at all', () => {
+    expect(archiveRefusal(tempRoot())).toContain('node bin/agent-lens.js archive');
+  });
+
+  it('allows a populated archive, however deeply nested', () => {
+    expect(archiveRefusal(dataDirWith(['a-session.jsonl']))).toBeNull();
+  });
+
+  it('is not satisfied by a non-transcript file', () => {
+    expect(archiveRefusal(dataDirWith(['cache.db', 'notes.txt']))).not.toBeNull();
+  });
+
+  it('checks the same directory the dev server would sweep', () => {
+    // The refusal is worthless if it inspects a directory the drive never
+    // reads. `startDevServer` honours this env var first, exactly as this does.
+    const previous = process.env.AGENT_LENS_DEV_DIR;
+    process.env.AGENT_LENS_DEV_DIR = '/tmp/agent-lens-dev-probe';
+    try {
+      expect(devDataDir()).toBe('/tmp/agent-lens-dev-probe');
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_LENS_DEV_DIR;
+      else process.env.AGENT_LENS_DEV_DIR = previous;
+    }
+    expect(devDataDir()).toContain('.agent-lens-dev');
   });
 });
 
@@ -223,6 +273,7 @@ describe('buildReport (AC5)', () => {
 
   it.each([
     ['a zero session count', { sessionCount: 0 }],
+    ['no way back to the list', { backLinks: 0 }],
     ['no span rows', { spanRowCount: 0 }],
     ['a console error', { consoleErrors: ['boom'] }],
     ['a 500 response', { failedResponses: ['500 /api/sessions'] }],
@@ -424,9 +475,12 @@ describe('the gate source itself (AC6)', () => {
   it('every SELECTORS value is a data-slot that exists in ui/src', () => {
     const values = Object.values(SELECTORS);
 
-    // Vacuity guard: a silently-shrinking constant would trivially satisfy the loop.
-    expect(values).toHaveLength(6);
-    expect(new Set(values).size).toBe(6);
+    // Vacuity guard: a silently-shrinking constant would trivially satisfy the
+    // loop. RAISED 6 -> 7 BY TASK 5.1, in lockstep with the seventh real slot
+    // (`back-to-sessions`) that the same commit drives and `SessionHeader.tsx`
+    // renders — the invariant this guards is a constant that shrinks unnoticed.
+    expect(values).toHaveLength(7);
+    expect(new Set(values).size).toBe(7);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {

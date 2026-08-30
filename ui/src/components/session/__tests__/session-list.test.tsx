@@ -1,18 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import type { Session } from '@shared/entities.ts';
 import {
+  COLUMN_LABELS,
+  SORT_COLUMNS,
   emptyStateCopy,
   formatRowCount,
   LIST_LIMIT,
+  rowLabel,
   type EmptyStateShown,
   type SortColumn,
 } from '../../../lib/session-list';
 import { hrefFor } from '../../../lib/route-match';
 import { createRouter } from '../../../lib/router';
 import { fakeHistoryPort } from '../../../lib/__tests__/helpers';
-import { makePage, makeSession, stubApiClient } from '../../../lib/__tests__/fixtures';
+import { makePage, makeSessionRow, stubApiClient } from '../../../lib/__tests__/fixtures';
 import type { SessionListRow } from '../../../lib/api';
 import { designSystemLines, userFlowPath, userFlowText } from '../../../__tests__/spec-doc';
 import { SessionListView } from '../SessionListView';
@@ -37,7 +39,11 @@ import { Sessions } from '../../../pages/Sessions';
 
 const NOW = Date.parse('2026-07-29T12:00:00.000Z');
 
-function markupOf(rows: Session[], sort: SortColumn = 'started_at', cursor = -1): string {
+function markupOf(
+  rows: SessionListRow[],
+  sort: SortColumn = 'last_activity_at',
+  cursor = -1,
+): string {
   return renderToStaticMarkup(
     <SessionListView
       rows={rows}
@@ -65,11 +71,11 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
    * proves nothing about this component's wiring).
    */
   const rows = Array.from({ length: 300 }, (_, i) =>
-    makeSession({
+    makeSessionRow({
       id: `s-${i}`,
       project_path: `/tmp/p-${i % 4}`,
       started_at: new Date(NOW - i * 60_000).toISOString(),
-      ended_at: new Date(NOW - i * 60_000 + 5_000).toISOString(),
+      last_activity_at: new Date(NOW - i * 60_000 + 5_000).toISOString(),
       est_cost: i === 7 ? 0 : 1.5,
     }),
   );
@@ -106,14 +112,26 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
   it('marks the cursor row and only the cursor row', () => {
     const highlighted = (m: string) => (m.match(/bg-surface-raised/g) ?? []).length;
     const none = highlighted(markupOf(rows.slice(0, 5)));
-    const one = highlighted(markupOf(rows.slice(0, 5), 'started_at', 2));
+    const one = highlighted(markupOf(rows.slice(0, 5), 'last_activity_at', 2));
     expect(one).toBe(none + 1);
   });
 
-  it('offers every sortable column as a real button', () => {
+  it('offers every sortable column as a real button, and no others (AC3)', () => {
+    /*
+     * ★ CUT FROM FOUR TO TWO BY TASK 5.1, which is an AC and not a weakening:
+     * the founder's reading of the four-control strip is that it looks like a
+     * tab bar, and AC3 reduces it to project + time. The list is no longer
+     * hard-coded either — it iterates the constants the component itself reads,
+     * so the next change to `SORT_COLUMNS` adjusts this test instead of reding
+     * it for a reason a reader has to go and look up.
+     */
     const markup = markupOf(rows.slice(0, 1));
-    for (const label of ['Started', 'Project', 'Tokens', 'Cost']) expect(markup).toContain(label);
-    expect(markup.match(/<button/g) ?? []).toHaveLength(4);
+    expect(SORT_COLUMNS.length, 'project and time, per AC3').toBe(2);
+    for (const column of SORT_COLUMNS) expect(markup).toContain(COLUMN_LABELS[column]);
+    expect(markup.match(/<button/g) ?? []).toHaveLength(SORT_COLUMNS.length);
+
+    // And the two that went are really gone, not merely unlabelled.
+    for (const gone of ['Started', 'Tokens', 'Cost']) expect(markup).not.toContain(`>${gone}`);
   });
 
   it('renders a sort chevron on the sorted column only', () => {
@@ -122,11 +140,79 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
   });
 });
 
+/* ------------------------------------------ AC1 — honest counts + labels --- */
+
+describe('every row states its stored turn count (Test 3)', () => {
+  it('renders the column verbatim, never a recount off the other counters', () => {
+    // The stored value deliberately contradicts every number beside it: a row
+    // that summed anything client-side would show something other than 3.
+    const markup = markupOf([
+      makeSessionRow({ turn_count: 3, tool_call_count: 412, error_count: 0, agent_count: 0 }),
+    ]);
+
+    expect(markup).toContain('data-slot="session-turns"');
+    expect(markup).toContain('3 turns');
+    expect(markup).not.toContain('412 turns');
+  });
+
+  it('renders a zero turn count as zero, because zero is the honest answer', () => {
+    // Measured: 2 of 21 top-level sessions read 0, both driven entirely through
+    // slash commands. `turn_count` counts HUMAN prompts, so 0 is true.
+    const markup = markupOf([makeSessionRow({ turn_count: 0 })]);
+    expect(markup).toContain('0 turns');
+  });
+
+  it('states it on every row of a large page', () => {
+    const many = Array.from({ length: 40 }, (_, i) =>
+      makeSessionRow({ id: `s-${i}`, turn_count: i }),
+    );
+    const markup = markupOf(many);
+    expect(markup.match(/data-slot="session-turns"/g) ?? []).toHaveLength(40);
+  });
+});
+
+describe('no row label renders a harness tag (Test 4)', () => {
+  /*
+   * ★ THIS IS THE GUARD THAT WORKS. Measured over the dev archive, 0 of 293
+   * stored `sessions.title`/`preview` values carry a harness tag — the projector
+   * gates the preview on a human prompt, so it structurally cannot emit one. The
+   * render gate therefore has nothing to catch and would pass vacuously. This
+   * test INJECTS the string, so the rejection rule is red-provable.
+   */
+  const machinery = '<task-notification>\n<task-id>ab203519d2e64bacf</task-id>';
+
+  it('falls through to the project when both stored labels are markup', () => {
+    const markup = markupOf([
+      makeSessionRow({ title: machinery, preview: machinery, project_path: '/tmp/real-project' }),
+    ]);
+
+    expect(markup).not.toContain('&lt;task-notification');
+    expect(markup).not.toContain('&lt;task-id');
+    expect(markup).not.toContain('<task-notification');
+    expect(markup).toContain('/tmp/real-project');
+  });
+
+  it('keeps the tag out of the accessible name too, not only the visible text', () => {
+    const markup = markupOf([makeSessionRow({ title: machinery, preview: machinery })]);
+    const label = /aria-label="([^"]*)"/.exec(markup)?.[1] ?? '';
+
+    expect(label, 'a screen reader announces this string').not.toContain('task-notification');
+    expect(label).not.toContain('task-id');
+  });
+
+  it('still renders an ordinary prompt as the label', () => {
+    expect(markupOf([makeSessionRow({ title: 'ship the projector' })])).toContain(
+      'ship the projector',
+    );
+    expect(rowLabel(makeSessionRow({ title: 'ship the projector' }))).toBe('ship the projector');
+  });
+});
+
 /* --------------------------------------------- AC3 — badges and chips ----- */
 
 describe('status, degradation and errors are visible, not just coloured', () => {
   it('a live row carries the pulse AND the literal word (Test 13)', () => {
-    const markup = markupOf([makeSession({ status: 'live', ended_at: undefined })]);
+    const markup = markupOf([makeSessionRow({ live: true })]);
     expect(markup).toContain('animate-live-pulse');
     expect(
       markup,
@@ -135,38 +221,82 @@ describe('status, degradation and errors are visible, not just coloured', () => 
     ).toContain('live');
   });
 
-  it.each([
-    ['complete', 'complete'],
-    ['interrupted', 'interrupted'],
-  ] as const)('a %s row carries its own word and no pulse', (status, label) => {
-    const markup = markupOf([makeSession({ status })]);
-    expect(markup).toContain(label);
+  it('a settled row carries its own word and no pulse', () => {
+    const markup = markupOf([makeSessionRow({ live: false })]);
+    expect(markup).toContain('complete');
     expect(markup).not.toContain('animate-live-pulse');
   });
 
-  it('a transcript_only row carries the degraded chip (Test 14)', () => {
-    const markup = markupOf([makeSession({ capture_mode: 'transcript_only' })]);
-    expect(markup).toContain('data-slot="degraded-chip"');
-    expect(markup).toContain('transcript only');
-  });
-
-  it('a full-capture row carries no degraded chip', () => {
-    expect(markupOf([makeSession({ capture_mode: 'full' })])).not.toContain(
-      'data-slot="degraded-chip"',
-    );
+  it('claims no capture mode, because the v2 wire carries none (Test 14)', () => {
+    /*
+     * ★ REPOINTED BY TASK 5.1, not deleted. Task 4.5's adapter stamped
+     * `capture_mode: 'transcript_only'` on EVERY row — a fabricated value, so
+     * the chip it drove appeared on all of them and distinguished nothing. The
+     * adapter is gone and the column does not exist on `GET /api/sessions`, so
+     * the assertion that means something now is that nobody invents it again.
+     */
+    expect(markupOf([makeSessionRow()])).not.toContain('data-slot="degraded-chip"');
+    expect(markupOf([makeSessionRow({ has_drift: true })])).not.toContain('transcript only');
   });
 
   it('error_count > 0 renders the count; 0 renders nothing (Test 15)', () => {
-    const failing = markupOf([makeSession({ error_count: 3 })]);
+    const failing = markupOf([makeSessionRow({ error_count: 3 })]);
     expect(failing).toContain('data-slot="session-errors"');
     expect(failing).toContain('3 err');
 
-    expect(markupOf([makeSession({ error_count: 0 })])).not.toContain('data-slot="session-errors"');
+    expect(markupOf([makeSessionRow({ error_count: 0 })])).not.toContain(
+      'data-slot="session-errors"',
+    );
+  });
+
+  it('shimmers the sub-agent totals while the sweep is still running (Test 11)', () => {
+    /*
+     * `rollup_state === 'own'` means the sidecars have not been folded in, and
+     * omitting them costs 2–6x. A number that is wrong by that much is worse
+     * than no number, so the cell is a skeleton until the sweep settles.
+     */
+    const pending = markupOf([
+      makeSessionRow({ rollup_state: 'own', agent_count: 3, sub_tokens_in: 0, sub_tokens_out: 0 }),
+    ]);
+
+    expect(pending).toContain('data-slot="session-subs-pending"');
+    expect(pending).not.toContain('data-slot="session-subs"');
+    expect(pending, 'design-system.md, Loading states: pulsing --surface-raised').toContain(
+      'animate-pulse',
+    );
+    expect(
+      pending,
+      'design-system.md: "Respect prefers-reduced-motion: pulse becomes a ' +
+        'static badge." A bare animate-pulse satisfies the atom and breaks that.',
+    ).toContain('motion-reduce:animate-none');
+  });
+
+  it('states the stored sub-agent figures once the sweep has settled', () => {
+    const settled = markupOf([
+      makeSessionRow({
+        rollup_state: 'complete',
+        agent_count: 3,
+        sub_tokens_in: 12_000,
+        sub_tokens_out: 3_400,
+      }),
+    ]);
+
+    expect(settled).toContain('data-slot="session-subs"');
+    expect(settled).not.toContain('data-slot="session-subs-pending"');
+    expect(settled, 'the exact stored total, thousands-separated').toContain('15,400');
+  });
+
+  it('draws no sub-agent cell at all for a session that launched none', () => {
+    // A `+0` on nineteen rows of twenty makes the one that matters harder to
+    // find — the same rule the capture chip was written against.
+    const markup = markupOf([makeSessionRow({ agent_count: 0 })]);
+    expect(markup).not.toContain('data-slot="session-subs"');
+    expect(markup).not.toContain('data-slot="session-subs-pending"');
   });
 
   it('never puts an ARIA row role on an anchor', () => {
     expect(
-      markupOf([makeSession()]),
+      markupOf([makeSessionRow()]),
       'role="row" overrides the anchor\'s implicit link role and is invalid ' +
         'without an owning grid — the row would stop being announced as a link.',
     ).not.toContain('role="row"');
@@ -266,11 +396,11 @@ describe('a populated list states its own size', () => {
   it('counts the rows on screen, not the size of the page they came from', () => {
     // Ten loaded, narrowed to three: the count answers "how many am I looking
     // at", so it must follow `rows`, never the unnarrowed page.
-    const rows = Array.from({ length: 3 }, (_, i) => makeSession({ id: `s${i}` }));
+    const rows = Array.from({ length: 3 }, (_, i) => makeSessionRow({ id: `s${i}` }));
     const markup = renderToStaticMarkup(
       <SessionListView
         rows={rows}
-        sort={'started_at' as SortColumn}
+        sort={'last_activity_at' as SortColumn}
         direction="desc"
         onSortChange={() => {}}
         cursor={-1}
@@ -282,12 +412,12 @@ describe('a populated list states its own size', () => {
   });
 
   it('degrades to N+ when the page stopped early, and omits the + when it did not', () => {
-    const rows = Array.from({ length: 2 }, (_, i) => makeSession({ id: `s${i}` }));
+    const rows = Array.from({ length: 2 }, (_, i) => makeSessionRow({ id: `s${i}` }));
     const render = (pageTruncated: boolean) =>
       renderToStaticMarkup(
         <SessionListView
           rows={rows}
-          sort={'started_at' as SortColumn}
+          sort={'last_activity_at' as SortColumn}
           direction="desc"
           onSortChange={() => {}}
           cursor={-1}
@@ -314,8 +444,8 @@ describe('a populated list states its own size', () => {
     // "not known to have stopped early", which spells as a plain count.
     const markup = renderToStaticMarkup(
       <SessionListView
-        rows={[makeSession({ id: 's0' })]}
-        sort={'started_at' as SortColumn}
+        rows={[makeSessionRow({ id: 's0' })]}
+        sort={'last_activity_at' as SortColumn}
         direction="desc"
         onSortChange={() => {}}
         cursor={-1}
