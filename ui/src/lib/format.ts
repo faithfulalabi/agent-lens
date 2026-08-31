@@ -51,6 +51,28 @@ const CALENDAR_DAY = new Intl.DateTimeFormat('en-US', {
   hour12: false,
 });
 
+/** The reading order inside one session: a bare 24-hour wall clock. */
+const WALL_CLOCK = new Intl.DateTimeFormat('en-US', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+/** The qualifier a row gets when its day is not the session's first day. */
+const EVENT_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+
+/**
+ * Calendar identity in the reader's zone, year included so two July 30ths a year
+ * apart are two days. {@link EVENT_DAY} is the label and cannot do this: it
+ * would call them the same day.
+ */
+const DAY_KEY = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 function isUsableNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -160,4 +182,53 @@ export function formatStartedAt(iso: string, now: number | Date): string {
   const minutes = Math.floor(age / 60_000);
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ago`;
+}
+
+/**
+ * When one event happened, as an absolute reading rather than an age.
+ *
+ * ===========================================================================
+ * THE DAY IS SPELLED OUT WHENEVER THE DAY CHANGES.
+ * ===========================================================================
+ * {@link formatStartedAt} answers `Nm ago` for anything inside 24 hours, so
+ * every event of a same-day session renders the identical string — which is not
+ * a reading order at all. A bare wall clock fixes that and breaks something
+ * else: MEASURED, 11 of 293 sessions cross a calendar day, 8 run over 24 hours
+ * and the widest spans 230.9 hours. On those, `23:59:00` followed by `00:01:00`
+ * reads as though the session ran backwards.
+ *
+ * So `sessionStart` qualifies the row: same day as the session's first event and
+ * the answer is the bare clock, a different day and the date leads it. Omit the
+ * argument and the clock is unqualified, which is right for a caller that has no
+ * session to compare against.
+ */
+export function formatEventTime(iso: string, sessionStart?: string): string {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return NO_VALUE;
+
+  const clock = WALL_CLOCK.format(at);
+  if (sessionStart === undefined) return clock;
+
+  const first = Date.parse(sessionStart);
+  if (!Number.isFinite(first) || DAY_KEY.format(first) === DAY_KEY.format(at)) return clock;
+  return `${EVENT_DAY.format(at)} ${clock}`;
+}
+
+/* ------------------------------------------------------------- payloads --- */
+
+/**
+ * How much of an input or an output a TREE row's second line shows.
+ *
+ * It lives here rather than in `SpanRow.tsx` because the thread clamps the same
+ * payloads at its own, larger budget, and two private clamps that drift apart
+ * would render one body at two lengths on two screens.
+ */
+export const PREVIEW_CHARS = 96;
+
+/** One line of an input or an output, clamped. Never the whole 64 KB. */
+export function previewOf(value: string | null, max: number = PREVIEW_CHARS): string | null {
+  if (value === null) return null;
+  const flat = value.replace(/\s+/g, ' ').trim();
+  if (flat === '') return null;
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }

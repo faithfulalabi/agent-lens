@@ -14,7 +14,14 @@
 
 import type { Page } from '@shared/api.ts';
 
-import type { ApiClient, EventRow, SessionDetailBody, SessionListRow, TurnRow } from '../api.js';
+import type {
+  ApiClient,
+  EventContentBody,
+  EventRow,
+  SessionDetailBody,
+  SessionListRow,
+  TurnRow,
+} from '../api.js';
 import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree.js';
 
 /** The one pagination envelope the read API serves on every list route. */
@@ -111,6 +118,8 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     text: 'stdout',
     text_bytes: 6,
     output_storage: 'inline',
+    spill_path: null,
+    spill_bytes: null,
     model: 'claude-sonnet-5',
     tokens_in: null,
     tokens_out: null,
@@ -118,6 +127,7 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     child_session_id: null,
     agent_type: null,
     raw_type: 'assistant',
+    raw_subtype: null,
     ...overrides,
   };
 }
@@ -135,12 +145,27 @@ export function makeDetail(overrides: Partial<SessionDetailBody> = {}): SessionD
   };
 }
 
+/** A `GET /api/events/:id/content` body, whole and untruncated by default. */
+export function makeEventContent(overrides: Partial<EventContentBody> = {}): EventContentBody {
+  const content = overrides.content ?? 'the whole body';
+  return {
+    id: 'ev-1',
+    field: 'text',
+    storage: 'inline',
+    byte_size: content.length,
+    range: { start: 0, end: Math.max(content.length - 1, 0) },
+    truncated: false,
+    ...overrides,
+    content,
+  };
+}
+
 /**
  * An `ApiClient` whose methods a test replaces one at a time.
  *
- * The list route answers with an empty page; the detail route rejects by name,
- * because a caller reaching one it did not stub is a test bug worth a loud
- * message rather than an empty object.
+ * The list route answers with an empty page; the two routes that need an id
+ * reject by name, because a caller reaching one it did not stub is a test bug
+ * worth a loud message rather than an empty object.
  */
 export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   const unstubbed = (method: string) => (): Promise<never> =>
@@ -149,6 +174,7 @@ export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     listSessions: () => Promise.resolve(makePage<SessionListRow>([])),
     getSession: unstubbed('getSession'),
+    getEventContent: unstubbed('getEventContent'),
     ...overrides,
   };
 }

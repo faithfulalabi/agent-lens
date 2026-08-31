@@ -1,7 +1,7 @@
 // `npm run render-gate -- --task <id>` — the machine-decidable half of AC-R1.
 //
 // Boots 0.2's own dev server, drives the installed Chrome through it with
-// `playwright-core`, and writes `.render-gate/<task>/` — four screenshots, a
+// `playwright-core`, and writes `.render-gate/<task>/` — six screenshots, a
 // `report.json` of every assertion, and an `index.html` contact sheet.
 //
 // Two rules hold the whole file up:
@@ -22,16 +22,22 @@ import {
   buildReport,
   renderContactSheet,
   type DetailTexts,
+  type EventDetailProbe,
   type Observations,
   type RenderGateReport,
   type ShotRecord,
+  type ThreadProbe,
   type ToolCallProbe,
 } from './report.js';
 
 /**
- * The seven `data-slot` values the gate drives. `data-slot` carries no styling
+ * The eight `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
+ *
+ * Every entry is CLICKED or READ by the drive below. `thread-view` is
+ * deliberately not listed: the container is reached through `data-thread-kind`,
+ * and an entry no drive touches is the vacuity the guard exists to catch.
  */
 export const SELECTORS = {
   sessionCount: 'session-list-count',
@@ -41,6 +47,7 @@ export const SELECTORS = {
   traceExpand: 'trace-expand',
   spanRow: 'span-row',
   spanDetail: 'span-detail',
+  threadToggle: 'thread-toggle',
 } as const;
 
 /** `SpanTree`'s own `ESTIMATED_ROW_PX`. Pinned by a test — `totalRows` needs it. */
@@ -51,8 +58,27 @@ const DEFAULT_DEADLINE_MS = 180_000;
 /** Per-wait, so a missing selector fails fast with a useful message. */
 const PER_WAIT_TIMEOUT_MS = 15_000;
 
-/** The four screenshots, named so the contact sheet reads in drive order. */
-type ShotName = '01-sessions.png' | '02-session.png' | '03-detail.png' | '04-focus.png';
+/**
+ * The six screenshots, named so the contact sheet reads in drive order.
+ *
+ * `05-tool-call.png` was added by task 5.3 and it is not decoration. The four
+ * before it are shot at `[data-index="1"]` and at the row `ArrowDown` reaches —
+ * measured `text`, `prompt` or `unknown`, never a `tool_call` on any session in
+ * the corpus. So without a fifth shot the AC-R2 sign-off could not see the
+ * state AC-R1 asserts on. Moving an earlier shot is not the fix: `driveKeyboard`
+ * reads `selectedIndexBefore`, and a click before it corrupts that reading.
+ *
+ * `06-thread.png` is task 5.4's, on the same argument: the five before it are
+ * all taken on the tree, so without it the AC-R2 eye would open the contact
+ * sheet and see no thread pixels at all.
+ */
+type ShotName =
+  | '01-sessions.png'
+  | '02-session.png'
+  | '03-detail.png'
+  | '04-focus.png'
+  | '05-tool-call.png'
+  | '06-thread.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -257,11 +283,64 @@ interface PageElement {
   getBoundingClientRect(): { height: number };
 }
 
-/** The two fields the payload cross-check reads off the detail response. */
-interface WireEvent {
+/** The fields the payload cross-checks read off the detail response. */
+export interface WireEvent {
   id: string;
+  /** What the projector called this record. The thread counts `thinking` rows. */
+  kind: string;
   input: string | null;
   text: string | null;
+  /** The word the detail pane has to print. Null on every non-tool row. */
+  output_storage: string | null;
+}
+
+/** One `tool_call` row the virtualizer actually rendered, as read off the page. */
+export interface RenderedRow {
+  id: string;
+  text: string;
+}
+
+/** A `WireEvent` that carries every field AC-R1 looks for. See `pickPayloadRow`. */
+export interface PayloadEvent extends WireEvent {
+  input: string;
+  text: string;
+  output_storage: string;
+}
+
+/** A row on screen and the wire event behind it — what both probes read. */
+interface PayloadRow {
+  wire: PayloadEvent;
+  row: RenderedRow;
+}
+
+/**
+ * The first rendered row whose wire event carries everything AC-R1 reads.
+ *
+ * ★ RENDERED ROWS FIRST, NEVER THE WIRE FIRST. The tree is virtualized —
+ * `SpanTree.tsx` emits ~34 rows into a 720px viewport — and a `.click()` on a
+ * locator for a row the virtualizer never rendered throws after
+ * `PER_WAIT_TIMEOUT_MS` and fails the whole drive rather than degrading to the
+ * `null` observation. So the candidate set is what is on screen, and the wire
+ * map only says which of those rows is worth clicking.
+ *
+ * Pure, and exported, because the choreography around it is Playwright and this
+ * is the only part of the probe a unit test can reach. The same split
+ * `isSessionDetailPath` already uses.
+ */
+export function pickPayloadRow(
+  rows: readonly RenderedRow[],
+  payloads: ReadonlyMap<string, WireEvent>,
+): PayloadEvent | null {
+  for (const row of rows) {
+    const wire = payloads.get(row.id);
+    // All three, because the pane must show all three: a row whose storage word
+    // is null would make AC-R1's third clause unassertable rather than failing.
+    if (wire === undefined) continue;
+    const { input, text, output_storage } = wire;
+    if (input === null || text === null || output_storage === null) continue;
+    return { ...wire, input, text, output_storage };
+  }
+  return null;
 }
 
 /** How much of a payload the gate looks for in the rendered row. */
@@ -396,9 +475,19 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const t2 = (await detailPane.innerText()).trim();
   await shoot('04-focus.png');
 
-  // LAST, because it may expand further turns: every reading above is already
-  // taken, so nothing it moves can disturb an assertion.
-  const toolCallInline = await probeToolCallInline(page, (await wireEvents) ?? []);
+  // LAST, because the search may expand further turns and the detail probe
+  // moves the selection: every reading above is already taken, so nothing
+  // either of them does can disturb an assertion.
+  const events: readonly WireEvent[] = (await wireEvents) ?? [];
+  const found = await findPayloadRow(page, new Map(events.map((event) => [event.id, event])));
+  const toolCallInline = toolCallProbe(found);
+  const eventDetail = await probeEventDetail(page, found, shoot);
+
+  // LAST of all: the toggle swaps the tree out for the thread, so every tree
+  // reading has to be taken before it. There is no trip back — a return would
+  // be dead motion, and the response count below spans the whole drive either
+  // way, which is what makes AC1 survive the switch.
+  const threadInline = await probeThreadInline(page, events, shoot);
 
   const detail: DetailTexts = { t0, t1, t2 };
   return {
@@ -413,6 +502,8 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       turnGroupCount,
       detailResponses,
       toolCallInline,
+      eventDetail,
+      threadInline,
       detail,
       consoleErrors,
       failedResponses,
@@ -423,27 +514,25 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
 }
 
 /**
- * AC-R1's third clause: a `tool_call` row on screen renders a prefix of the
- * input and the output the wire actually sent.
+ * The rendered `tool_call` row both probes read, found once and shared.
  *
  * The window is the hard part, not the fields — measured on the newest archived
  * session, 91 of 91 `tool_call` events carry both halves, but only the rows the
  * virtualizer rendered can be read. So collapsed turns in the window are opened,
  * a few at a time, until a qualifying row appears. When none does, this answers
  * `null` and `report.ts` records an observation rather than a pass.
+ *
+ * Found ONCE so both probes describe the same row: a report where the row
+ * assertion and the pane assertion name different events would be two readings
+ * a human has to reconcile rather than one fact.
  */
-async function probeToolCallInline(
+async function findPayloadRow(
   page: Page,
-  events: readonly WireEvent[],
-): Promise<ToolCallProbe | null> {
-  const payloads = new Map(
-    events
-      .filter((event) => event.input !== null && event.text !== null)
-      .map((event) => [event.id, event]),
-  );
+  payloads: ReadonlyMap<string, WireEvent>,
+): Promise<PayloadRow | null> {
   if (payloads.size === 0) return null;
 
-  const readRows = (): Promise<{ id: string; text: string }[]> =>
+  const readRows = (): Promise<RenderedRow[]> =>
     page.$$eval('[data-event-kind="tool_call"]', (nodes) =>
       nodes.map((node) => ({
         id: node.getAttribute('data-event-id') ?? '',
@@ -452,19 +541,11 @@ async function probeToolCallInline(
     );
 
   for (let attempt = 0; attempt <= 3; attempt += 1) {
-    for (const row of await readRows()) {
-      const wire = payloads.get(row.id);
-      if (wire === undefined || wire.input === null || wire.text === null) continue;
-      const shown = oneLine(row.text);
-      const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
-      const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
-      return {
-        eventId: row.id,
-        inputPrefix,
-        outputPrefix,
-        inputMatched: inputPrefix !== '' && shown.includes(inputPrefix),
-        outputMatched: outputPrefix !== '' && shown.includes(outputPrefix),
-      };
+    const rows = await readRows();
+    const wire = pickPayloadRow(rows, payloads);
+    if (wire !== null) {
+      const row = rows.find((candidate) => candidate.id === wire.id);
+      if (row !== undefined) return { wire, row };
     }
     // Nothing qualifying in the window: open one more closed turn and look
     // again. Bounded, because an unbounded search is a hang rather than a miss.
@@ -475,6 +556,149 @@ async function probeToolCallInline(
   }
 
   return null;
+}
+
+/**
+ * Task 5.2's clause: the ROW carries a prefix of the input and of the output.
+ *
+ * Pure — the search above already did the browser work — so this reading stays
+ * decidable in a unit test rather than only on a live drive.
+ */
+function toolCallProbe(found: PayloadRow | null): ToolCallProbe | null {
+  if (found === null) return null;
+  const { wire, row } = found;
+  const shown = oneLine(row.text);
+  const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
+  const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
+  return {
+    eventId: wire.id,
+    inputPrefix,
+    outputPrefix,
+    inputMatched: inputPrefix !== '' && shown.includes(inputPrefix),
+    outputMatched: outputPrefix !== '' && shown.includes(outputPrefix),
+  };
+}
+
+/**
+ * AC-R1: clicking that row fills the DETAIL PANE with the event's real input,
+ * its real output, and the word naming where the output was stored.
+ *
+ * ★ THE PANE IS READ ONLY AFTER IT SAYS WHICH EVENT IT IS SHOWING. A bare wait
+ * would read the previous event's body under the new selection and assert a
+ * pass against a pane that never updated — which is why `data-event-id` is a
+ * production attribute on `EventDetail` rather than a hook bolted on here.
+ *
+ * `05-tool-call.png` is shot on this row, so the AC-R2 sign-off sees the state
+ * AC-R1 asserted on. The four earlier shots never can: they are taken at
+ * `data-index="1"` and at the row `ArrowDown` reaches, neither of which is a
+ * `tool_call` on any session in the corpus.
+ */
+async function probeEventDetail(
+  page: Page,
+  found: PayloadRow | null,
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<EventDetailProbe | null> {
+  if (found === null) return null;
+  const { wire } = found;
+  const onThisEvent = `[data-event-id="${cssAttrValue(wire.id)}"]`;
+  const rowSelector = `${slot(SELECTORS.spanRow)}${onThisEvent}`;
+
+  // Safe to click: the row came out of `$$eval` over the rendered DOM, so the
+  // virtualizer has it. A locator for a row it never rendered would throw after
+  // PER_WAIT_TIMEOUT_MS and fail the drive instead of degrading.
+  await page.locator(rowSelector).click();
+  await page.waitForSelector(`${rowSelector}[aria-selected="true"]`);
+  await page.waitForSelector(`${slot(SELECTORS.spanDetail)}${onThisEvent}`);
+
+  const pane = oneLine(await page.locator(slot(SELECTORS.spanDetail)).innerText());
+  await shoot('05-tool-call.png');
+
+  const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
+  const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
+  return {
+    eventId: wire.id,
+    inputPrefix,
+    outputPrefix,
+    storageWord: wire.output_storage,
+    inputMatched: inputPrefix !== '' && pane.includes(inputPrefix),
+    outputMatched: outputPrefix !== '' && pane.includes(outputPrefix),
+    storageMatched: pane.includes(wire.output_storage),
+  };
+}
+
+/**
+ * AC-R1 for task 5.4: the THREAD is read, not merely reached.
+ *
+ * ★ IT AIMS AT `data-thread-kind`, NOT AT `data-event-kind`. The pre-existing
+ * cross-check selects the latter, which `SpanRow` renders and no thread row
+ * carries — so a probe that reused it would discharge this AC with the tree.
+ *
+ * ★ A NULL ANSWER FAILS THE GATE. `findPayloadRow` may legitimately answer
+ * nothing because the tree virtualizer decides what is on screen; the thread has
+ * no window, so every tool row of the session is in the document and MEASURED
+ * 293 of 293 sessions carry a qualifying one. The candidate set here is
+ * therefore a superset of the tree probe's, and an empty one means the toggle is
+ * broken. `report.ts` scores that as a failure rather than a warning.
+ *
+ * `pickPayloadRow` is reused verbatim so both surfaces agree on what "a row
+ * worth reading" is, rather than this file growing a third search.
+ */
+async function probeThreadInline(
+  page: Page,
+  events: readonly WireEvent[],
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<ThreadProbe | null> {
+  const toggle = page.locator(slot(SELECTORS.threadToggle));
+  if ((await toggle.count()) === 0) return null;
+
+  await toggle.click();
+  await page.waitForSelector('[data-thread-kind]');
+  await shoot('06-thread.png');
+
+  const rows = await page.$$eval('[data-thread-kind="tool"]', (nodes) =>
+    nodes.map((node) => ({
+      id: node.getAttribute('data-event-id') ?? '',
+      text: node.textContent ?? '',
+    })),
+  );
+  const thinkingTexts = await page.$$eval('[data-thread-kind="thinking"]', (nodes) =>
+    nodes.map((node) => node.textContent ?? ''),
+  );
+
+  const wire = pickPayloadRow(rows, new Map(events.map((event) => [event.id, event])));
+  const row = wire === null ? undefined : rows.find((candidate) => candidate.id === wire.id);
+  if (wire === null || row === undefined) return null;
+
+  const shown = oneLine(row.text);
+  const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
+  const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
+  const marked = thinkingTexts.map(oneLine);
+
+  return {
+    eventId: wire.id,
+    inputPrefix,
+    outputPrefix,
+    inputMatched: inputPrefix !== '' && shown.includes(inputPrefix),
+    outputMatched: outputPrefix !== '' && shown.includes(outputPrefix),
+    thinkingRows: marked.length,
+    thinkingEvents: events.filter((event) => event.kind === 'thinking').length,
+    markerRows: marked.filter((text) => text.includes(REASONING_NOT_RECORDED)).length,
+    emptyRows: marked.filter((text) => text === '').length,
+  };
+}
+
+/**
+ * What the projector writes in place of reasoning the harness withheld.
+ *
+ * Spelled here rather than imported from `src/transcript/`: the gate asserts on
+ * what reaches the BROWSER, and importing the projector's own constant would let
+ * a rename pass on both sides while the screen changed under the reader.
+ */
+const REASONING_NOT_RECORDED = 'reasoning not recorded (signature only)';
+
+/** An id, safe inside a double-quoted CSS attribute selector. */
+function cssAttrValue(value: string): string {
+  return value.replace(/(["\\])/g, '\\$1');
 }
 
 /**

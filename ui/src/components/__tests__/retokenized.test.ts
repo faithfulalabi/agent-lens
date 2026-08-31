@@ -62,9 +62,11 @@ const SOURCE_FILES = [
   '../session/EmptyState.tsx',
   '../session/SpanTree.tsx',
   '../session/SpanRow.tsx',
+  '../session/EventDetail.tsx',
   '../session/TraceGroup.tsx',
   '../session/TruncationNotice.tsx',
   '../session/SessionHeader.tsx',
+  '../session/ThreadView.tsx',
 ] as const;
 
 function sources(): { name: string; text: string }[] {

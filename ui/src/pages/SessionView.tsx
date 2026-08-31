@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 
-import { createApiClient, type ApiClient } from '@/lib/api';
+import {
+  createApiClient,
+  type ApiClient,
+  type ContentField,
+  type EventContentBody,
+  type EventRow,
+} from '@/lib/api';
 import { useAsync } from '@/lib/use-async';
 import { buildTurnGroups, flatten } from '@/lib/turn-tree';
 import {
@@ -11,8 +17,11 @@ import {
   type SessionData,
 } from '@/lib/session-data';
 import { initialNavState, navReducer, type NavAction, type NavState } from '@/lib/tree-nav';
+import { buildThread, type SessionViewMode } from '@/lib/thread';
+import { EventDetail } from '@/components/session/EventDetail';
 import { SessionHeader } from '@/components/session/SessionHeader';
 import { SpanTree } from '@/components/session/SpanTree';
+import { ThreadView } from '@/components/session/ThreadView';
 import { TruncationNotice } from '@/components/session/TruncationNotice';
 
 /*
@@ -120,6 +129,17 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   const rows = useMemo(() => flatten(model, nav.expandedIds), [model, nav.expandedIds]);
 
   /*
+   * The second reader over the SAME array. `useAsync` reads its loader through a
+   * ref and keys its effect on the session id, so switching surfaces re-renders
+   * and issues no further request — which is the whole of AC1.
+   *
+   * Local state rather than a route: a route needs `route-match.ts`, which is
+   * under a standing do-not-touch rule and reserves query state for Task 7.2.
+   */
+  const [view, setView] = useState<SessionViewMode>('tree');
+  const thread = useMemo(() => buildThread(data?.events ?? []), [data]);
+
+  /*
    * The one action no keystroke produces. `modelIds` is the model's own id set
    * rather than the on-screen rows', which is what keeps a selection sitting
    * under a closed turn alive — and it is the contract Task 6.2's live append
@@ -163,6 +183,32 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
     [rows],
   );
 
+  /*
+   * The refetched body, and the three lines of wiring that ask for one.
+   *
+   * One slot rather than a map: the pane shows one event at a time, and
+   * `contentStateOf` ignores a body that does not name the event and the field
+   * it was asked about — so a stale answer arriving after the selection moved
+   * is dropped by the decision rather than guarded against here. A failure
+   * leaves the preview standing, which is the whole error handling this task
+   * ships: the async matrix was cut.
+   */
+  const [fetched, setFetched] = useState<EventContentBody | null>(null);
+  const onShowFull = useCallback(
+    (id: string, field: ContentField) => {
+      client
+        .getEventContent(id, field)
+        .then(setFetched)
+        .catch(() => undefined);
+    },
+    [client],
+  );
+
+  const selectedEvent = useMemo<EventRow | null>(() => {
+    const row = rows.find((candidate) => candidate.id === nav.selectedId);
+    return row === undefined || row.kind !== 'event' ? null : row.node.event;
+  }, [rows, nav.selectedId]);
+
   const onToggle = useCallback((id: string) => {
     setNav((current) => {
       const expandedIds = new Set(current.expandedIds);
@@ -181,7 +227,9 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
 
   return (
     <main data-slot="session-view" className="flex h-full min-h-0 flex-col">
-      {data === null ? null : <SessionHeader session={data.session} now={now} />}
+      {data === null ? null : (
+        <SessionHeader session={data.session} now={now} view={view} onViewChange={setView} />
+      )}
       {data === null ? null : (
         <TruncationNotice
           shown={data.shown}
@@ -191,23 +239,24 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div data-slot="tree-pane" className="min-w-0 flex-1 border-r border-border">
-          <SpanTree
-            rows={rows}
-            selectedId={nav.selectedId}
-            focusedIndex={nav.focusedIndex}
-            onKeyDown={onKeyDown}
-            onSelect={onSelect}
-            onToggle={onToggle}
-          />
-        </div>
+        {view === 'thread' && data !== null ? (
+          <ThreadView rows={thread} startedAt={data.session.started_at} />
+        ) : (
+          <>
+            <div data-slot="tree-pane" className="min-w-0 flex-1 border-r border-border">
+              <SpanTree
+                rows={rows}
+                selectedId={nav.selectedId}
+                focusedIndex={nav.focusedIndex}
+                onKeyDown={onKeyDown}
+                onSelect={onSelect}
+                onToggle={onToggle}
+              />
+            </div>
 
-        {/* Task 5.4 fills this pane. Until then it says so rather than being blank. */}
-        <aside data-slot="span-detail" className="w-96 shrink-0 p-3 text-xs text-faint">
-          {nav.selectedId === undefined
-            ? 'Select a span to see its detail.'
-            : `Span detail for ${nav.selectedId} arrives with the detail pane.`}
-        </aside>
+            <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />
+          </>
+        )}
       </div>
     </main>
   );

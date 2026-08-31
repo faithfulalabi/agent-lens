@@ -109,6 +109,29 @@ describe('exactly one request fills the whole screen (Test 4, AC1)', () => {
     expect(seen).toEqual([controller.signal]);
   });
 
+  it('carries the flat array beside the buckets, so both views read one fetch', async () => {
+    /*
+     * Task 5.4. The bucketing above DISCARDS the ordered array, and the thread
+     * needs exactly that array — rebuilding it from the buckets would put the
+     * event order back in the hands of map iteration, and asking for it again
+     * would cost the second request AC1 exists to delete.
+     */
+    const api = stubApiClient({ getSession: () => Promise.resolve(detailOf(1, { events: 6 })) });
+    const data = await loadSessionDetail(api, 'seed-s0');
+
+    expect(data.events).toHaveLength(6);
+    expect(data.events.map((event) => event.id)).toEqual([
+      'ev-0',
+      'ev-1',
+      'ev-2',
+      'ev-3',
+      'ev-4',
+      'ev-5',
+    ]);
+    const bucketed = [...data.eventsByTurn.values()].flat();
+    expect(data.events.length, 'the two shapes must describe the same page').toBe(bucketed.length);
+  });
+
   it('takes every turn the response carries, with no client turn page', async () => {
     // The detail route returns EVERY turn in one array — measured n=647 across
     // 293 sessions, maximum 28 per session — so there is nothing to cap.
@@ -182,6 +205,7 @@ describe('the navigation state restarts on the session that ARRIVED (needsReseed
       session: { ...makeSessionRow({ id }), projection: { state: 'ready' } },
       turns: [makeTurnRow({ id: `${id}:0`, seq: 0 })],
       eventsByTurn: new Map(),
+      events: [],
       hasMore: false,
       shown: 0,
     };

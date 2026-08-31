@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatCost, formatDurationMs, formatTokens } from '@/lib/format';
+import { formatCost, formatDurationMs, formatTokens, previewOf } from '@/lib/format';
 import {
   durationSourceOf,
   eventChips,
@@ -62,9 +62,6 @@ import { SPAN_VISUALS, VISUAL_OF_KIND } from './span-visuals';
 /** How far one nesting level shifts a row, in pixels. */
 export const INDENT_PX = 14;
 
-/** How much of an input or an output the second line shows. */
-const PREVIEW_CHARS = 96;
-
 /**
  * What the duration measured, one phrase per `events.duration_source`.
  *
@@ -80,14 +77,6 @@ export const DURATION_LABELS: Record<EventDurationSource, string> = {
   reported: 'reported by the harness',
   none: 'not measured',
 };
-
-/** One line of an input or an output, clamped. Never the whole 64 KB. */
-function previewOf(value: string | null): string | null {
-  if (value === null) return null;
-  const flat = value.replace(/\s+/g, ' ').trim();
-  if (flat === '') return null;
-  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS)}…` : flat;
-}
 
 export interface TreeSpanRowProps {
   row: EventRowModel;

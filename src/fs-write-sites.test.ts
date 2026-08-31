@@ -212,7 +212,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'render-gate/index.ts#2',
     callee: 'writeFileSync',
-    why: 'writes one screenshot PNG per shot into the directory from #1; the four names are a closed literal union (ShotName), never derived from any corpus',
+    why: 'writes one screenshot PNG per shot into the directory from #1; the five names are a closed literal union (ShotName), never derived from any corpus',
   },
   {
     key: 'render-gate/index.ts#3',
