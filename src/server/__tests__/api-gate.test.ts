@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Hono } from 'hono';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import { createStreamHub } from '../stream.js';
 import {
   SESSION_ID,
   fileEnv,
@@ -61,6 +62,7 @@ beforeEach(() => {
     env: fileEnv(),
     token: TOKEN,
     uiDir: join(sandbox.root, 'no-such-ui'),
+    hub: createStreamHub(),
   });
 });
 

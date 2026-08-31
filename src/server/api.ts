@@ -40,6 +40,7 @@ import {
   type SessionSort,
 } from '../db/read.js';
 import { deleteSessionProjection, projectSession, type ProjectionEnv } from '../db/write.js';
+import type { StreamHub } from './stream.js';
 
 /** Wiring the ten routes need. */
 export interface ApiDeps {
@@ -51,14 +52,17 @@ export interface ApiDeps {
    * that is not exercising the gate.
    */
   env: ProjectionEnv;
+  /**
+   * ★ REQUIRED, for the same reason `env` is. The stream route is the hub's only
+   * mount point, and a hub the app can boot without is a hub that quietly stops
+   * carrying frames.
+   */
+  hub: StreamHub;
   /** The corpus sweep handle. `files_indexed` lives only in its in-memory report. */
   sweep?: CorpusSweep;
   /** Task 4.4's content resolver. Absent -> the `inline` limb only. */
   resolveContent?: ContentResolver;
 }
-
-/** `data-model-v2.md:369`. A constant, not a knob: nothing needs to vary it. */
-const HEARTBEAT_MS = 15_000;
 
 /** Page size when `?limit` is absent, on the list and on search. */
 export const DEFAULT_LIMIT = 50;
@@ -507,22 +511,25 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
     });
   });
 
-  // 6. The live stream. A HEARTBEAT-ONLY PLACEHOLDER: Task 6.1 owns the hub and
-  //    the three real frames (spec:358-369, spec:534). Registered as a real
-  //    route today because its POSITION relative to the terminator is the thing
-  //    this task has to get right, and an unregistered path cannot prove that.
-  app.get('/api/stream', (c) =>
-    streamSSE(c, async (stream) => {
-      // Poll the flags rather than relying on a throw: `write` swallows a broken
-      // pipe, so a throw-driven loop would leak the timer.
-      while (!stream.aborted && !stream.closed) {
-        await stream.sleep(HEARTBEAT_MS);
-        if (stream.aborted || stream.closed) break;
-        // Heartbeats carry no `id:` — a client must never resume from one.
-        await stream.writeSSE({ event: 'heartbeat', data: '{}' });
-      }
-    }),
-  );
+  // 6. THE ONE LIVE STREAM (spec:358-369, spec:534). Its POSITION between route 5
+  //    and the `/api/*` terminator is load-bearing — a terminator registered
+  //    above it 404s the SSE endpoint (probed) — so it stays exactly here.
+  //
+  //    The route is three lines because `stream.ts` owns everything: it attaches
+  //    the client and PARKS, and the parked promise is resolved by `hub.drain()`
+  //    at shutdown or by `onAbort` when the client leaves. Returning is what ends
+  //    the response body, because hono's `run` closes the stream in its `finally`.
+  //
+  //    `streamSSE` takes TWO arguments and must keep taking two: a third
+  //    `onError` makes hono emit `event: error`, and `error` is hono's name.
+  //
+  //    `?from_seq` is ACCEPTED AND IGNORED, deliberately. The client appends it
+  //    on every reconnect (`ui/src/lib/sse.ts:259-264`), and honouring it would
+  //    be the resume bookkeeping this design deletes: whole-file reprojection
+  //    makes a refetch cheap, so a reconnecting client simply takes the next
+  //    `session_changed` frame and splices from the `from_seq` in its payload.
+  //    Rejecting it would break that path for no benefit.
+  app.get('/api/stream', (c) => streamSSE(c, (stream) => deps.hub.attach(stream)));
 
   // 7. Forced reprojection. Worst case in the whole corpus is 45 ms, so this is
   //    casual. The gate runs first for its fold; on a `'hit'` it changed nothing,

@@ -22,6 +22,8 @@ import { openDb } from '../db/open.js';
 import { readEventArchivePath } from '../db/read.js';
 import { buildApiApp } from './app.js';
 import { clearConfig, writeConfig } from './config.js';
+import { startLiveTick, type LiveTick } from './live.js';
+import { createStreamHub } from './stream.js';
 
 /** Options for `startServer`. */
 export interface StartOptions {
@@ -119,6 +121,11 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     ...(options.sweepIntervalMs !== undefined && { intervalMs: options.sweepIntervalMs }),
   });
 
+  // UNCONDITIONAL, and outside the sweep gate below on purpose: the hub owns the
+  // 15 s heartbeat, and a boot with `sweepIntervalMs: 0` still serves
+  // `/api/stream` and still has to beat on it.
+  const hub = createStreamHub();
+
   const app = buildApiApp({
     db,
     token,
@@ -126,6 +133,7 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     uiDir: options.uiDir,
     env: createProjectionEnv(reader),
     sweep,
+    hub,
     resolveContent: createContentResolver(
       (id) => readEventArchivePath(db, id)?.archive_path,
       createContentEnv(reader),
@@ -177,9 +185,21 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   // synchronous, so `startServer` returns holding a readable index rather than an
   // empty one — and `sweepIntervalMs: 0` skips it too, because an off switch that
   // still performs one full scan is not an off switch.
+  //
+  // The LIVE TICK replaces `sweep.bind()` and owns the interval from here on: it
+  // needs the two waves separately, because measuring one session's reprojection
+  // is what the per-session backoff is built on and wave 2's shared deadline
+  // cannot give that number back.
+  let tick: LiveTick | undefined;
   if (options.sweepIntervalMs !== 0) {
     sweep.tick();
-    sweep.bind();
+    tick = startLiveTick({
+      db,
+      env: createProjectionEnv(reader),
+      sweep,
+      hub,
+      ...(options.sweepIntervalMs !== undefined && { intervalMs: options.sweepIntervalMs }),
+    });
   }
 
   writeConfig(dataDir, {
@@ -200,27 +220,36 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
 
   return {
     port: boundPort,
-    close: () =>
-      new Promise<void>((resolve) => {
-        // The sweep's timer FIRST: `server.close` is async, and a tick that fires
-        // after the handle is closed throws where no caller can catch it.
-        sweep.close();
-        // ponytail: CEILING — `/api/stream` (`api.ts:514`) holds its response body
-        // open forever, and `server.close()` waits on every open connection, so
-        // without this `agent-lens start` hangs on SIGTERM with one SSE client
-        // attached. This is the blunt instrument: it kills in-flight non-stream
-        // requests too. Upgrade path: Task 6.1 owns the real stream and needs
-        // per-client bookkeeping regardless, so the registry that drains only
-        // streams belongs there, on a shutdown surface `ApiDeps` does not have.
-        // `ServerType` is a union that includes `Http2Server`, which has no such
-        // method; `serve()` is called with no http2 option, so this is always the
-        // `http.Server` limb.
+    close: async () => {
+      // Every timer FIRST: `server.close` is async, and a tick or a beat that
+      // fires after the handle is closed throws where no caller can catch it.
+      // `tick` is undefined on a `sweepIntervalMs: 0` boot; the hub never is.
+      tick?.close();
+      sweep.close();
+
+      // ★ THE CEILING `closeAllConnections` STOOD IN FOR IS DISCHARGED HERE.
+      // `/api/stream` holds its response body open until something ends it, and
+      // `server.close()` waits on every open connection — so before Task 6.1
+      // `agent-lens start` hung on SIGTERM with one SSE client attached, and the
+      // blunt fix was to kill every connection, in-flight non-stream requests
+      // included. The hub now owns a client registry, so `drain()` ends exactly
+      // the stream bodies and nothing else.
+      //
+      // `closeAllConnections()` STAYS as belt-and-braces for the requests the hub
+      // does not know about — a slow-loris on a read route would otherwise hang
+      // shutdown for a reason the drain cannot see. `ServerType` is a union that
+      // includes `Http2Server`, which has no such method; `serve()` is called with
+      // no http2 option, so this is always the `http.Server` limb.
+      await hub.drain();
+
+      return new Promise<void>((resolve) => {
         if ('closeAllConnections' in server) server.closeAllConnections();
         server.close(() => {
           opened.close();
           clearConfig(dataDir);
           resolve();
         });
-      }),
+      });
+    },
   };
 }
