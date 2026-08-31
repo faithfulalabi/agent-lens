@@ -391,6 +391,29 @@ describe('flatten answers to the expansion state', () => {
     expect(flatten(empty, new Set())).toEqual([]);
     expect(empty.unmatchedEventCount).toBe(0);
   });
+
+  it('is unchanged by an empty subtrees map (Test 8, AC1, AC2)', () => {
+    /*
+     * The regression guard on the merged walk. Task 5.5 rewrote both pushes and
+     * added an offset that rides through every turn/event alternation, so the
+     * claim worth pinning is that a session with no sub-agent loaded flattens to
+     * exactly what it flattened to before — same ids, same depths, same
+     * `setSize`/`posInSet`, same order.
+     */
+    const shape = (rows: readonly ReturnType<typeof flatten>[number][]) =>
+      rows.map((row) => `${row.kind}:${row.id}:${row.depth}:${row.posInSet}/${row.setSize}`);
+
+    const bare = flatten(model, everything);
+    const empty = flatten(model, everything, undefined, {
+      rootSessionId: 'seed-s0',
+      subtrees: new Map(),
+    });
+
+    expect(shape(empty)).toEqual(shape(bare));
+    expect(empty.every((row) => row.subagent === undefined)).toBe(true);
+    expect(new Set(empty.map((row) => row.sessionId))).toEqual(new Set(['seed-s0']));
+    expect(new Set(bare.map((row) => row.sessionId))).toEqual(new Set(['']));
+  });
 });
 
 /* ---------------------------------------------------------------- chips --- */

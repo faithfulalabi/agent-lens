@@ -108,6 +108,32 @@ export interface ThreadProbe {
   emptyRows: number;
 }
 
+/**
+ * AC-R1 for task 5.5: opening an Agent row fetched exactly its own sidecar, and
+ * the sidecar's rows landed under it carrying the sidecar's identity.
+ *
+ * ★ `null` IS A WARNING, NOT A FAILURE — and unlike the thread probe, that is
+ * decided by the corpus rather than by the product. MEASURED, 6 of 21 top-level
+ * sessions spawned no sub-agent at all, so the driven session may honestly hold
+ * no Agent row to open. `toolCallAssertions` is the precedent.
+ *
+ * The response half is NOT recorded here. It is read off `detailPaths` and
+ * `detailResponsesAtLoad` instead, because a count the probe carried would go
+ * vacuous the moment the probe warned off.
+ */
+export interface SubagentProbe {
+  /** `data-session-id` on the Agent row that was opened. */
+  parentSessionId: string;
+  /** `data-child-session-id` on that same row — the sidecar it names. */
+  childSessionId: string;
+  /**
+   * `data-session-id` off every nested EVENT row that appeared. An event row,
+   * not a turn row: the turn row is the one a `depthOffset`-only splice would
+   * still stamp correctly, so asserting on it would miss the real defect.
+   */
+  nestedEventSessionIds: readonly string[];
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -120,12 +146,29 @@ export interface Observations {
   spanRowCount: number;
   /** `data-slot="trace-group"` headers in the window — turn groups at any depth. */
   turnGroupCount: number;
-  /** Responses whose path is `/api/sessions/:id`. StrictMode doubles REQUESTS. */
-  detailResponses: number;
+  /**
+   * The path of every `/api/sessions/:id` response, in arrival order.
+   *
+   * Paths and not a tally, because AC-R1(b) has to prove the expansion asked for
+   * that row's own child and for nothing else. The count the report publishes is
+   * this array's length — one collector, so the two can never disagree.
+   * StrictMode doubles REQUESTS; responses are what land here.
+   */
+  detailPaths: readonly string[];
+  /**
+   * How many had arrived BEFORE any sub-agent was opened.
+   *
+   * The whole-drive count is 2 once an expansion fetches a sidecar, by design —
+   * so AC-R1(a)'s "one request fills the screen" has to be read at load, or it
+   * reds the moment the feature works.
+   */
+  detailResponsesAtLoad: number;
   /** `null` when no rendered tool_call row carried both halves. See the type. */
   toolCallInline: ToolCallProbe | null;
   /** The same row, read in the detail pane instead of the tree. See the type. */
   eventDetail: EventDetailProbe | null;
+  /** The sub-agent expansion. `null` is a warning — see the type. */
+  subagentExpansion: SubagentProbe | null;
   /** The thread, read after the toggle. `null` is a FAILURE — see the type. */
   threadInline: ThreadProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
@@ -252,7 +295,7 @@ export function buildReport(input: BuildReportInput): RenderGateReport {
     renderedRows: result?.renderedRows ?? null,
     totalRows: result?.totalRows ?? null,
     turnGroupCount: result?.turnGroupCount ?? null,
-    detailResponses: result?.detailResponses ?? null,
+    detailResponses: result === null ? null : result.detailPaths.length,
     detail: result?.detail ?? null,
     shots: [...(result?.shots ?? [])],
     consoleErrors: [...(result?.consoleErrors ?? [])],
@@ -297,13 +340,24 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       // `main.tsx` wraps the app in StrictMode, so the effect double-invokes
       // and the first fetch is aborted after it is issued. Two requests always
       // reach the wire; exactly one response comes back and fills the screen.
+      //
+      // READ AT LOAD, not over the whole drive. Task 5.5 makes a second response
+      // the point of the feature, and the whole-drive count would red on the
+      // working product. Its own delta is `subagent-expansion-request` below;
+      // spelling this one as "1 + expansions" would instead go VACUOUS whenever
+      // the sub-agent probe warns off, which is 6 of 21 measured sessions.
       name: 'session-detail-responses',
-      ok: result.detailResponses === 1,
-      actual: `${result.detailResponses} response(s)`,
-      expected: 'exactly one GET /api/sessions/:id response',
+      ok: result.detailResponsesAtLoad === 1,
+      actual: `${result.detailResponsesAtLoad} at load, ${result.detailPaths.length} over the drive`,
+      expected: 'exactly one GET /api/sessions/:id response before any expansion',
     },
     ...toolCallAssertions(result.toolCallInline),
     ...eventDetailAssertions(result.eventDetail),
+    ...subagentAssertions(
+      result.subagentExpansion,
+      result.detailPaths,
+      result.detailResponsesAtLoad,
+    ),
     ...threadAssertions(result.threadInline),
     {
       name: 'console-errors',
@@ -334,14 +388,14 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
-      // RAISED 5 -> 6 BY TASK 5.4, with `06-thread.png`. The literal below is
-      // pinned by no test of its own, so leaving it behind would ship a report
-      // reading `6 screenshot(s) / expected: 5 screenshots` with `ok: true` —
-      // a contact sheet that contradicts itself while passing.
+      // RAISED 6 -> 7 BY TASK 5.5, with `07-subagent.png`. Both literals move
+      // together or a test reds: leaving one behind would ship a report reading
+      // `7 screenshot(s) / expected: 6 screenshots` with `ok: true` — a contact
+      // sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 6,
+      ok: result.shots.length === 7,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '6 screenshots',
+      expected: '7 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -388,6 +442,49 @@ function eventDetailAssertions(probe: EventDetailProbe | null): AssertionRecord[
         `storage ${found(probe.storageMatched)} (${quote(probe.storageWord)})`,
       expected:
         'the detail pane contains a prefix of the input, of the output, and the storage word',
+    },
+  ];
+}
+
+/**
+ * AC-R1 for task 5.5, in two records: the RIGHT ONE request went out, and the
+ * sidecar's own rows arrived.
+ *
+ * The request half reads `detailPaths` rather than anything the probe carried,
+ * so a probe that never fired cannot make it pass by arithmetic. The zero-extra
+ * case is the only automated witness of the self-cancelling fetch effect, which
+ * no test in the UI project can see at all.
+ *
+ * The row half asserts on nested EVENT rows. A splice that carried only a depth
+ * offset would still place them correctly and still stamp the child's root turn,
+ * so the event row is the only reading that tells the two apart.
+ */
+function subagentAssertions(
+  probe: SubagentProbe | null,
+  detailPaths: readonly string[],
+  atLoad: number,
+): AssertionRecord[] {
+  if (probe === null) return [];
+  const extra = detailPaths.slice(atLoad);
+  const wanted = `/api/sessions/${probe.childSessionId}`;
+  const stamps = [...new Set(probe.nestedEventSessionIds)];
+  return [
+    {
+      name: 'subagent-expansion-request',
+      ok: extra.length === 1 && extra[0] === wanted,
+      actual: extra.length === 0 ? 'no further response' : extra.join(' | '),
+      expected: `exactly one further response, and its path is ${wanted}`,
+    },
+    {
+      name: 'subagent-nested-rows',
+      ok:
+        probe.nestedEventSessionIds.length > 0 &&
+        probe.childSessionId !== probe.parentSessionId &&
+        stamps.every((id) => id === probe.childSessionId),
+      actual:
+        `${probe.nestedEventSessionIds.length} nested event row(s) stamped ` +
+        `${quote(stamps.join(', '))}, under a parent row stamped ${quote(probe.parentSessionId)}`,
+      expected: `>= 1 nested event row carrying data-session-id ${quote(probe.childSessionId)}`,
     },
   ];
 }
@@ -457,6 +554,13 @@ function driveWarnings(result: DriveResult): string[] {
       'tool-call-inline: none in window — OBSERVED, NOT ASSERTED. No rendered ' +
         'tool_call row carried both an input and an output, so the payload ' +
         'cross-check had nothing to look at on this session.',
+    );
+  }
+  if (result.subagentExpansion === null) {
+    warnings.push(
+      'subagent-expansion: no Agent row — OBSERVED, NOT ASSERTED. No rendered ' +
+        'row named a child_session_id, so there was nothing to open. MEASURED: ' +
+        '6 of 21 top-level sessions spawned no sub-agent at all.',
     );
   }
   return warnings;

@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatCost, formatDurationMs, formatTokens, previewOf } from '@/lib/format';
+import { agentStatusOf } from '@/lib/subagent';
 import {
   durationSourceOf,
   eventChips,
@@ -62,6 +63,9 @@ import { SPAN_VISUALS, VISUAL_OF_KIND } from './span-visuals';
 /** How far one nesting level shifts a row, in pixels. */
 export const INDENT_PX = 14;
 
+/** The palette entry an Agent row draws with. Its first real consumer. */
+const SUBAGENT = SPAN_VISUALS.type.subagent;
+
 /**
  * What the duration measured, one phrase per `events.duration_source`.
  *
@@ -97,6 +101,19 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
   const durationLabel = DURATION_LABELS[durationSource];
   const input = previewOf(event.input);
   const output = previewOf(event.text);
+  /*
+   * Keyed on `child_session_id`, never on `kind`. Every one of these rows is a
+   * `tool_call`, so the kind says nothing; naming a child session is what makes
+   * a row a sub-agent, and it is 1:1 with the sidecar it names.
+   */
+  const childSessionId = event.child_session_id;
+  const agent =
+    childSessionId === null
+      ? null
+      : {
+          type: event.agent_type ?? SPAN_VISUALS.type.subagent.label,
+          status: agentStatusOf(event.agent_status),
+        };
 
   return (
     <div
@@ -105,6 +122,11 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
       data-span-status={statusKey}
       data-event-kind={kind}
       data-event-id={event.id}
+      // Whose transcript this row came from. The client is what chose which
+      // session to ask for, so it can write this honestly — the same move
+      // `EventDetail` made with `data-event-id`.
+      data-session-id={row.sessionId}
+      {...(childSessionId === null ? {} : { 'data-child-session-id': childSessionId })}
       /*
        * `Row.depth` is 0 for a top-level turn and 1 for its events, while
        * `aria-level` is 1-based from the root of the tree — so every row's
@@ -122,7 +144,12 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
        * the row REPLACES its children for a screen reader, so a qualifier that
        * only existed as a `title` would stop being announced at all.
        */
-      aria-label={[`${type.label} ${name}`, status.label, durationLabel].join(', ')}
+      aria-label={[
+        `${type.label} ${name}`,
+        ...(agent === null ? [] : [`sub-agent ${agent.type}, ${agent.status}`]),
+        status.label,
+        durationLabel,
+      ].join(', ')}
       // The ARIA treeview's roving tabindex: exactly one row is reachable by
       // tab, and the arrow keys move which one that is.
       tabIndex={focused ? 0 : -1}
@@ -144,6 +171,30 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
         <span data-slot="span-name" className="min-w-0 flex-1 truncate">
           {name}
         </span>
+
+        {/*
+         * The sub-agent identity strip: whose agent this was, and how it ended.
+         *
+         * `--span-subagent` has been in the locked palette since the design
+         * system landed and had no real consumer until now; this is it. The
+         * status word is text rather than a tint alone, per the accessibility
+         * baseline, and `unknown` is the honest answer on the 39 of 260 rows
+         * whose `agent_status` is null.
+         *
+         * The description and the rollup are NOT here: both live only on the
+         * child's header, which does not exist until the sidecar is fetched.
+         * They render on the child's root turn row instead.
+         */}
+        {agent === null ? null : (
+          <span
+            data-slot="span-subagent"
+            className={cn('flex shrink-0 items-center gap-1', SUBAGENT.tint)}
+          >
+            <SUBAGENT.Icon size={12} aria-hidden="true" />
+            <span className="font-mono text-2xs">{agent.type}</span>
+            <span className={SPAN_VISUALS.triggerBadge}>{agent.status}</span>
+          </span>
+        )}
 
         {/*
          * The status glyph carries its own word in `title` and `aria-label`.

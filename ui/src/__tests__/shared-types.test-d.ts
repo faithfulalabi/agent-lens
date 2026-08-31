@@ -10,7 +10,7 @@
 // why the check has to live in a type position rather than in an assertion.
 
 import type { CaptureMode, SessionStatus } from '@shared/entities.ts';
-import type { EventRow, TurnRow } from '@/lib/api';
+import type { EventRow, SessionDetailHeaderRow, TurnRow } from '@/lib/api';
 
 // Force the compiler to resolve and structurally check each imported type.
 // If the alias broke or a field were removed, `tsc --noEmit` would fail here.
@@ -30,10 +30,37 @@ type _AssertEvent = EventRow['input'] extends string | null ? true : never;
 // `EVENT_COLUMNS` sends — so the presence of `spill_path` is a type-level fact.
 type _AssertSpill = EventRow['spill_path'] extends string | null ? true : never;
 
+// Task 5.5 widened both rows again, on the same terms. An expanded Agent row has
+// to say how its sub-agent ended, and `agent_status` is a column `EVENT_COLUMNS`
+// has always sent — the browser type was simply dropping it.
+type _AssertAgentStatus = EventRow['agent_status'] extends string | null ? true : never;
+
+// The five keys the DETAIL header adds for a sidecar. All optional, because
+// `toDetailHeader` assigns each one only when the column is non-null.
+type _AssertSidecarHeader = SessionDetailHeaderRow extends {
+  agent_type?: string;
+  agent_description?: string;
+  spawn_depth?: number;
+  parent_session_id?: string;
+  cwd?: string;
+}
+  ? true
+  : never;
+
+// A header with no `cwd` still type-checks. The server always sends it, but the
+// fixtures build headers without one, and a required key would red them for a
+// field nothing in this task reads.
+const _headerWithoutCwd: SessionDetailHeaderRow = {
+  ...({} as Omit<SessionDetailHeaderRow, 'cwd'>),
+};
+void _headerWithoutCwd;
+
 export type SharedTypesResolve = [
   _AssertSessionStatus,
   _AssertCaptureMode,
   _AssertTurn,
   _AssertEvent,
   _AssertSpill,
+  _AssertAgentStatus,
+  _AssertSidecarHeader,
 ];

@@ -1,8 +1,10 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { formatCost, formatTokens } from '@/lib/format';
 import { turnChips, type TurnRowModel } from '@/lib/turn-tree';
 
+import { MetricChip } from './MetricChip';
 import { INDENT_PX, RowChips } from './SpanRow';
 import { SPAN_VISUALS } from './span-visuals';
 
@@ -48,6 +50,17 @@ import { SPAN_VISUALS } from './span-visuals';
  * whose ordinary case is `human` rather than `user_prompt`. The slot NAME is
  * kept because four UI suites and the render gate pin these strings, so a
  * rename would red them before it changed anything a reader can see.
+ *
+ * ===========================================================================
+ * THE SUB-AGENT'S COST DOES NOT GO THROUGH `RowChips`.
+ * ===========================================================================
+ * `RowChips` omits its cost chip outright when the number is not above zero —
+ * deliberately, and pinned by a test — so an unpriced sub-agent would show
+ * nothing rather than the em dash the data-model rule requires. That matters
+ * more here than anywhere: 262 of 272 sidecars carry a null `est_cost`, because
+ * 283 of 293 sessions run a model absent from the pricing table. So the two
+ * sub-agent numbers go straight to `MetricChip` with the cost always supplied,
+ * which is the shape `SessionHeader` already uses to render its own dash.
  */
 
 export interface TraceGroupProps {
@@ -68,6 +81,9 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
       role="treeitem"
       data-slot="trace-group"
       data-turn-kind={turn.kind}
+      // See `SpanRow`: the client chose which session to ask for, so it can name
+      // the one this row's data came from.
+      data-session-id={row.sessionId}
       // The 1-based ARIA level is the row's depth plus one — the same formula
       // every event row uses, and a folded turn's depth is not zero.
       aria-level={row.depth + 1}
@@ -109,6 +125,29 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
       <span data-slot="trace-preview" className="min-w-0 flex-1 truncate font-medium">
         {turn.title}
       </span>
+
+      {/*
+       * A spliced sidecar's ROOT turn, and only that row, carries the child's
+       * own header. What it says is the half of the sub-agent's identity that
+       * cannot exist before the fetch: what it was asked to do, and what the
+       * whole sidecar cost. The Agent row above it already said whose agent it
+       * was and how it ended.
+       */}
+      {row.subagent === undefined ? null : (
+        <span data-slot="trace-subagent" className="flex min-w-0 items-center gap-2">
+          <span
+            data-slot="trace-agent-description"
+            className="min-w-0 truncate font-mono text-2xs text-muted"
+          >
+            {row.subagent.header.agent_description ?? ''}
+          </span>
+          <MetricChip
+            className="shrink-0"
+            tokens={`${formatTokens(row.subagent.header.tokens_in + row.subagent.header.tokens_out)} tok`}
+            cost={formatCost(row.subagent.header.est_cost)}
+          />
+        </span>
+      )}
 
       {/*
        * A turn whose kind is not `human` was started by the system — a task
