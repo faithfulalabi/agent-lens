@@ -15,6 +15,7 @@ import {
   type SessionData,
 } from '../session-data';
 import { buildTurnGroups, flatten } from '../turn-tree';
+import { initialSubagentState } from '../subagent';
 import { initialNavState, navReducer } from '../tree-nav';
 import { makeDetail, makeEventRow, makeSessionRow, makeTurnRow, stubApiClient } from './fixtures';
 
@@ -290,7 +291,7 @@ describe('rowsChangedAction carries the model’s ids, not the on-screen ones', 
 
   it('names every id that can be a row, including the closed-away ones', () => {
     const rows = flatten(model, initialExpanded(turns));
-    const action = rowsChangedAction(model, rows);
+    const action = rowsChangedAction(model, rows, initialSubagentState);
 
     expect(action.type).toBe('rows-changed');
     const modelIds = action.type === 'rows-changed' ? action.modelIds : new Set<string>();
@@ -307,7 +308,7 @@ describe('rowsChangedAction carries the model’s ids, not the on-screen ones', 
     const rows = flatten(model, initialExpanded(turns));
     const selected = { ...initialNavState(initialExpanded(turns)), selectedId: 'old' };
 
-    const next = navReducer(selected, rowsChangedAction(model, rows));
+    const next = navReducer(selected, rowsChangedAction(model, rows, initialSubagentState));
 
     expect(
       next.selectedId,
@@ -321,7 +322,10 @@ describe('rowsChangedAction carries the model’s ids, not the on-screen ones', 
     const smaller = buildTurnGroups(turns.slice(0, 1), new Map());
     const stale = { ...initialNavState(), selectedId: 'new' };
 
-    const next = navReducer(stale, rowsChangedAction(smaller, flatten(smaller, new Set())));
+    const next = navReducer(
+      stale,
+      rowsChangedAction(smaller, flatten(smaller, new Set()), initialSubagentState),
+    );
     expect(next.selectedId).toBeUndefined();
   });
 });

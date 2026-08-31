@@ -65,7 +65,13 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
     backLinks: 1,
     spanRowCount: 4,
     turnGroupCount: 2,
-    detailResponses: 1,
+    detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1'],
+    detailResponsesAtLoad: 1,
+    subagentExpansion: {
+      parentSessionId: 'sess-1',
+      childSessionId: 'child-1',
+      nestedEventSessionIds: ['child-1', 'child-1'],
+    },
     toolCallInline: {
       eventId: 'toolu_1',
       inputPrefix: '{"cmd":"ls"}',
@@ -124,6 +130,9 @@ const SHOT_NAMES = [
   // Task 5.4, on the same argument: the five above are all taken on the tree,
   // so without this one the contact sheet carries no thread pixels at all.
   '06-thread.png',
+  // Task 5.5. The only shot taken with a sidecar's own turns and events on
+  // screen — a state none of the six above ever reach.
+  '07-subagent.png',
 ];
 
 /** Screenshots that all clear the byte threshold, so only the override can red. */
@@ -327,9 +336,11 @@ describe('buildReport (AC5)', () => {
     ['a pane that never changed', { detail: { t0: 'same', t1: 'same', t2: 'other' } }],
     // AC2 seen from the browser: the group-by put nothing on screen.
     ['no turn groups', { turnGroupCount: 0 }],
-    // AC1: one response fills the screen. Two means the paging loop came back.
-    ['a second session-detail response', { detailResponses: 2 }],
-    ['no session-detail response at all', { detailResponses: 0 }],
+    // AC1: one response fills the screen. Two AT LOAD means the paging loop came
+    // back. Read at load rather than over the drive, because task 5.5 makes a
+    // second response the point of the feature — see the pair of tests below.
+    ['a second session-detail response at load', { detailResponsesAtLoad: 2 }],
+    ['no session-detail response at all', { detailResponsesAtLoad: 0 }],
     [
       'a tool_call row that rendered no input',
       {
@@ -550,6 +561,128 @@ describe('buildReport (AC5)', () => {
     expect(report.shots.map((s) => s.name)).toContain('06-thread.png');
   });
 
+  /* ------------------------- task 5.5 — the sub-agent expansion ----------- */
+
+  it('reads session-detail-responses AT LOAD, so an expansion cannot red it (Test 18)', () => {
+    // The whole point of task 5.5 is a SECOND `/api/sessions/:id` response, so
+    // the pre-5.5 spelling (`detailResponses === 1` over the drive) would red on
+    // the working feature. This is the half that has to keep passing.
+    const report = buildReport({
+      task: '5.5',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      result: passingResult({
+        detailResponsesAtLoad: 1,
+        detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1'],
+      }),
+      error: null,
+    });
+    const responses = report.assertions.find((a) => a.name === 'session-detail-responses');
+
+    expect(responses?.ok).toBe(true);
+    expect(responses?.actual).toContain('1 at load');
+    expect(responses?.actual, 'the drive total is still reported, just not asserted').toContain(
+      '2 over the drive',
+    );
+  });
+
+  it.each([
+    [
+      'zero extra responses — the self-cancelling effect (Test 19)',
+      { detailPaths: ['/api/sessions/sess-1'], detailResponsesAtLoad: 1 },
+    ],
+    [
+      'two extra responses',
+      {
+        detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1', '/api/sessions/child-2'],
+        detailResponsesAtLoad: 1,
+      },
+    ],
+    [
+      'an extra response for a session that is not the child',
+      { detailPaths: ['/api/sessions/sess-1', '/api/sessions/somebody-else'] },
+    ],
+  ])('subagent-expansion-request reds on %s', (_label, overrides) => {
+    /*
+     * ★ THE ZERO-EXTRA CASE IS THE ONLY AUTOMATED WITNESS OF THE SELF-CANCELLING
+     * FETCH EFFECT. With `sub` or `rows` in that effect's dependency array, the
+     * `requested` dispatch re-renders, the cleanup aborts the request it just
+     * issued, and the re-run asks for nothing because the id is pending — so the
+     * child never loads and the drive sees no second response. The UI project
+     * cannot see it at all: effects do not fire under `environment: 'node'`.
+     */
+    const report = buildReport({
+      task: '5.5',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      result: passingResult(overrides),
+      error: null,
+    });
+
+    expect(report.assertions.find((a) => a.name === 'subagent-expansion-request')?.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  });
+
+  it('subagent-nested-rows reds when the nested rows carry the PARENT’s id (Test 19)', () => {
+    // The exact symptom of a splice that carries a depth offset and no session
+    // id: every row lands at the right indent and every one of them lies about
+    // which transcript it came from.
+    const report = buildReport({
+      task: '5.5',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      result: passingResult({
+        subagentExpansion: {
+          parentSessionId: 'sess-1',
+          childSessionId: 'child-1',
+          nestedEventSessionIds: ['sess-1'],
+        },
+      }),
+      error: null,
+    });
+
+    expect(report.assertions.find((a) => a.name === 'subagent-nested-rows')?.ok).toBe(false);
+  });
+
+  it('warns and asserts nothing when the session spawned no sub-agent (Test 20)', () => {
+    /*
+     * ★ THE 5.1 PRECEDENT AGAIN, and it applies here where it does NOT apply to
+     * the thread probe: whether a session holds an Agent row is a fact about the
+     * corpus, measured at 6 of 21 top-level sessions with none. A red there
+     * would fail the gate for something the product did not do.
+     */
+    const report = buildReport({
+      task: '5.5',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      result: passingResult({ subagentExpansion: null }),
+      error: null,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.assertions.map((a) => a.name)).not.toContain('subagent-expansion-request');
+    expect(report.assertions.map((a) => a.name)).not.toContain('subagent-nested-rows');
+    expect(report.warnings.join(' ')).toContain('subagent-expansion: no Agent row');
+    expect(renderContactSheet(report)).toContain('subagent-expansion: no Agent row');
+  });
+
+  it('expects a sub-agent screenshot, so AC-R2 is not decoration (Test 21)', () => {
+    // Mirrors 5.4's twin above. Without `07-subagent.png` the founder opens the
+    // contact sheet for a sub-agent task and sees six pictures without one.
+    const report = buildReport({
+      task: '5.5',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const count = report.assertions.find((a) => a.name === 'shot-count');
+
+    expect(count?.ok).toBe(true);
+    expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
+    expect(count?.expected).toBe('7 screenshots');
+    expect(report.shots.map((s) => s.name)).toContain('07-subagent.png');
+    // Nothing is asserted about its POSITION in the array. The real drive shoots
+    // it BEFORE `06-thread.png`, because the thread toggle has no trip back — so
+    // a last-element pin here would pass on this fixture and describe a drive
+    // order that does not exist.
+  });
+
   it('carries the two new readings into the report and the contact sheet', () => {
     const report = buildReport({
       task: '5.2',
@@ -558,7 +691,7 @@ describe('buildReport (AC5)', () => {
       error: null,
     });
     expect(report.turnGroupCount).toBe(2);
-    expect(report.detailResponses).toBe(1);
+    expect(report.detailResponses).toBe(2);
     expect(renderContactSheet(report)).toContain('2 turn group(s)');
   });
 
@@ -649,6 +782,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '04-focus.png',
       '05-tool-call.png',
       '06-thread.png',
+      '07-subagent.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.
@@ -716,13 +850,14 @@ describe('the gate source itself (AC6)', () => {
     const values = Object.values(SELECTORS);
 
     // Vacuity guard: a silently-shrinking constant would trivially satisfy the
-    // loop. RAISED 7 -> 8 BY TASK 5.4, in lockstep with the eighth real slot
-    // (`thread-toggle`) that the same commit drives and `SessionHeader.tsx`
-    // renders — the invariant this guards is a constant that shrinks unnoticed.
-    // `thread-view` is deliberately NOT an entry: a slot no drive clicks is the
-    // vacuity this guard exists to catch.
-    expect(values).toHaveLength(8);
-    expect(new Set(values).size).toBe(8);
+    // loop. RAISED 8 -> 9 BY TASK 5.5, in lockstep with the ninth real slot
+    // (`span-expand`) that the same commit clicks and `SpanRow.tsx` renders —
+    // the invariant this guards is a constant that shrinks unnoticed. 5.4 raised
+    // it 7 -> 8 for `thread-toggle` on the same terms. `thread-view` is
+    // deliberately NOT an entry: a slot no drive clicks is the vacuity this
+    // guard exists to catch.
+    expect(values).toHaveLength(9);
+    expect(new Set(values).size).toBe(9);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {

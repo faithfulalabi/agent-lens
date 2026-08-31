@@ -32,6 +32,7 @@
 import type { ApiClient, EventRow, SessionDetailBody, TurnRow } from './api.js';
 import type { Row, TreeModel } from './turn-tree.js';
 import type { NavAction } from './tree-nav.js';
+import { mergedRowIds, type SubagentState } from './subagent.js';
 
 /**
  * Events per request: the server's own ceiling (`src/server/api.ts:68`).
@@ -204,12 +205,21 @@ export function needsReseed(data: SessionData | null, seededFor: string | null):
  * an effect is unreachable from this project's tests and this action's contract
  * is the one Task 6.2's live append turns on.
  *
- * `modelIds` is `TreeModel.rowIds` — every id that CAN be a row — and not the
- * ids of `rows`, which holds only what the current expansion state puts on
- * screen. Passing the latter would clear the selection every time a turn was
- * closed, which is the single thing the selection/focus split exists to
- * prevent.
+ * `modelIds` is every id that CAN be a row — and not the ids of `rows`, which
+ * holds only what the current expansion state puts on screen. Passing the latter
+ * would clear the selection every time a turn was closed, which is the single
+ * thing the selection/focus split exists to prevent.
+ *
+ * ★ THE SUB-AGENT STATE IS A REQUIRED ARGUMENT, NOT AN OPTIONAL ONE. A loaded
+ * sidecar's rows are in the one row list but not in the parent model's `rowIds`,
+ * so selecting one and re-rendering would drop the selection on the very next
+ * pass. Making it required turns that wiring mistake into a compile error at the
+ * one call site instead of a defect only a live drive could see.
  */
-export function rowsChangedAction(model: TreeModel, rows: readonly Row[]): NavAction {
-  return { type: 'rows-changed', rows, modelIds: model.rowIds };
+export function rowsChangedAction(
+  model: TreeModel,
+  rows: readonly Row[],
+  sub: SubagentState,
+): NavAction {
+  return { type: 'rows-changed', rows, modelIds: mergedRowIds(model, sub) };
 }

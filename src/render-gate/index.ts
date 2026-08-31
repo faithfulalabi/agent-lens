@@ -26,18 +26,23 @@ import {
   type Observations,
   type RenderGateReport,
   type ShotRecord,
+  type SubagentProbe,
   type ThreadProbe,
   type ToolCallProbe,
 } from './report.js';
 
 /**
- * The eight `data-slot` values the gate drives. `data-slot` carries no styling
+ * The nine `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  *
  * Every entry is CLICKED or READ by the drive below. `thread-view` is
  * deliberately not listed: the container is reached through `data-thread-kind`,
  * and an entry no drive touches is the vacuity the guard exists to catch.
+ *
+ * `spanExpand` is task 5.5's, and it is the toggle AC-R1(b) commits to clicking
+ * by name. Every slot the drive touches goes through this constant; there is no
+ * inline `data-slot` literal anywhere in this file, deliberately.
  */
 export const SELECTORS = {
   sessionCount: 'session-list-count',
@@ -46,6 +51,7 @@ export const SELECTORS = {
   traceRow: 'trace-group',
   traceExpand: 'trace-expand',
   spanRow: 'span-row',
+  spanExpand: 'span-expand',
   spanDetail: 'span-detail',
   threadToggle: 'thread-toggle',
 } as const;
@@ -59,7 +65,13 @@ const DEFAULT_DEADLINE_MS = 180_000;
 const PER_WAIT_TIMEOUT_MS = 15_000;
 
 /**
- * The six screenshots, named so the contact sheet reads in drive order.
+ * The seven screenshots, numbered in the order a reviewer should read them.
+ *
+ * ★ THAT IS NO LONGER THE ORDER THEY ARE TAKEN IN, AND IT CANNOT BE.
+ * `07-subagent.png` is shot BEFORE `06-thread.png`: the thread toggle swaps the
+ * tree away with no trip back, so every tree reading has to happen first, while
+ * the sub-agent number has to stay 07 because six code sites pin the shot set by
+ * name. So `report.shots` is in CAPTURE order and reads 05, 07, 06.
  *
  * `05-tool-call.png` was added by task 5.3 and it is not decoration. The four
  * before it are shot at `[data-index="1"]` and at the row `ArrowDown` reaches —
@@ -71,6 +83,10 @@ const PER_WAIT_TIMEOUT_MS = 15_000;
  * `06-thread.png` is task 5.4's, on the same argument: the five before it are
  * all taken on the tree, so without it the AC-R2 eye would open the contact
  * sheet and see no thread pixels at all.
+ *
+ * `07-subagent.png` is task 5.5's, and it is the only one that can show an
+ * embedded sidecar: it is shot while the expanded Agent row's own turns and
+ * events are on screen, which is a state none of the six before it reach.
  */
 type ShotName =
   | '01-sessions.png'
@@ -78,7 +94,8 @@ type ShotName =
   | '03-detail.png'
   | '04-focus.png'
   | '05-tool-call.png'
-  | '06-thread.png';
+  | '06-thread.png'
+  | '07-subagent.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -404,7 +421,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
    * response comes back. The response count is the decidable property, and it
    * is the one AC1 means: one response fills the whole screen.
    */
-  let detailResponses = 0;
+  const detailPaths: string[] = [];
   let wireEvents: Promise<WireEvent[]> | null = null;
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
@@ -417,9 +434,12 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`));
   page.on('response', (response) => {
     if (isSessionDetailPath(response.url()) && response.status() < 400) {
-      detailResponses += 1;
+      // The PATH, not just a tally: AC-R1(b) has to prove the expansion asked
+      // for that row's own child and for nothing else.
+      detailPaths.push(new URL(response.url()).pathname);
       // Kept as a promise: reading a body inside the handler would make the
-      // listener async and the count race the drive.
+      // listener async and the count race the drive. `??=` so it stays the
+      // PARENT's page — a later sidecar response must not overwrite it.
       wireEvents ??= response
         .json()
         .then((body: { events?: WireEvent[] }) => body.events ?? [])
@@ -483,6 +503,13 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const toolCallInline = toolCallProbe(found);
   const eventDetail = await probeEventDetail(page, found, shoot);
 
+  // AFTER the detail probe, because opening a sub-agent inserts rows and would
+  // move the row that probe clicks; BEFORE the thread probe, because that one
+  // swaps the tree away for good. Read the at-load count here, on the last line
+  // before anything can issue a second detail request.
+  const detailResponsesAtLoad = detailPaths.length;
+  const subagentExpansion = await probeSubagentExpansion(page, shoot);
+
   // LAST of all: the toggle swaps the tree out for the thread, so every tree
   // reading has to be taken before it. There is no trip back — a return would
   // be dead motion, and the response count below spans the whole drive either
@@ -500,9 +527,11 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       backLinks,
       spanRowCount,
       turnGroupCount,
-      detailResponses,
+      detailPaths,
+      detailResponsesAtLoad,
       toolCallInline,
       eventDetail,
+      subagentExpansion,
       threadInline,
       detail,
       consoleErrors,
@@ -624,6 +653,94 @@ async function probeEventDetail(
     outputMatched: outputPrefix !== '' && pane.includes(outputPrefix),
     storageMatched: pane.includes(wire.output_storage),
   };
+}
+
+/** One scroll step, and how many of them the search will take. */
+const SUBAGENT_SCROLL_STEPS = 12;
+
+/** How long one scroll step is given to move the window before the search stops. */
+const SUBAGENT_SETTLE_MS = 3_000;
+
+/*
+ * ★ THE EXPANSION KEEPS THE ORDINARY PER-WAIT, AND THAT IS A MEASUREMENT.
+ *
+ * The first expansion of almost any sidecar RE-PROJECTS it inside the request:
+ * `PROJECTOR_VERSION` is 5, 287 of 293 rows carry 4, and the freshness check
+ * demands equality. So the honest question was whether a parse of the whole file
+ * fits inside `PER_WAIT_TIMEOUT_MS`. MEASURED against a v4 snapshot, on the five
+ * children of the session this gate drives (0.67-2.86 MB, 72-368 events): the
+ * re-projecting request took 36, 44, 71, 88 and 158 ms. Two orders of magnitude
+ * of headroom, so no special wait is invented here.
+ */
+
+/**
+ * AC-R1 for task 5.5: opening an Agent row embeds ITS OWN sidecar, in place.
+ *
+ * ★ IT SCROLLS. IT NEVER CLOSES A TURN AND NEVER OPENS ONE.
+ * MEASURED on the session `openFirstSession` opens: only turns 0, 6 and 7 are
+ * top-level, and turns 1-5 are a five-deep `task_notification` chain hanging off
+ * the Agent events INSIDE turn 0. So all five child-bearing rows live in turn
+ * 0's subtree, `flatten` stops descending at a closed turn, and closing turn 0
+ * would leave this probe nothing to find — it would answer `null`, the optional
+ * shape would turn that into a warning, and the gate would go green over a
+ * feature nobody exercised. Opening further turns is wrong the other way: it
+ * pushes the Agent row further down the list the search is walking.
+ *
+ * Scrolling to the last rendered row and looking again is the whole search. The
+ * tree is virtualized, so a row outside the window is not in the document at
+ * all, and a locator for one would throw rather than degrade.
+ */
+async function probeSubagentExpansion(
+  page: Page,
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<SubagentProbe | null> {
+  const agentRows = page.locator(`${slot(SELECTORS.spanRow)}[data-child-session-id]`);
+
+  for (let step = 0; step <= SUBAGENT_SCROLL_STEPS; step += 1) {
+    if ((await agentRows.count()) > 0) break;
+    const last = page.locator(slot(SELECTORS.spanRow)).last();
+    if ((await last.count()) === 0) break;
+    const before = await last.getAttribute('data-event-id');
+    await last.scrollIntoViewIfNeeded();
+    // The window advancing is the latched fact worth waiting on. Bounded and
+    // tolerated, because reaching the bottom of the list is a legitimate answer
+    // — it means this session has no Agent row, which 6 of 21 do not.
+    const advanced = await page
+      .waitForFunction(
+        ([rowSelector, previous]) => {
+          const rows = document.querySelectorAll(rowSelector);
+          const tail = rows[rows.length - 1];
+          return tail !== undefined && tail.getAttribute('data-event-id') !== previous;
+        },
+        [slot(SELECTORS.spanRow), before] as const,
+        { timeout: SUBAGENT_SETTLE_MS },
+      )
+      .then(
+        () => true,
+        () => false,
+      );
+    if (!advanced) break;
+  }
+
+  const row = agentRows.first();
+  if ((await row.count()) === 0) return null;
+  const childSessionId = await row.getAttribute('data-child-session-id');
+  const parentSessionId = await row.getAttribute('data-session-id');
+  if (childSessionId === null || parentSessionId === null) return null;
+
+  await row.locator(slot(SELECTORS.spanExpand)).click();
+
+  // An EVENT row of the child, not its turn row. The turn row is the one a
+  // splice that carried only a depth offset would still stamp correctly, so
+  // waiting on it would let the real defect through.
+  const nested = `${slot(SELECTORS.spanRow)}[data-session-id="${cssAttrValue(childSessionId)}"]`;
+  await page.waitForSelector(nested);
+  await shoot('07-subagent.png');
+
+  const nestedEventSessionIds = await page.$$eval(nested, (nodes) =>
+    nodes.map((node) => node.getAttribute('data-session-id') ?? ''),
+  );
+  return { parentSessionId, childSessionId, nestedEventSessionIds };
 }
 
 /**

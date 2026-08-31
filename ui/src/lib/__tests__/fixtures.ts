@@ -19,9 +19,11 @@ import type {
   EventContentBody,
   EventRow,
   SessionDetailBody,
+  SessionDetailHeaderRow,
   SessionListRow,
   TurnRow,
 } from '../api.js';
+import type { SessionData } from '../session-data.js';
 import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree.js';
 
 /** The one pagination envelope the read API serves on every list route. */
@@ -126,9 +128,64 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     est_cost: null,
     child_session_id: null,
     agent_type: null,
+    agent_status: null,
     raw_type: 'assistant',
     raw_subtype: null,
     ...overrides,
+  };
+}
+
+/**
+ * The `Agent` tool call that spawns a sidecar — the row Task 5.5 expands.
+ *
+ * `child_session_id` is what makes a row a sub-agent; `kind` is `tool_call` on
+ * every one of them and says nothing. The defaults mirror the commonest measured
+ * shape: a `general-purpose` agent that completed.
+ */
+export function makeAgentEvent(overrides: Partial<EventRow> = {}): Partial<EventRow> {
+  return {
+    name: 'Agent',
+    child_session_id: 'child-0',
+    agent_type: 'general-purpose',
+    agent_status: 'completed',
+    ...overrides,
+  };
+}
+
+/**
+ * A sidecar's loaded detail — a session like any other, carrying the keys an
+ * expanded row reads.
+ *
+ * Returns what `loadSessionDetail` returns, because that is what the sub-agent
+ * reducer takes: {@link TurnTree} has already bucketed the events by turn, so
+ * building the body and re-bucketing it would duplicate the one line of the
+ * loader that does any work.
+ *
+ * `est_cost: null` by default, because it is the measured majority: 262 of 272
+ * sidecars are unpriced. A fixture that priced them would test the 3.7% case and
+ * call it normal.
+ */
+export function makeSidecarDetail(
+  sessionId: string,
+  tree: TurnTree,
+  header: Partial<SessionDetailHeaderRow> = {},
+): SessionData {
+  const events = [...tree.eventsByTurn.values()].flat();
+  return {
+    session: {
+      ...makeSessionRow({ id: sessionId, est_cost: null, tokens_in: 900, tokens_out: 100 }),
+      agent_type: 'general-purpose',
+      agent_description: 'find every caller of buildTurnGroups',
+      parent_session_id: 'seed-s0',
+      spawn_depth: 1,
+      ...header,
+      projection: { state: 'ready' },
+    },
+    turns: tree.turns,
+    eventsByTurn: tree.eventsByTurn,
+    events,
+    hasMore: false,
+    shown: events.length,
   };
 }
 
@@ -283,9 +340,12 @@ export function makeLargeTree({
  * row wants, and it saves each test hand-building an expansion set that would
  * then be the thing under test rather than the thing being assumed.
  */
-export function expandedRows(tree: TurnTree): { model: TreeModel; rows: Row[] } {
+export function expandedRows(
+  tree: TurnTree,
+  rootSessionId = 'seed-s0',
+): { model: TreeModel; rows: Row[] } {
   const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
-  return { model, rows: flatten(model, model.rowIds) };
+  return { model, rows: flatten(model, model.rowIds, undefined, { rootSessionId }) };
 }
 
 /** {@link expandedRows} for the common one-turn page. */

@@ -145,6 +145,15 @@ export interface EventRow {
   est_cost: number | null;
   child_session_id: string | null;
   agent_type: string | null;
+  /**
+   * How the sub-agent finished: `completed` | `failed` | `killed` | `running`.
+   *
+   * Declared by Task 5.5 on the terms `spill_path` was declared on — `src/db/read.ts`
+   * has always sent it, and an expanded Agent row cannot say what became of the
+   * sub-agent while the browser type drops the column. Null on 39 of the 260
+   * events that name a child, which the row spells `unknown`.
+   */
+  agent_status: string | null;
   raw_type: string;
   /**
    * The harness's own sub-label. Task 5.4 declared it: `raw_type` alone crushes
@@ -156,6 +165,28 @@ export interface EventRow {
 }
 
 /**
+ * The detail route's header: the list row, plus the five keys `src/db/read.ts`
+ * adds for a sidecar (`:405-420`).
+ *
+ * All five are OPTIONAL, because `toDetailHeader` assigns each one only when the
+ * column is non-null — so a top-level session's header simply lacks them.
+ *
+ * `cwd` is optional for a different reason. The server always sends it, but it
+ * is derived from `project_path` and no fixture header literal builds one; a
+ * required key would red those literals for a field nothing here reads.
+ */
+export interface SessionDetailHeaderRow extends SessionListRow {
+  cwd?: string;
+  /** The sub-agent's kind, e.g. `general-purpose`. */
+  agent_type?: string;
+  /** What the parent asked this sub-agent to do. Only the CHILD header has it. */
+  agent_description?: string;
+  spawn_depth?: number;
+  /** Present exactly when this session is a sidecar. */
+  parent_session_id?: string;
+}
+
+/**
  * `GET /api/sessions/:id` — the header, its turns, and ONE PAGE of events.
  *
  * The event page is a CURSOR, not an offset window: `next_seq` is where the
@@ -164,7 +195,7 @@ export interface EventRow {
  * is the state a live tail is in by definition.
  */
 export interface SessionDetailBody {
-  session: SessionListRow & { projection: { state: string; error?: string | null } };
+  session: SessionDetailHeaderRow & { projection: { state: string; error?: string | null } };
   turns: TurnRow[];
   events: EventRow[];
   next_seq: number;

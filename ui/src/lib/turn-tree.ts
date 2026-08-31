@@ -42,7 +42,7 @@
  * render is a blank screen.
  */
 
-import type { EventRow, TurnRow } from './api.js';
+import type { EventRow, SessionDetailHeaderRow, TurnRow } from './api.js';
 import { foldsUnderAgent } from './session-list.js';
 
 /** Depth of a top-level turn's own row. Its events sit one below it. */
@@ -287,10 +287,26 @@ interface RowShape {
   readonly id: string;
   /** `0` for a top-level turn, `1` for its events, and so on. */
   readonly depth: number;
+  /**
+   * Which session's transcript this row came from.
+   *
+   * Required on EVERY row, turn and event alike. `flatten` is one flat stack:
+   * once a spliced child's root turn has been popped, nothing else tells its
+   * events apart from the parent session's, so an id carried only on the root
+   * would leave every nested event row unattributed.
+   */
+  readonly sessionId: string;
   /** The turn this row belongs to, so an event row can read its turn cheaply. */
   readonly turn: TurnRow;
   readonly hasChildren: boolean;
   readonly expanded: boolean;
+  /**
+   * The sub-agent's own header, on a spliced child's ROOT turn rows and nowhere
+   * else. `SpanTree` forwards the row and nothing else, and a `TurnRow` carries
+   * neither `agent_description` nor the child's rollup — so this is the only
+   * route those two numbers have to the screen.
+   */
+  readonly subagent?: { readonly header: SessionDetailHeaderRow };
   /**
    * Sibling count within this row's own parent, and this row's 1-based place
    * in it — NOT relative to the window. `aria-setsize` and `aria-posinset` read
@@ -323,42 +339,98 @@ export type Row = TurnRowModel | EventRowModel;
 export type RowPredicate = (row: Row) => boolean;
 
 /**
+ * One loaded sub-agent session, ready to splice under the Agent event that
+ * spawned it. `subagent.ts` builds these; this module only reads them.
+ */
+export interface Subtree {
+  /** The sidecar's own session id — what its spliced rows are stamped with. */
+  readonly sessionId: string;
+  readonly model: TreeModel;
+  readonly header: SessionDetailHeaderRow;
+}
+
+/**
+ * The walk's fourth argument: whose transcript this is, and which sidecars have
+ * been loaded, keyed by `events.child_session_id`.
+ *
+ * A single object rather than two positional parameters, because `keepRow` is
+ * already optional and third — a required id after an optional argument is a
+ * call-order trap.
+ */
+export interface FlattenOptions {
+  readonly rootSessionId: string;
+  readonly subtrees?: ReadonlyMap<string, Subtree>;
+}
+
+/**
+ * What a row inherits from the entry that pushed it, rather than from its node.
+ *
+ * `depthOffset` is what makes a spliced subtree sit at the right indent:
+ * `buildTurnGroups` numbered its depths against the sidecar's OWN model, so
+ * every one of them needs the same shift added. It rides down through both
+ * pushes and survives any number of turn/event alternations, which is what
+ * makes a depth-2 sub-agent take the identical path.
+ */
+interface Inherited {
+  readonly depthOffset: number;
+  readonly sessionId: string;
+}
+
+interface TurnEntry extends Inherited {
+  readonly node: TurnNode;
+  /** Set only on a spliced child's root turns. Nothing else is a sub-agent. */
+  readonly subagent?: { readonly header: SessionDetailHeaderRow };
+}
+
+interface EventEntry extends Inherited {
+  readonly node: EventNode;
+}
+
+/**
  * One item on the walk's stack, with the sibling place its row will announce.
  *
  * Two shapes rather than one, because the levels alternate: a turn's siblings
  * are turns and an event's siblings are events, so no set ever mixes the two.
  */
 type Pending =
-  | {
+  | (TurnEntry & {
       readonly on: 'turn';
-      readonly node: TurnNode;
       readonly setSize: number;
       readonly posInSet: number;
-    }
-  | {
+    })
+  | (EventEntry & {
       readonly on: 'event';
-      readonly node: EventNode;
       readonly turn: TurnRow;
       readonly setSize: number;
       readonly posInSet: number;
-    };
+    });
 
-function pushTurns(pending: Pending[], siblings: readonly TurnNode[]): void {
+/**
+ * ★ ONE CALL PER SIBLING SET, EVEN WHEN THE SET HAS TWO SOURCES.
+ *
+ * An Agent event can own folded `task_notification` turns AND a spliced sidecar
+ * at the same time — MEASURED, all 20 folded turns in the corpus hang under
+ * events that also name a `child_session_id`, so this is the ordinary case. Two
+ * calls would make each half announce itself as a complete set and a screen
+ * reader would say "1 of 1" twice. So the caller combines them into one array,
+ * `setSize` comes from its length, and each entry keeps its own offset.
+ */
+function pushTurns(pending: Pending[], siblings: readonly TurnEntry[]): void {
   // Reversed, because this is a stack and pre-order wants the first sibling
   // popped first.
   for (let i = siblings.length - 1; i >= 0; i -= 1) {
-    const node = siblings[i];
-    if (node !== undefined) {
-      pending.push({ on: 'turn', node, setSize: siblings.length, posInSet: i + 1 });
+    const entry = siblings[i];
+    if (entry !== undefined) {
+      pending.push({ ...entry, on: 'turn', setSize: siblings.length, posInSet: i + 1 });
     }
   }
 }
 
-function pushEvents(pending: Pending[], turn: TurnRow, siblings: readonly EventNode[]): void {
+function pushEvents(pending: Pending[], turn: TurnRow, siblings: readonly EventEntry[]): void {
   for (let i = siblings.length - 1; i >= 0; i -= 1) {
-    const node = siblings[i];
-    if (node !== undefined) {
-      pending.push({ on: 'event', node, turn, setSize: siblings.length, posInSet: i + 1 });
+    const entry = siblings[i];
+    if (entry !== undefined) {
+      pending.push({ ...entry, on: 'event', turn, setSize: siblings.length, posInSet: i + 1 });
     }
   }
 }
@@ -367,17 +439,33 @@ function pushEvents(pending: Pending[], turn: TurnRow, siblings: readonly EventN
  * The ordered row list for the current expansion state.
  *
  * A turn or event whose id is absent from `expandedIds` contributes its own row
- * and nothing beneath it, so a collapse and the matching expansion round-trip
+ * and nothing beneath it, so a closed turn and the matching expansion round-trip
  * to exactly the same rows in exactly the same order.
+ *
+ * `options.subtrees` splices a loaded sub-agent's turns and events in place,
+ * beneath the Agent event that names it. There is ONE row list either way: a
+ * second one, per sidecar, is what would make the keyboard and the scrollbar
+ * disagree.
+ *
+ * `options` is optional so the fixtures that build a bare model stay call sites
+ * rather than rewrites; an omitted one stamps every row with `''`, which is the
+ * honest reading of "this caller never said whose session it is". The one
+ * production caller always says.
  */
 export function flatten(
   model: TreeModel,
   expandedIds: ReadonlySet<string>,
   keepRow?: RowPredicate,
+  options?: FlattenOptions,
 ): Row[] {
+  const rootSessionId = options?.rootSessionId ?? '';
+  const subtrees = options?.subtrees;
   const rows: Row[] = [];
   const pending: Pending[] = [];
-  pushTurns(pending, model.groups);
+  pushTurns(
+    pending,
+    model.groups.map((node) => ({ node, depthOffset: 0, sessionId: rootSessionId })),
+  );
 
   while (pending.length > 0) {
     const entry = pending.pop();
@@ -388,35 +476,74 @@ export function flatten(
       const row: TurnRowModel = {
         kind: 'turn',
         id: node.turn.id,
-        depth: node.depth,
+        depth: node.depth + entry.depthOffset,
+        sessionId: entry.sessionId,
         turn: node.turn,
         node,
         hasChildren: node.events.length > 0,
         expanded: expandedIds.has(node.turn.id),
         setSize: entry.setSize,
         posInSet: entry.posInSet,
+        ...(entry.subagent === undefined ? {} : { subagent: entry.subagent }),
       };
       if (keepRow !== undefined && !keepRow(row)) continue;
       rows.push(row);
-      if (row.expanded) pushEvents(pending, node.turn, node.events);
+      if (row.expanded) {
+        pushEvents(
+          pending,
+          node.turn,
+          node.events.map((child) => ({
+            node: child,
+            depthOffset: entry.depthOffset,
+            sessionId: entry.sessionId,
+          })),
+        );
+      }
       continue;
     }
 
     const { node } = entry;
+    const childSessionId = node.event.child_session_id;
+    const subtree = childSessionId === null ? undefined : subtrees?.get(childSessionId);
     const row: EventRowModel = {
       kind: 'event',
       id: node.event.id,
-      depth: node.depth,
+      depth: node.depth + entry.depthOffset,
+      sessionId: entry.sessionId,
       turn: entry.turn,
       node,
-      hasChildren: node.children.length > 0,
+      // An Agent event has something to show before its sidecar is fetched, and
+      // without the second clause its chevron never draws — so the row the whole
+      // feature turns on would not be clickable at all.
+      hasChildren: node.children.length > 0 || childSessionId !== null,
       expanded: expandedIds.has(node.event.id),
       setSize: entry.setSize,
       posInSet: entry.posInSet,
     };
     if (keepRow !== undefined && !keepRow(row)) continue;
     rows.push(row);
-    if (row.expanded) pushTurns(pending, node.children);
+    if (row.expanded) {
+      pushTurns(pending, [
+        // The folded turns take THIS entry's offset, never 0: `buildTurnGroups`
+        // numbered them against their own model, and when that model is itself
+        // a spliced sidecar the shift still applies.
+        ...node.children.map((child) => ({
+          node: child,
+          depthOffset: entry.depthOffset,
+          sessionId: entry.sessionId,
+        })),
+        ...(subtree === undefined
+          ? []
+          : subtree.model.groups.map((child) => ({
+              node: child,
+              // The sidecar's root turns are at depth 0 in their own model, and
+              // they belong one level under the Agent row.
+              depthOffset: row.depth + 1,
+              sessionId: subtree.sessionId,
+              subagent: { header: subtree.header },
+            }))),
+      ]);
+    }
   }
 
   return rows;

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import type { EventRow, TurnRow } from '../../../lib/api';
+import type { EventRow, SessionListRow, TurnRow } from '../../../lib/api';
 import {
   EVENT_KINDS,
   EVENT_STATUSES,
@@ -15,14 +15,23 @@ import {
 } from '../../../lib/turn-tree';
 import {
   expandedRows,
+  makeAgentEvent,
   makeLargeTree,
   makeSessionRow,
+  makeSidecarDetail,
   makeTurnTree,
   rowsForEvents,
 } from '../../../lib/__tests__/fixtures';
+import {
+  initialSubagentState,
+  subagentReducer,
+  subtreesOf,
+  turnIdsToOpen,
+} from '../../../lib/subagent';
+import { expandMany, initialNavState } from '../../../lib/tree-nav';
 import { hrefFor } from '../../../lib/route-match';
 import { SpanTree } from '../SpanTree';
-import { DURATION_LABELS, TreeSpanRow } from '../SpanRow';
+import { DURATION_LABELS, INDENT_PX, TreeSpanRow } from '../SpanRow';
 import { TraceGroup } from '../TraceGroup';
 import { TruncationNotice } from '../TruncationNotice';
 import { SessionHeader } from '../SessionHeader';
@@ -246,7 +255,39 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
       source,
       'the rows-changed action is the one contract Task 6.2 turns on, and it ' +
         'has to carry the model — not the on-screen rows.',
-    ).toContain('rowsChangedAction(model, rows)');
+    ).toContain('rowsChangedAction(model, rows, sub)');
+  });
+
+  it('the child-fetch effect names NEITHER sub NOR rows in its deps (Test 24)', () => {
+    /*
+     * ★ THIS IS THE ONLY AUTOMATED WITNESS OF THE SELF-CANCELLING FETCH EFFECT.
+     *
+     * With `sub` in the dependency array, the `requested` dispatch re-renders,
+     * React runs the previous cleanup, `controller.abort()` kills the request it
+     * has just issued, and the re-run asks for nothing because the id is now
+     * pending. The sub-agent never loads. Nothing else in this repo can see it:
+     * `environment: 'node'` means no effect ever fires, and the only other
+     * witness is the live gate counting zero additional responses at AC-R1(b).
+     *
+     * `rows` has the same defect by a longer route — it changes whenever any
+     * child lands, so the second sub-agent dies the way the first would have.
+     */
+    const source = sourceOf('../../../pages/SessionView.tsx');
+    expect(source).toContain('}, [wantedKey, client]);');
+    expect(
+      source,
+      'the abort belongs to the SESSION-keyed effect, following use-async.ts — ' +
+        'so a re-render cannot abort its own in-flight request.',
+    ).toMatch(/abortRef\.current = controller;[\s\S]{0,200}\}, \[sessionId\]\);/);
+
+    const fetchEffect = source.slice(
+      source.indexOf('const wantedKey'),
+      source.indexOf('}, [wantedKey, client]);'),
+    );
+    expect(fetchEffect, 'the fetch effect must exist to be checked').not.toBe('');
+    for (const forbidden of ['[wantedKey, client, sub]', '[wantedKey, client, rows]']) {
+      expect(source, `${forbidden} reinstates the self-cancelling effect`).not.toContain(forbidden);
+    }
   });
 
   it('the page wires each surface to the state it is meant to show', () => {
@@ -834,6 +875,185 @@ describe('the selected row is washed and edged, per the flagship-row spec', () =
       markup,
       "a class name assembled at runtime is invisible to Tailwind's scanner " +
         'and compiles to nothing — silently.',
+    ).not.toMatch(/class="[^"]*pl-\[/);
+  });
+});
+
+/* ------------------- Task 5.5 — the sub-agent an Agent row opens ----------- */
+
+/**
+ * The rows a spliced sidecar produces, built the way the page builds them: the
+ * real reducer, the real seed, and `flatten` with the real subtree map.
+ *
+ * Nothing here hand-writes a `Row`. Every `Row` in this repo comes out of
+ * `flatten`, and a literal would be free to carry a `sessionId` the walk never
+ * assigns.
+ */
+function subagentRows(event: Partial<EventRow> = {}, header: Partial<SessionListRow> = {}): Row[] {
+  // Both TURNS are unpriced on purpose, so the only currency anywhere in the
+  // rendered tree is the sub-agent header's own. Without that, a turn rollup of
+  // `$0.01` would satisfy — or spoil — every assertion about the child's cost.
+  const parent = makeTurnTree([
+    { id: 'seed-s0:0', seq: 0, est_cost: null, events: [{ name: 'Read' }, makeAgentEvent(event)] },
+  ]);
+  const model = buildTurnGroups(parent.turns, parent.eventsByTurn);
+  const child = makeSidecarDetail(
+    'child-0',
+    makeTurnTree([{ id: 'c0', seq: 0, est_cost: null, events: [{ name: 'Grep' }] }]),
+    header,
+  );
+  const sub = subagentReducer(initialSubagentState, {
+    type: 'loaded',
+    childId: 'child-0',
+    child,
+  });
+  const nav = expandMany(initialNavState(model.rowIds), turnIdsToOpen(child));
+  return flatten(model, nav.expandedIds, undefined, {
+    rootSessionId: 'seed-s0',
+    subtrees: subtreesOf(sub),
+  });
+}
+
+/** The whole tree, rendered through an UNMODIFIED `SpanTree`. */
+function subagentMarkup(event: Partial<EventRow> = {}, header: Partial<SessionListRow> = {}) {
+  return renderToStaticMarkup(
+    <SpanTree
+      rows={subagentRows(event, header)}
+      focusedIndex={0}
+      initialRect={{ width: 1280, height: 720 }}
+    />,
+  );
+}
+
+describe('an Agent row names its sub-agent and says how it ended (Test 13, AC3)', () => {
+  it.each([
+    ['completed', 'completed'],
+    ['failed', 'failed'],
+    // MEASURED 0 rows, and NOT dead: `src/project/tools.ts:203` assigns the
+    // notification's status verbatim and the parser is proven to return this
+    // word. Reachable-but-unobserved keeps its arm.
+    ['killed', 'killed'],
+    ['running', 'running'],
+    // 39 of 260 child-bearing events carry no status at all — 15.0%.
+    [null, 'unknown'],
+  ])('renders agent_status %s as %s', (wire, shown) => {
+    const markup = subagentMarkup({ agent_status: wire });
+    expect(markup).toContain('data-slot="span-subagent"');
+    expect(markup).toContain(shown);
+  });
+
+  it('renders agent_type, which is populated on 260 of 260 rows', () => {
+    expect(subagentMarkup({ agent_type: 'approach-critic' })).toContain('approach-critic');
+  });
+
+  it('draws with the palette token that had no consumer until now', () => {
+    // `--span-subagent` has been in the locked palette since the design system
+    // landed; `VISUAL_OF_KIND` maps no event kind onto it, so this row is its
+    // first real use. No new token is invented.
+    expect(subagentMarkup()).toContain(SPAN_VISUALS.type.subagent.tint);
+  });
+
+  it('names the sub-agent in the row’s accessible name, not by colour alone', () => {
+    const markup = subagentMarkup({ agent_type: 'task-shipper', agent_status: 'failed' });
+    expect(markup).toMatch(/aria-label="[^"]*sub-agent task-shipper, failed/);
+  });
+
+  it('leaves an ordinary tool call untouched', () => {
+    expect(eventRowMarkup({ name: 'Read' })).not.toContain('data-slot="span-subagent"');
+  });
+});
+
+describe('the spliced rows say whose transcript they are (AC1, AC-R1c)', () => {
+  const markup = subagentMarkup();
+
+  it('stamps the Agent row with the parent’s id and its own child id', () => {
+    expect(markup).toContain('data-session-id="seed-s0"');
+    expect(markup).toContain('data-child-session-id="child-0"');
+  });
+
+  it('stamps the nested rows with the CHILD’s id', () => {
+    expect(markup).toContain('data-session-id="child-0"');
+    // The event row, not just the turn row: a splice carrying only a depth
+    // offset would still stamp the turn row correctly.
+    const nestedEventRows = subagentRows().filter(
+      (row) => row.kind === 'event' && row.sessionId === 'child-0',
+    );
+    expect(nestedEventRows.map((row) => row.id)).toEqual(['c0-ev-0']);
+  });
+});
+
+describe('the child’s root row carries the sub-agent’s own numbers (Test 14, AC3)', () => {
+  it('renders the description and the rollup through an UNMODIFIED SpanTree', () => {
+    /*
+     * `SpanTree` forwards `row` and nothing else, so proving this through the
+     * real component — rather than by rendering `TraceGroup` directly — is what
+     * makes the pass-through claim a fact instead of an assertion.
+     */
+    const markup = subagentMarkup({}, { tokens_in: 900, tokens_out: 100 });
+    expect(markup).toContain('data-slot="trace-subagent"');
+    expect(markup).toContain('find every caller of buildTurnGroups');
+    expect(markup).toContain('1,000 tok');
+  });
+
+  it('puts the header block on the child’s root row and on no parent row', () => {
+    const markup = subagentMarkup();
+    expect(markup.match(/data-slot="trace-subagent"/g) ?? []).toHaveLength(1);
+  });
+
+  it('spells an unpriced sub-agent as the em dash, never as $0 (Test 15, AC3)', () => {
+    /*
+     * ★ MEASURED 262 of 272 SIDECARS ARE UNPRICED, so this is the common path,
+     * not the corner. 283 of 293 sessions run `claude-opus-5`, which task 0.8
+     * records as absent from `PRICING_TABLE`. The cost is therefore routed
+     * around `RowChips`, which OMITS its chip when the number is not above zero
+     * — a vanished chip rather than a dash, and that omission is deliberately
+     * pinned elsewhere in this file.
+     */
+    const markup = subagentMarkup({}, { est_cost: null });
+    expect(markup).toContain('data-slot="metric-cost"');
+    expect(markup).toContain('—');
+    expect(
+      markup,
+      'no turn in this tree is priced, so any currency here is the child’s',
+    ).not.toContain('$');
+  });
+
+  it('spells a zero cost as the em dash too', () => {
+    const markup = subagentMarkup({}, { est_cost: 0 });
+    expect(markup).toContain('data-slot="metric-cost"');
+    expect(markup).toContain('—');
+    expect(markup).not.toContain('$');
+  });
+
+  it('prints a real cost when the sidecar has one — 10 of 272 do', () => {
+    // Under a cent, so it takes the three-decimal spelling and cannot be
+    // confused with any rounded number elsewhere in the tree.
+    expect(subagentMarkup({}, { est_cost: 0.0077 })).toContain('$0.008');
+  });
+
+  it('omits the TURN’s own cost chip while showing the sub-agent’s dash', () => {
+    /*
+     * The two spellings side by side, which is why the cost is routed around
+     * `RowChips` at all: the turn's unpriced chip VANISHES — deliberate, and
+     * pinned elsewhere in this file — while the sub-agent's renders the dash the
+     * data-model rule requires.
+     */
+    const markup = subagentMarkup({}, { est_cost: null });
+    expect(markup.match(/data-slot="metric-cost"/g) ?? []).toHaveLength(1);
+  });
+});
+
+describe('nested depth is an inline offset, never a built class (Test 16, AC2)', () => {
+  it('indents each spliced level by INDENT_PX and varies no class with depth', () => {
+    const markup = subagentMarkup();
+    // Agent row at depth 1, the child's root turn at 2, its event at 3.
+    expect(markup).toContain(`padding-left:${1 * INDENT_PX}px`);
+    expect(markup).toContain(`padding-left:${2 * INDENT_PX}px`);
+    expect(markup).toContain(`padding-left:${3 * INDENT_PX}px`);
+    expect(
+      markup,
+      "a class name assembled at runtime is invisible to Tailwind's scanner and " +
+        'compiles to nothing — silently, at every depth at once.',
     ).not.toMatch(/class="[^"]*pl-\[/);
   });
 });

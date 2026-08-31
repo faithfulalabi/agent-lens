@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 
 import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree';
-import { initialNavState, navReducer, type NavState } from '../tree-nav';
+import { expandMany, initialNavState, navReducer, type NavState } from '../tree-nav';
 import { makeTurnRow, makeTurnTree, type TurnTreeSpec } from './fixtures';
 
 /*
@@ -336,5 +336,35 @@ describe('selection and focus are independent, and both stay legal', () => {
     const state = press(initialNavState(), 'Enter', model);
     expect(state.selectedId).toBe(turn.id);
     expect(model.rowIds.has(turn.id)).toBe(true);
+  });
+});
+
+/* ------------------------- Task 5.5 — the load-event transformer ---------- */
+
+describe('expandMany opens what a load event brings, and only that (Test 2, AC1)', () => {
+  /*
+   * A TRANSFORMER, not a third `NavAction`. `NavAction` is a closed two-arm
+   * union and `navReducer` has no default arm, so a third variant would need a
+   * reducer arm nobody wants — and this is not a keystroke. It is what happens
+   * when a sub-agent's transcript arrives: `flatten` puts a turn's events on
+   * screen only when its id is in this set, and a freshly fetched child's ids
+   * cannot be in one seeded from the parent's turns.
+   */
+  it('adds the new ids and keeps every id the reader had already opened', () => {
+    const state = expandMany(initialNavState(new Set(['t0', 't1'])), ['c0', 'c1']);
+    expect([...state.expandedIds].sort()).toEqual(['c0', 'c1', 't0', 't1']);
+  });
+
+  it('touches neither the selection nor the focused index', () => {
+    const before = { ...initialNavState(new Set(['t0'])), selectedId: 't0', focusedIndex: 3 };
+    const after = expandMany(before, ['c0']);
+    expect(after.selectedId).toBe('t0');
+    expect(after.focusedIndex).toBe(3);
+  });
+
+  it('returns the SAME state when it would add nothing, so no render is caused', () => {
+    const state = initialNavState(new Set(['t0']));
+    expect(expandMany(state, [])).toBe(state);
+    expect(expandMany(state, ['t0'])).toBe(state);
   });
 });

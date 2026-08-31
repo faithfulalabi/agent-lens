@@ -124,6 +124,28 @@ function onRowsChanged(
   return { ...state, focusedIndex, selectedId };
 }
 
+/**
+ * Open these ids as well, keeping everything the reader already opened.
+ *
+ * A TRANSFORMER rather than a third `NavAction`, deliberately. `NavAction` is a
+ * closed two-arm union and `navReducer` has no default arm, so a third variant
+ * would need a reducer arm this does not want — and this is not a keystroke
+ * anyway. It is what a load event does: a freshly fetched sub-agent's turn ids
+ * cannot be in a set seeded from the PARENT's turns, and `flatten` puts a turn's
+ * events on screen only when its id is in that set. Without this a spliced child
+ * draws its turn row and no events at all, on 183 of 272 measured sidecars.
+ *
+ * Returns the same state when nothing was added, so a caller can hand it
+ * straight to `setState` without causing a render. The reader can still close
+ * every one of these afterwards; this only decides what is open on arrival.
+ */
+export function expandMany(state: NavState, ids: readonly string[]): NavState {
+  const next = new Set(state.expandedIds);
+  for (const id of ids) next.add(id);
+  if (next.size === state.expandedIds.size) return state;
+  return { ...state, expandedIds: next };
+}
+
 function onKey(state: NavState, key: string, rows: readonly Row[]): NavState {
   const index = clampIndex(state.focusedIndex, rows.length);
   const row = rows[index];

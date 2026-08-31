@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 
 import {
   createApiClient,
@@ -10,13 +18,27 @@ import {
 import { useAsync } from '@/lib/use-async';
 import { buildTurnGroups, flatten } from '@/lib/turn-tree';
 import {
+  EVENT_LIMIT,
   initialExpanded,
   loadSessionDetail,
   needsReseed,
   rowsChangedAction,
   type SessionData,
 } from '@/lib/session-data';
-import { initialNavState, navReducer, type NavAction, type NavState } from '@/lib/tree-nav';
+import {
+  childIdsToFetch,
+  initialSubagentState,
+  subagentReducer,
+  subtreesOf,
+  turnIdsToOpen,
+} from '@/lib/subagent';
+import {
+  expandMany,
+  initialNavState,
+  navReducer,
+  type NavAction,
+  type NavState,
+} from '@/lib/tree-nav';
 import { buildThread, type SessionViewMode } from '@/lib/thread';
 import { EventDetail } from '@/components/session/EventDetail';
 import { SessionHeader } from '@/components/session/SessionHeader';
@@ -106,6 +128,9 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
     setNav((current) => navReducer(current, action));
   }, []);
 
+  /** Which sidecars are loaded, in flight or failed. Every decision is in `subagent.ts`. */
+  const [sub, dispatchSub] = useReducer(subagentReducer, initialSubagentState);
+
   /*
    * Adjusted during render, per the header note. `seededFor` is the session the
    * current navigation state belongs to, so a different session starts over and
@@ -120,13 +145,27 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   if (needsReseed(data, seededFor) && data !== null) {
     setSeededFor(data.session.id);
     setNav(initialNavState(initialExpanded(data.turns)));
+    // The sub-agent state would otherwise outlive the session it belongs to,
+    // and `mergedRowIds` would then keep a previous session's selection alive.
+    dispatchSub({ type: 'reset' });
   }
 
   const model = useMemo(
     () => buildTurnGroups(data?.turns ?? [], data?.eventsByTurn ?? new Map()),
     [data],
   );
-  const rows = useMemo(() => flatten(model, nav.expandedIds), [model, nav.expandedIds]);
+  const subtrees = useMemo(() => subtreesOf(sub), [sub]);
+  /*
+   * The session the ROWS belong to, read off the data in hand rather than off
+   * the prop. They differ by one render after a move between sessions, and
+   * stamping the incoming id onto the outgoing session's rows is the same
+   * off-by-one `needsReseed` exists to close.
+   */
+  const rootSessionId = data?.session.id ?? sessionId;
+  const rows = useMemo(
+    () => flatten(model, nav.expandedIds, undefined, { rootSessionId, subtrees }),
+    [model, nav.expandedIds, rootSessionId, subtrees],
+  );
 
   /*
    * The second reader over the SAME array. `useAsync` reads its loader through a
@@ -147,8 +186,62 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
    * this settles in one pass rather than looping.
    */
   useEffect(() => {
-    dispatch(rowsChangedAction(model, rows));
-  }, [dispatch, model, rows]);
+    dispatch(rowsChangedAction(model, rows, sub));
+  }, [dispatch, model, rows, sub]);
+
+  /*
+   * ONE ABORT CONTROLLER PER SESSION, HELD IN A REF.
+   *
+   * Its cleanup is the only abort in this file, and that is the whole point. The
+   * obvious spelling puts the controller in the fetch effect and `sub` in its
+   * dependencies — and then the `requested` dispatch below re-renders, React
+   * runs the previous cleanup, the request it just issued is aborted, and the
+   * re-run asks for nothing because the id is now pending. The child never
+   * loads, and no test in this repo can see it: effects do not fire under
+   * `environment: 'node'`. `use-async.ts` holds its loader in a ref and keys on
+   * a string for exactly this reason; this follows it.
+   */
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return () => controller.abort();
+  }, [sessionId]);
+
+  /*
+   * The child ids this expansion demands, as ONE STABLE STRING.
+   *
+   * `childIdsToFetch` already excludes what is loaded, in flight or failed and
+   * returns what is left in row order, so this key changes only when a new
+   * sub-agent is actually opened.
+   */
+  const wantedKey = childIdsToFetch(rows, nav.expandedIds, sub).join(',');
+
+  useEffect(() => {
+    if (wantedKey === '') return;
+    const signal = abortRef.current?.signal;
+    for (const childId of wantedKey.split(',')) {
+      dispatchSub({ type: 'requested', childId });
+      loadSessionDetail(client, childId, {
+        limit: EVENT_LIMIT,
+        ...(signal === undefined ? {} : { signal }),
+      })
+        .then((child) => {
+          dispatchSub({ type: 'loaded', childId, child });
+          // Its own turns have to open, or the sidecar draws a header and no
+          // events: `flatten` descends into a turn only when its id is in the
+          // expansion set, and a fresh child's ids cannot be in one seeded from
+          // the parent's turns.
+          setNav((current) => expandMany(current, turnIdsToOpen(child)));
+        })
+        .catch(() => {
+          // An abort is this component going away, not a failure to record.
+          if (signal?.aborted !== true) dispatchSub({ type: 'failed', childId });
+        });
+    }
+    // NEVER `sub` and NEVER `rows`: both change as a direct result of what this
+    // effect does, and either one here reinstates the self-cancelling defect.
+  }, [wantedKey, client]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
