@@ -166,12 +166,12 @@ describe('startServer — boot hermeticity', () => {
  * Task 0.4 / AC2b — the bounded-exit guard, and after the cutover it is the ONLY
  * thing standing between `agent-lens start` and a shutdown that hangs forever.
  *
- * `/api/stream` (`api.ts:514`) is a `while (!aborted && !closed)` heartbeat loop
- * that holds its response body open, and `server.close()` waits on every open
- * connection. Plan 001 drained its stream through `broadcaster.shutdown()`; that
- * is deleted, and the founder ruled the replacement is the native
- * `server.closeAllConnections()` in `startServer.close()` — see the `ponytail:`
- * ceiling comment there, and Task 6.1 for the registry that supersedes it.
+ * `/api/stream` parks its client on the hub and holds the response body open,
+ * and `server.close()` waits on every open connection. Plan 001 drained through
+ * `broadcaster.shutdown()`; task 4.5 deleted that, and `closeAllConnections()`
+ * stood in until Task 6.1 built the real registry. It is `hub.drain()` that ends
+ * this body now — `closeAllConnections()` remains behind it, for the non-stream
+ * requests the hub cannot see.
  *
  * Every other stream test cancels the client BEFORE the server closes. The
  * production sequence is the inverse — the server goes down with a browser tab
@@ -200,8 +200,9 @@ describe('startServer — closing with an /api/stream client attached (AC2b)', (
             if (done) break;
           }
         } catch {
-          // `closeAllConnections` destroys the socket mid-body: an aborted read
-          // is the expected ending, not a failure.
+          // A drained body ends as `done`; if `closeAllConnections` gets there
+          // first the socket dies mid-body and the read rejects. Both are
+          // endings, and this test asserts only that one of them arrives.
         }
         endedAt = Date.now();
       })();

@@ -66,6 +66,14 @@ export interface SweepReport {
   walked: number;
   /** Transcripts wave 1 wrote a Tier-A row for. */
   indexed: number;
+  /**
+   * The ids behind `indexed` — every session whose archive fold moved this pass.
+   *
+   * Task 6.1's live tick reprojects exactly these. It MIRRORS `indexed` rather
+   * than adding a bucket, so it stays out of `conservationOf`: counting it there
+   * would double every indexed file against the same walk.
+   */
+  indexed_ids: string[];
   /** Changed sidecars wave 1 leaves to the projection-time `toolUseId` join. */
   deferred: number;
   /** Of `indexed`: `subagents/workflows/` sidecars given a path-derived parent. */
@@ -88,6 +96,7 @@ export function emptyReport(): SweepReport {
   return {
     walked: 0,
     indexed: 0,
+    indexed_ids: [],
     deferred: 0,
     deferred_wf_sidecars: 0,
     unchanged: 0,
@@ -211,6 +220,7 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
         last_activity_at: envelope.last_activity_at,
       });
       report.indexed += 1;
+      report.indexed_ids.push(id);
 
       // `upsertSidecarIndex` cannot serve these: its row type requires a
       // `spawned_by_event_id`, and a `wf_*` meta carries no `toolUseId` for one

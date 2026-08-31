@@ -39,6 +39,7 @@ import type {
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
 import type { DriftReport } from '../api.js';
+import { createStreamHub, type StreamHub } from '../stream.js';
 
 const TOKEN = 'test-token';
 
@@ -215,6 +216,7 @@ function expectKeys(value: unknown, expected: readonly string[]): void {
 let sandbox: Sandbox;
 let db: DatabaseSync;
 let app: Hono;
+let hub: StreamHub;
 
 /** The searchable, fully-seeded row. No file behind it: it never meets the gate. */
 const SEEDED = 'seeded-1111-4111-8111-seeded000001';
@@ -250,15 +252,20 @@ beforeEach(() => {
     }),
   });
 
+  hub = createStreamHub();
   app = buildApiApp({
     db,
     env: fileEnv(),
     token: TOKEN,
     uiDir: join(sandbox.root, 'no-such-ui'),
+    hub,
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // The stream test below leaves a parked client attached; the drain is what
+  // unparks it and ends its body.
+  await hub.drain();
   db.close();
   cleanup(sandbox);
 });
@@ -447,6 +454,7 @@ describe('4. GET /api/events/:id/content (spec:334-345)', () => {
       env: fileEnv(),
       token: TOKEN,
       uiDir: join(sandbox.root, 'no-such-ui'),
+      hub: createStreamHub(),
       resolveContent: (row, field) => ({
         storage: 'line_ref',
         content: `resolved ${row.id} ${field}`,
@@ -506,7 +514,9 @@ describe('6. GET /api/stream (spec:358-369)', () => {
     const res = await call('/api/stream');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/event-stream');
-    // Cancel rather than read: the heartbeat loop runs until the client leaves.
+    // Cancel rather than read: the route PARKS on the hub and emits nothing by
+    // itself, so a reader here would wait for a frame this test never sends.
+    // The body ends on `hub.drain()`, which `afterEach` calls.
     await res.body?.cancel();
   });
 });
@@ -624,6 +634,7 @@ describe('10. GET /api/health (spec:394-396)', () => {
       env: fileEnv(),
       token: TOKEN,
       uiDir: join(sandbox.root, 'no-such-ui'),
+      hub: createStreamHub(),
       sweep: {
         tick: () => {
           throw new Error('unused');

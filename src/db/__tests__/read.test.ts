@@ -18,6 +18,8 @@ import {
   readEventArchivePath,
   readEventContentRow,
   readEventPage,
+  readEventsByIds,
+  readRunningEventIds,
   readProjects,
   readSessionHeader,
   readSessionList,
@@ -725,5 +727,57 @@ describe('AC4 — has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
       ),
       { numRuns: 200 },
     );
+  });
+});
+
+// --- Task 6.1's two live-diff readers ---------------------------------------
+
+describe('AC1 — the live diff reads through the one door', () => {
+  const OTHER = 'sess-other';
+
+  beforeEach(() => {
+    for (const id of ['sess-1', OTHER]) {
+      seedSessionRow(db, { id });
+      seedProjection(db, id, {
+        turns: [{ seq: 1 }],
+        events: [
+          { id: `${id}:a`, seq: 1, kind: 'tool_call', name: 'Agent' },
+          { id: `${id}:b`, seq: 2, kind: 'tool_call', name: 'Agent' },
+          { id: `${id}:c`, seq: 3, kind: 'text' },
+        ],
+      });
+    }
+    // `EventSeed` carries no `status`, and the column is what the diff reads.
+    db.prepare(`UPDATE events SET status = 'running' WHERE id IN (?, ?, ?)`).run(
+      'sess-1:a',
+      'sess-1:b',
+      `${OTHER}:a`,
+    );
+    db.prepare(`UPDATE events SET status = 'ok' WHERE id = ?`).run('sess-1:c');
+  });
+
+  it("readRunningEventIds returns only this session's running rows, in seq order", () => {
+    expect(readRunningEventIds(db, 'sess-1')).toEqual(['sess-1:a', 'sess-1:b']);
+    expect(readRunningEventIds(db, OTHER)).toEqual([`${OTHER}:a`]);
+    expect(readRunningEventIds(db, 'no-such-session')).toEqual([]);
+  });
+
+  it('readEventsByIds returns full event rows for the named ids, in seq order', () => {
+    const rows = readEventsByIds(db, 'sess-1', ['sess-1:c', 'sess-1:a']);
+    expect(rows.map((row) => row.id)).toEqual(['sess-1:a', 'sess-1:c']);
+    // The same key set every other event reader returns — no bespoke projection.
+    expect(new Set(Object.keys(rows[0]!))).toEqual(new Set(EVENT_ROW_KEYS));
+  });
+
+  it('readEventsByIds is scoped by session, so an id cannot be read across one', () => {
+    // The scope is not decoration: `events.id` is a global primary key, so
+    // without it a caller could read another session's row by guessing an id.
+    expect(readEventsByIds(db, 'sess-1', [`${OTHER}:a`])).toEqual([]);
+  });
+
+  it('readEventsByIds answers an empty id list without a query', () => {
+    // `IN ()` is a syntax error in SQLite, so the empty case is handled ahead of
+    // the statement rather than by luck.
+    expect(readEventsByIds(db, 'sess-1', [])).toEqual([]);
   });
 });

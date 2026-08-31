@@ -487,6 +487,39 @@ export function readEventPage(
   };
 }
 
+// --- The live diff ---------------------------------------------------------
+// Task 6.1's two readers. `status='running'` is emitted for every `tool_call`
+// (`project/pipeline.ts:490`) and rewritten by the async-Agent back-patch
+// (`project/tools.ts:185-204`), so "what stopped running" is a plain column
+// diff taken either side of one reprojection — no projector change, and no
+// second freshness key.
+
+/** Every event of `session_id` still labelled `running`, in `seq` order. */
+export function readRunningEventIds(db: DatabaseSync, session_id: string): string[] {
+  const rows = db
+    .prepare(`SELECT id FROM events WHERE session_id = ? AND status = 'running' ORDER BY seq`)
+    .all(session_id) as unknown as { id: string }[];
+  return rows.map((row) => row.id);
+}
+
+/**
+ * The named events of one session, in `seq` order. Scoped by `session_id` as
+ * well as by id so a caller cannot read another session's rows through it.
+ */
+export function readEventsByIds(
+  db: DatabaseSync,
+  session_id: string,
+  ids: readonly string[],
+): EventRow[] {
+  if (ids.length === 0) return [];
+  const holes = ids.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `SELECT ${EVENT_COLUMNS} FROM events WHERE session_id = ? AND id IN (${holes}) ORDER BY seq`,
+    )
+    .all(session_id, ...ids) as unknown as EventRow[];
+}
+
 // --- Event content ---------------------------------------------------------
 
 const EVENT_CONTENT_COLUMNS = `id, session_id, block_index, input, input_bytes, input_storage,

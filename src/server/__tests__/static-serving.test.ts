@@ -26,6 +26,7 @@ import { buildApiApp } from '../app.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
 import { fileEnv } from '../../db/__tests__/fixtures/index.js';
 import { BOOTSTRAP_MARKER, resolveUiDir } from '../static-ui.js';
+import { createStreamHub } from '../stream.js';
 import {
   bootTestServer,
   cleanupDir,
@@ -298,6 +299,7 @@ describe('AC2 — the SPA fallback is the last route in the app', () => {
         db,
         token: 'tok',
         env: fileEnv(),
+        hub: createStreamHub(),
         uiDir: makeFakeUiDist(join(tempDir('ui'), 'dist')),
       });
       app.get('/later-specific', (c) => c.text('LATE SPECIFIC'));

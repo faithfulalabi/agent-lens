@@ -133,7 +133,9 @@ async function outcome(collector: Collector): Promise<Outcome> {
  * Response (`hono/dist/helper/streaming/sse.js` — `run(stream, cb, onError)`
  * precedes `c.newResponse(...)`). A 200 with a body in hand therefore means the
  * server is already holding an open response body that nothing will ever end on
- * its own — which is the whole premise of the four tests below.
+ * its own — which is the whole premise of the four tests below. Task 6.1 made
+ * that literally true: the route no longer loops, it parks on the hub, so only
+ * `hub.drain()` in `startServer.close()` ends it.
  */
 async function attachStream(collector: Collector): Promise<void> {
   const res = await fetch(`http://127.0.0.1:${collector.port}/api/stream`, {
@@ -175,13 +177,13 @@ describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', 
       await attachStream(collector);
       collector.child.kill(signal);
       // ★ THE DETECTOR FOR THE SSE DRAIN, and it fails in the most literal way
-      // available: without `server.closeAllConnections()` in `startServer.close()`
-      // the child never exits — `server.close` waits on a response body nothing
-      // will ever end — and this test dies on its 30 s timeout. Plan 001 drained
-      // through `broadcaster.shutdown()`; task 4.5 deleted that and the founder
-      // ruled the native call is the replacement. This is the AC an open browser
-      // tab on the shipped UI depends on — `ui/src/lib/sse.ts:39` connects to
-      // exactly this endpoint.
+      // available: with no drain at all in `startServer.close()` the child never
+      // exits — `server.close` waits on a response body nothing will ever end —
+      // and this test dies on its 30 s timeout. Plan 001 drained through
+      // `broadcaster.shutdown()`; task 4.5 deleted that, `closeAllConnections()`
+      // stood in, and Task 6.1's `hub.drain()` is the registry that supersedes it.
+      // This is the AC an open browser tab on the shipped UI depends on —
+      // `ui/src/lib/sse.ts:39` connects to exactly this endpoint.
       expect(await outcome(collector)).toEqual({ code: 0, signal: null, config: null });
     },
     SPAWN_TIMEOUT_MS,

@@ -21,6 +21,7 @@ import { jsonNotFound, registerApi } from '../api.js';
 import { hostGuard } from '../middleware/host-guard.js';
 import { tokenAuth } from '../middleware/token-auth.js';
 import { registerUi } from '../static-ui.js';
+import { createStreamHub, type StreamHub } from '../stream.js';
 
 const TOKEN = 'test-token';
 const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -32,16 +33,21 @@ let sandbox: Sandbox;
 let db: DatabaseSync;
 let app: Hono;
 let uiDir: string;
+let hub: StreamHub;
 
 beforeEach(() => {
   sandbox = makeSandbox();
   db = openCache();
   seedSessionRow(db, { id: 'session-1' });
   uiDir = join(sandbox.root, 'no-such-ui');
-  app = buildApiApp({ db, env: fileEnv(), token: TOKEN, uiDir });
+  hub = createStreamHub();
+  app = buildApiApp({ db, env: fileEnv(), token: TOKEN, uiDir, hub });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Every attached client is parked on a promise the hub holds; draining is what
+  // unparks them and ends their response bodies.
+  await hub.drain();
   db.close();
   cleanup(sandbox);
 });
@@ -107,7 +113,7 @@ describe('AC2 — the mutation controls, each a mis-ordered app built here', () 
     local.use('*', hostGuard([]));
     local.use('/api/*', tokenAuth(TOKEN));
     if (options.terminatorFirst === true) local.all('/api/*', jsonNotFound);
-    registerApi(local, { db, env: fileEnv() });
+    registerApi(local, { db, env: fileEnv(), hub });
     if (options.uiBeforeTerminator === true) {
       registerUi(local, { token: TOKEN, uiDir });
       local.all('/api/*', jsonNotFound);
