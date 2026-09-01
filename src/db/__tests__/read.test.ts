@@ -781,3 +781,98 @@ describe('AC1 — the live diff reads through the one door', () => {
     expect(readEventsByIds(db, 'sess-1', [])).toEqual([]);
   });
 });
+
+// --- The `/api/search` 500: FTS5 EXPRESSION syntax vs. ordinary search terms --
+//
+// `q` is a bound parameter (`MATCH ?`), so none of this is injection — the
+// surface is FTS5 expression syntax, in which a hyphen, a slash, a plus and a
+// trailing colon are all illegal. Those are exactly what a file path and a Bash
+// result contain, so before the phrase fallback the shipped route answered 500
+// or 400 for the search this feature exists to serve.
+
+describe('AC1 — searchEvents answers real query shapes instead of throwing', () => {
+  /** One row carrying every literal shape below, so a hit proves the term matched. */
+  function seedShapes(): void {
+    seedSessionRow(db, { id: 'shapes' });
+    seedProjection(db, 'shapes', {
+      turns: [{ seq: 1 }],
+      events: [
+        {
+          id: 'sh1',
+          seq: 1,
+          text:
+            'ENOENT: no such file at src/db/read.ts, ' +
+            'while running --no-verify over foo-bar (C++, e.g. this one). done',
+        },
+      ],
+    });
+  }
+
+  /**
+   * The eight shapes whose RAW expression is illegal, in the order they appear
+   * below. Written out rather than derived from `SHAPES`: this list IS the
+   * control, and deriving it from the table it checks would make it vacuous.
+   */
+  const UNPARSEABLE = [
+    'foo-bar',
+    'ENOENT:',
+    'src/db/read.ts',
+    'C++',
+    'e.g.',
+    '--no-verify',
+    '*',
+    '"',
+  ];
+
+  /** `[q, hits]`. `*` and `"` quote to a phrase with no tokens, so they match nothing. */
+  const SHAPES: readonly (readonly [string, number])[] = [
+    ['foo-bar', 1],
+    ['ENOENT:', 1],
+    ['src/db/read.ts', 1],
+    ['C++', 1],
+    ['e.g.', 1],
+    ['--no-verify', 1],
+    ['*', 0],
+    ['"', 0],
+    // The raw arm runs FIRST, which is what keeps an operator query an operator
+    // query rather than flattening it into a literal phrase.
+    ['text:done', 1],
+    ['nothing OR done', 1],
+  ];
+
+  it.each(SHAPES)('q=%j finds %i row and never throws', (q, hits) => {
+    seedShapes();
+    expect(searchEvents(db, { q, limit: 50 })).toHaveLength(hits);
+  });
+
+  it('mutation control: without the fallback 8 of those 10 shapes throw', () => {
+    seedShapes();
+    const throwers = SHAPES.filter(([q]) => {
+      try {
+        db.prepare('SELECT rowid FROM events_fts WHERE events_fts MATCH ?').all(q);
+        return false;
+      } catch {
+        return true;
+      }
+    }).map(([q]) => q);
+
+    expect(throwers).toEqual(UNPARSEABLE);
+  });
+
+  it('a real fault still propagates — the fallback swallows a parse, never a fault', () => {
+    seedShapes();
+    // The load-bearing 500 control: both arms throw the same thing, and the
+    // second throw is the one that leaves this function.
+    db.exec('DROP TABLE events_fts');
+    expect(() => searchEvents(db, { q: 'foo-bar', limit: 50 })).toThrow(/no such table/);
+  });
+
+  it('NUL is the one q both arms lose, which is why the guard is upstream', () => {
+    seedShapes();
+    // SQLite truncates a bound string at NUL, so the quoted arm loses its own
+    // closing quote and throws `unterminated string`. `parseSearchQuery` rejects
+    // NUL as `invalid q` ahead of this; delete that guard and this is a 500.
+    const q = `foo-bar${String.fromCharCode(0)}tail`;
+    expect(() => searchEvents(db, { q, limit: 50 })).toThrow(/unterminated string/);
+  });
+});

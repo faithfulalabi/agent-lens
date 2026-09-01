@@ -42,11 +42,13 @@ import type { StreamHub } from './stream.js';
 const INTERVAL_MS = 1000;
 
 /**
- * A reprojection over this backs its session off. It is not theoretical: FTS
- * population costs 8-14x the rest of the SQLite write (`db/write.ts:161-163`,
- * 5.6 -> 43.8 ms measured) and `projectSession` runs it unconditionally, so a
- * large session trips this routinely. That is the design working — the felt
- * latency for the biggest sessions is 5 s, not 1 s.
+ * A reprojection over this backs its session off. Measured, that is RARE and not
+ * routine: 2 of 312 sessions exceed it (135.7 ms and 101.7 ms), and the archive
+ * moves at most once per 15 minutes, so each is reachable about once per 900
+ * ticks. FTS is the largest single cost inside the gate (`db/write.ts:161-172`)
+ * but only ~2.8x the rest of a reprojection, not the 8-14x that figure's own
+ * denominator suggests. That is the design working — the felt latency for the
+ * two biggest sessions is 5 s, not 1 s.
  */
 const SLOW_MS = 100;
 

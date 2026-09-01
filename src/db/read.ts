@@ -570,6 +570,11 @@ export interface SearchQuery {
 // null snippet, so the search result shows no context at all.
 const SNIPPET = `snippet(events_fts, -1, '<mark>', '</mark>', '…', 12)`;
 
+/** `q` as one FTS5 string literal. Doubling `"` is FTS5's own escape. */
+function ftsPhrase(q: string): string {
+  return `"${q.replaceAll('"', '""')}"`;
+}
+
 /**
  * FTS5 over `events.text` and `events.input`. `session` scopes to one session;
  * without it this searches every PROJECTED session, which is what
@@ -577,10 +582,10 @@ const SNIPPET = `snippet(events_fts, -1, '<mark>', '</mark>', '…', 12)`;
  */
 export function searchEvents(db: DatabaseSync, query: SearchQuery): SearchHit[] {
   const where: string[] = ['events_fts MATCH ?'];
-  const params: SqlParam[] = [query.q];
+  const rest: SqlParam[] = [];
   if (query.session !== undefined) {
     where.push('e.session_id = ?');
-    params.push(query.session);
+    rest.push(query.session);
   }
   const sql =
     `SELECT e.session_id AS session_id, s.title AS session_title, s.project_path AS project_path,` +
@@ -589,13 +594,29 @@ export function searchEvents(db: DatabaseSync, query: SearchQuery): SearchHit[] 
     ` FROM events_fts JOIN events e ON e.rowid = events_fts.rowid` +
     ` JOIN sessions s ON s.id = e.session_id` +
     ` WHERE ${where.join(' AND ')} ORDER BY rank LIMIT ?`;
-  params.push(query.limit);
-  return db.prepare(sql).all(...params) as unknown as SearchHit[];
+  rest.push(query.limit);
+  const run = (match: string): SearchHit[] =>
+    db.prepare(sql).all(match, ...rest) as unknown as SearchHit[];
+
+  try {
+    return run(query.q);
+  } catch {
+    // `foo-bar`, `ENOENT:` and `*` are ordinary search terms AND invalid FTS5
+    // expressions. Retry once as a literal phrase, which is what the user meant.
+    // The raw arm runs first so `a OR b` and `text:done` keep operator meaning,
+    // and a second throw propagates so a real fault still reaches `onError`.
+    return run(ftsPhrase(query.q));
+  }
 }
 
 /**
  * Sessions whose content is not in the index yet. `empty` is a tombstone — the
  * file projected nothing — so it is projected, not pending.
+ *
+ * NO `TOP_LEVEL_ONLY` HERE, DELIBERATELY: sidecars are 92.6% of the corpus and
+ * their bodies are searchable, so this is the honest denominator for INDEXABLE
+ * CONTENT rather than for rows any list shows. `readDriftRows` is ruled the same
+ * way; change neither without the other.
  */
 export function countUnprojected(db: DatabaseSync): number {
   const row = db
@@ -610,6 +631,10 @@ export function countUnprojected(db: DatabaseSync): number {
  * Raw rows for `GET /api/drift`. The per-`harness_version` tally and the
  * `unknown_*` merge happen in the mapper, which keeps this a plain row select
  * and keeps the reviewed `count(*)` allowlist honest.
+ *
+ * NO `TOP_LEVEL_ONLY` HERE, DELIBERATELY: drift is a property of parsed BYTES,
+ * and a sidecar's bytes drift like any other. Same ruling as
+ * {@link countUnprojected}; change neither without the other.
  */
 export function readDriftRows(db: DatabaseSync): DriftRow[] {
   return db

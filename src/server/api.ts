@@ -79,9 +79,6 @@ const NON_NEGATIVE_INT = /^\d+$/;
 /** `start-end`, `end` omissible (`1024-`). Anything else is malformed. */
 const RANGE = /^(\d+)-(\d*)$/;
 
-/** What `node:sqlite` says when FTS5 cannot parse a MATCH expression (probed). */
-const FTS_SYNTAX_ERROR = /fts5: syntax error|unterminated string/i;
-
 /** Parsed value, or the `{error}` string that becomes a 400 body. */
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -205,10 +202,17 @@ export function clampRange(range: RawRange | undefined, byteSize: number): Clamp
   return { start, end, length: end - start + 1 };
 }
 
-/** `?q` is required and non-empty; `?session` scopes; `?limit` pages. */
+/**
+ * `?q` is required and non-empty; `?session` scopes; `?limit` pages. `?offset` is
+ * validated and then ignored — search has no pagination (`data-model-v2.md:363`).
+ *
+ * NUL is rejected because it is the one input `searchEvents`' phrase fallback
+ * cannot rescue: SQLite truncates the bound string at NUL, losing the closing
+ * quote, so both arms throw and the user gets a 500 for text they typed.
+ */
 export function parseSearchQuery(query: Record<string, string>): ParseResult<SearchQuery> {
   const q = query.q;
-  if (q === undefined || q === '') return { ok: false, error: 'invalid q' };
+  if (q === undefined || q === '' || q.includes('\0')) return { ok: false, error: 'invalid q' };
   const page = parsePageParams(query);
   if (!page.ok) return page;
   const value: SearchQuery = { q, limit: page.value.limit };
@@ -499,19 +503,12 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
     const parsed = parseSearchQuery(c.req.query());
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
-    let items;
-    try {
-      items = searchEvents(db, parsed.value);
-    } catch (error) {
-      // `q` is raw user text and FTS5 rejects a malformed expression — a lone
-      // quote, a bare `AND` (both probed). That is a malformed param, which AC3
-      // makes a 400. Narrowed by message on purpose: any OTHER failure is a real
-      // fault and must reach `onError` as a 500 rather than blame the user.
-      if (!FTS_SYNTAX_ERROR.test(String(error))) throw error;
-      return c.json({ error: 'invalid q' }, 400);
-    }
+    // No classifier here on purpose. `searchEvents` retries an unparseable `q`
+    // as a literal phrase, so raw user text — `foo-bar`, `ENOENT:`, `*` — is
+    // searched rather than blamed. What is left to throw is a real fault, and it
+    // reaches `jsonErrorOnApiPaths` (`app.ts:18-28`) as a JSON 500.
     return c.json({
-      items,
+      items: searchEvents(db, parsed.value),
       scope: parsed.value.session === undefined ? 'projected' : 'session',
       unprojected_count: countUnprojected(db),
     });
