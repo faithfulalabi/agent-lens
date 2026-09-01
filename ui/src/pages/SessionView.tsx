@@ -26,6 +26,18 @@ import {
   type SessionData,
 } from '@/lib/session-data';
 import {
+  applyFrame,
+  atBottom,
+  decideFrame,
+  followReducer,
+  initialFollowState,
+  overlayData,
+  pillLabel,
+  type LiveBus,
+  type Overlay,
+  type ScrollMetrics,
+} from '@/lib/live';
+import {
   childIdsToFetch,
   initialSubagentState,
   subagentReducer,
@@ -41,6 +53,7 @@ import {
 } from '@/lib/tree-nav';
 import { buildThread, type SessionViewMode } from '@/lib/thread';
 import { EventDetail } from '@/components/session/EventDetail';
+import { FollowPill } from '@/components/session/FollowPill';
 import { SessionHeader } from '@/components/session/SessionHeader';
 import { SpanTree } from '@/components/session/SpanTree';
 import { ThreadView } from '@/components/session/ThreadView';
@@ -105,23 +118,42 @@ const TREE_KEYS = new Set([
 export interface SessionViewProps {
   sessionId: string;
   api?: ApiClient;
+  /** The app-wide frame bus. Absent means this screen does not tail. */
+  bus?: LiveBus;
 }
 
-export function SessionView({ sessionId, api }: SessionViewProps) {
+export function SessionView({ sessionId, api, bus }: SessionViewProps) {
   const client = useMemo(() => api ?? createApiClient(), [api]);
 
   /*
    * One clock reading, taken once, for the one surface that needs one: a live
    * session's header has no `ended_at` to close its elapsed time against. The
    * tree below reads no clock at all — an event carries the duration the
-   * projector measured. Task 6.2 owns the ticking.
+   * projector measured.
    */
   const [now] = useState(() => Date.now());
 
-  const state = useAsync<SessionData>(sessionId, (signal) =>
-    loadSessionDetail(client, sessionId, { signal }),
+  /*
+   * The refetch-from-zero seam, and it is `use-async.ts:19-21`'s own: the
+   * effect is keyed `[key, refreshToken]` precisely so this task could ask the
+   * SAME session to load again. Bumped by one frame kind only — an epoch that
+   * moved backwards, which is a file the page in hand cannot be spliced onto.
+   */
+  const [refresh, setRefresh] = useState(0);
+  const state = useAsync<SessionData>(
+    sessionId,
+    (signal) => loadSessionDetail(client, sessionId, { signal }),
+    refresh,
   );
-  const data = state.kind === 'ok' ? state.value : null;
+  const loaded = state.kind === 'ok' ? state.value : null;
+
+  /*
+   * The spliced page, held beside the loaded one and consumed through
+   * `overlayData` — never a bare `??`. Both of its identities are load-bearing;
+   * `overlayData`'s own header says which reload each one closes.
+   */
+  const [overlay, setOverlay] = useState<Overlay<SessionData> | null>(null);
+  const data = overlayData(overlay, sessionId, loaded);
 
   const [nav, setNav] = useState<NavState>(() => initialNavState());
   const dispatch = useCallback((action: NavAction) => {
@@ -130,6 +162,9 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
 
   /** Which sidecars are loaded, in flight or failed. Every decision is in `subagent.ts`. */
   const [sub, dispatchSub] = useReducer(subagentReducer, initialSubagentState);
+
+  /** Follow mode. Every rule of it is `followReducer`'s; this holds the state. */
+  const [follow, dispatchFollow] = useReducer(followReducer, initialFollowState);
 
   /*
    * Adjusted during render, per the header note. `seededFor` is the session the
@@ -148,6 +183,10 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
     // The sub-agent state would otherwise outlive the session it belongs to,
     // and `mergedRowIds` would then keep a previous session's selection alive.
     dispatchSub({ type: 'reset' });
+    // Follow is on when a session opens, and a move between sessions is an
+    // opening — otherwise the reader arrives paused with a backlog counted
+    // against a session they never looked at.
+    dispatchFollow({ type: 'reset' });
   }
 
   const model = useMemo(
@@ -188,6 +227,50 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
   useEffect(() => {
     dispatch(rowsChangedAction(model, rows, sub));
   }, [dispatch, model, rows, sub]);
+
+  /*
+   * ONE SUBSCRIPTION, AND EVERY DECISION IN IT BELONGS TO `@/lib/live`.
+   *
+   * `decideFrame` answers ignore / refetch / splice; `applyFrame` produces the
+   * spliced page. What is left here is a fetch and two setters — which is all a
+   * module no test in this project can reach should be trusted with.
+   *
+   * The current page is read through a ref rather than through the dependency
+   * array: re-subscribing on every splice would drop frames in the window
+   * between the two, and the ref is the same instrument `use-async.ts` uses on
+   * its loader.
+   */
+  const liveRef = useRef<{ data: SessionData | null; base: SessionData | null }>({
+    data: null,
+    base: null,
+  });
+  liveRef.current = { data, base: loaded };
+
+  useEffect(() => {
+    if (bus === undefined) return;
+    return bus.subscribe((frame) => {
+      if (frame.event !== 'session_changed') return;
+      const { data: current, base } = liveRef.current;
+      const decision = decideFrame(current, frame.data);
+      if (decision.kind === 'ignore') return;
+      if (decision.kind === 'refetch') {
+        // AND NOTHING ELSE. The overlay is not cleared: `overlayData` retires it
+        // by identity the instant the reload lands, and clearing it here would
+        // blank the tree for the length of the request instead.
+        setRefresh((token) => token + 1);
+        return;
+      }
+      if (current === null || base === null) return;
+      void client
+        .getSession(sessionId, { from_seq: decision.from_seq, limit: EVENT_LIMIT })
+        .then((body) => {
+          const next = applyFrame(current, frame.data, body);
+          setOverlay({ key: sessionId, base, data: next });
+          dispatchFollow({ type: 'appended', count: next.events.length - current.events.length });
+        })
+        .catch(() => undefined);
+    });
+  }, [bus, client, sessionId]);
 
   /*
    * ONE ABORT CONTROLLER PER SESSION, HELD IN A REF.
@@ -268,6 +351,9 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
    */
   const onSelect = useCallback(
     (id: string) => {
+      // Reading beats following (`04-live-tail.md:18`): a selection pauses the
+      // tail, and the pill starts counting what arrives meanwhile.
+      dispatchFollow({ type: 'selected' });
       setNav((current) => {
         const index = rows.findIndex((row) => row.id === id);
         return index === -1 ? current : { ...current, focusedIndex: index, selectedId: id };
@@ -275,6 +361,10 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
     },
     [rows],
   );
+
+  const onScrollMetrics = useCallback((metrics: ScrollMetrics) => {
+    dispatchFollow({ type: 'scrolled', atBottom: atBottom(metrics) });
+  }, []);
 
   /*
    * The refetched body, and the three lines of wiring that ask for one.
@@ -336,15 +426,32 @@ export function SessionView({ sessionId, api }: SessionViewProps) {
           <ThreadView rows={thread} startedAt={data.session.started_at} />
         ) : (
           <>
-            <div data-slot="tree-pane" className="min-w-0 flex-1 border-r border-border">
+            {/*
+             * `followIndex` reaches the tree ONLY while following, which closes
+             * the resume direction structurally: a programmatic scroll can then
+             * land only in a state where "scrolled to the end" is already a
+             * no-op for the reducer. The pill sits over the pane rather than
+             * inside the scroller, so it holds still while rows move under it.
+             */}
+            <div data-slot="tree-pane" className="relative min-w-0 flex-1 border-r border-border">
               <SpanTree
                 rows={rows}
                 selectedId={nav.selectedId}
                 focusedIndex={nav.focusedIndex}
+                followIndex={follow.following && rows.length > 0 ? rows.length - 1 : undefined}
+                onScrollMetrics={onScrollMetrics}
                 onKeyDown={onKeyDown}
                 onSelect={onSelect}
                 onToggle={onToggle}
               />
+              <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+                <div className="pointer-events-auto">
+                  <FollowPill
+                    label={pillLabel(follow)}
+                    onResume={() => dispatchFollow({ type: 'resumed' })}
+                  />
+                </div>
+              </div>
             </div>
 
             <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />

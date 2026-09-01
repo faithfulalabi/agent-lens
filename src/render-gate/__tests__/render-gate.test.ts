@@ -65,8 +65,12 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
     backLinks: 1,
     spanRowCount: 4,
     turnGroupCount: 2,
-    detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1'],
+    // The live splice adds a THIRD response by design, which is why the
+    // sub-agent's window closes at `detailResponsesBeforeLive`.
+    detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1', '/api/sessions/sess-1'],
     detailResponsesAtLoad: 1,
+    detailResponsesBeforeLive: 2,
+    listPaths: ['/api/sessions', '/api/sessions'],
     subagentExpansion: {
       parentSessionId: 'sess-1',
       childSessionId: 'child-1',
@@ -98,6 +102,13 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       thinkingEvents: 3,
       markerRows: 3,
       emptyRows: 0,
+    },
+    liveUpdate: {
+      before: 30,
+      after: 31,
+      navigations: 0,
+      listResponses: 0,
+      detailResponses: 1,
     },
     labels: [
       { index: 0, text: 'turn 1: hello' },
@@ -133,6 +144,10 @@ const SHOT_NAMES = [
   // Task 5.5. The only shot taken with a sidecar's own turns and events on
   // screen — a state none of the six above ever reach.
   '07-subagent.png',
+  // Task 6.2. The only shot taken after the open session GREW under the reader,
+  // which is the state that task's AC-R1 asserts on. Shot before the thread, on
+  // the same argument as 07: the toggle takes the tree away for good.
+  '08-live.png',
 ];
 
 /** Screenshots that all clear the byte threshold, so only the override can red. */
@@ -544,6 +559,89 @@ describe('buildReport (AC5)', () => {
     expect(report.warnings.join(' ')).not.toContain('thread');
   });
 
+  it('asserts the live tail, and names all three of its clauses (AC-R1, task 6.2)', () => {
+    const report = buildReport({
+      task: '6.2',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const names = report.assertions.map((a) => a.name);
+
+    expect(names).toContain('live-row-growth');
+    expect(names).toContain('live-no-navigation');
+    expect(names).toContain('live-splice-request');
+    expect(report.assertions.find((a) => a.name === 'live-row-growth')?.actual).toContain(
+      '30 -> 31',
+    );
+    // The clause that separates 6.2 from a page reload wearing a tail's clothes.
+    expect(report.assertions.find((a) => a.name === 'live-no-navigation')?.expected).toContain(
+      'no reload',
+    );
+  });
+
+  it.each([
+    ['the tree never grew', { after: 30 }],
+    ['the tree shrank', { after: 29 }],
+    // ★ A NULL READING FAILS. `totalRows` is derived from the virtualizer's own
+    // canvas and degrades to null behind a plausibility guard — the right answer
+    // for a reading nobody acts on, and the wrong one where the reading IS the
+    // acceptance criterion. The thread probe's semantics, not the tool call's.
+    ['the before reading was underivable', { before: null }],
+    ['the after reading was underivable', { after: null }],
+    ['the page navigated instead of splicing', { navigations: 1 }],
+    ['the list route was asked again', { listResponses: 1 }],
+    ['no page was fetched, so the rows came from somewhere else', { detailResponses: 0 }],
+  ])('reds when %s', (_label, overrides) => {
+    const liveUpdate = { ...passingObservations().liveUpdate!, ...overrides };
+    const report = buildReport({
+      task: '6.2',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult({ liveUpdate }),
+      error: null,
+    });
+    expect(report.ok).toBe(false);
+  });
+
+  it('FAILS on a transcript it could not grow rather than warning about it', () => {
+    /*
+     * The thread probe's precedent, for the same reason. `toolCallInline`
+     * degrades because a virtualizer decides which rows exist to read; nothing
+     * decides that here — the probe grows the archive ITSELF, so an empty answer
+     * can only mean the tail did not arrive. For task 6.2 that is the acceptance
+     * criterion, and a warning would ship a green gate over a dead feature.
+     */
+    const report = buildReport({
+      task: '6.2',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult({ liveUpdate: null }),
+      error: null,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.assertions.find((a) => a.name === 'live-update-reached')?.ok).toBe(false);
+    expect(report.warnings.join(' ')).not.toContain('live');
+  });
+
+  it('closes the sub-agent response window BEFORE the live splice (task 6.2)', () => {
+    /*
+     * ★ THE ONE 5.5 ASSERTION 6.2 COULD HAVE BROKEN SILENTLY. The splice fetches
+     * a page of its own, so a window open to the end of the drive would see two
+     * further responses and red `subagent-expansion-request` on a working
+     * product. The window is `[atLoad, beforeLive)`.
+     */
+    const report = buildReport({
+      task: '6.2',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const request = report.assertions.find((a) => a.name === 'subagent-expansion-request');
+
+    expect(request?.ok, 'the third response is the live splice, not the expansion').toBe(true);
+    expect(request?.actual).toBe('/api/sessions/child-1');
+  });
+
   it('expects a thread screenshot, so AC-R2 is not decoration (task 5.4)', () => {
     // Without `06-thread.png` the founder opens the contact sheet for a thread
     // task and sees five pictures of the tree, which the plan index forbids by
@@ -588,18 +686,26 @@ describe('buildReport (AC5)', () => {
   it.each([
     [
       'zero extra responses — the self-cancelling effect (Test 19)',
-      { detailPaths: ['/api/sessions/sess-1'], detailResponsesAtLoad: 1 },
+      {
+        detailPaths: ['/api/sessions/sess-1'],
+        detailResponsesAtLoad: 1,
+        detailResponsesBeforeLive: 1,
+      },
     ],
     [
       'two extra responses',
       {
         detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1', '/api/sessions/child-2'],
         detailResponsesAtLoad: 1,
+        detailResponsesBeforeLive: 3,
       },
     ],
     [
       'an extra response for a session that is not the child',
-      { detailPaths: ['/api/sessions/sess-1', '/api/sessions/somebody-else'] },
+      {
+        detailPaths: ['/api/sessions/sess-1', '/api/sessions/somebody-else'],
+        detailResponsesBeforeLive: 2,
+      },
     ],
   ])('subagent-expansion-request reds on %s', (_label, overrides) => {
     /*
@@ -675,7 +781,7 @@ describe('buildReport (AC5)', () => {
 
     expect(count?.ok).toBe(true);
     expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
-    expect(count?.expected).toBe('7 screenshots');
+    expect(count?.expected).toBe('8 screenshots');
     expect(report.shots.map((s) => s.name)).toContain('07-subagent.png');
     // Nothing is asserted about its POSITION in the array. The real drive shoots
     // it BEFORE `06-thread.png`, because the thread toggle has no trip back — so
@@ -691,7 +797,7 @@ describe('buildReport (AC5)', () => {
       error: null,
     });
     expect(report.turnGroupCount).toBe(2);
-    expect(report.detailResponses).toBe(2);
+    expect(report.detailResponses).toBe(3);
     expect(renderContactSheet(report)).toContain('2 turn group(s)');
   });
 
@@ -783,6 +889,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '05-tool-call.png',
       '06-thread.png',
       '07-subagent.png',
+      '08-live.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.

@@ -209,6 +209,7 @@ describe('the navigation state restarts on the session that ARRIVED (needsReseed
       events: [],
       hasMore: false,
       shown: 0,
+      fingerprint: '900:500:2',
     };
   }
 

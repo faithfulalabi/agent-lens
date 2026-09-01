@@ -201,13 +201,88 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'render-gate/index.ts#sessionId#2',
-    line: 'sessionId,',
-    why: 'puts that browser-read value into the gate Observations record',
+    line: 'const liveUpdate = await probeLiveUpdate(page, ctx, sessionId, shoot, {',
+    why: 'hands that browser-read value to the live probe, which needs it to find the archived transcript of the session the drive actually has open',
   },
   {
     key: 'render-gate/index.ts#sessionId#3',
+    line: 'sessionId,',
+    why: 'puts that browser-read value into the gate Observations record',
+  },
+  //
+  // ★ THE NINE BELOW ARE ONE PROBE, AND EIGHT OF THEM WRITE RATHER THAN READ.
+  // The gate's live-tail probe appends one human-prompt record to an archived
+  // transcript and reverts it, because nothing in the boot path mirrors new
+  // bytes. CONSTRUCTING a harness-shaped line is the opposite of the read this
+  // door governs — the door decides who may INTERPRET a harness name, and a
+  // builder that emits one is supplying input `src/transcript/` then interprets.
+  // `server/__tests__/persistence.test.ts#sessionId#1` is the precedent, in as
+  // many words. The rest name the session id the browser gave the gate.
+  //
+  {
+    key: 'render-gate/index.ts#sessionId#4',
+    line: '* `<dataDir>/archive/<slug>/<sessionId>.jsonl`, found by walking rather than by',
+    why: 'names the mirror layout in the docstring of the walker that finds a file in it; no read of a transcript field',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#5',
+    line: 'export function archivedTranscript(dataDir: string, sessionId: string): string | null {',
+    why: 'the walker takes the browser-read id and answers a PATH; it matches a file stem, never a field inside a line',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#6',
+    line: 'const wanted = `${sessionId}.jsonl`;',
+    why: 'builds that file stem. The mirror names the file after the session, so this is a filename, not a harness field',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#7',
+    line: 'function liveAppendRecord(sessionId: string, stamp: number): string {',
+    why: 'the record BUILDER takes the id it is to stamp onto the line it emits',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#8',
+    line: 'sessionId,',
+    why: 'CONSTRUCTS harness-shaped input, never reads it: the field the builder writes onto the one appended line',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#9',
+    line: 'sessionId: string,',
+    why: 'the probe parameter carrying that browser-read id down to the walker and the builder',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#10',
+    line: 'const path = archivedTranscript(devDataDir(), sessionId);',
+    why: 'resolves the archived path of the open session before growing it',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#11',
+    line: 'appendFileSync(path, liveAppendRecord(sessionId, Date.now()));',
+    why: 'the append itself — a WRITE of a harness-shaped line, reviewed for its filesystem scope as render-gate/index.ts#6 in fs-write-sites.test.ts',
+  },
+  {
+    key: 'render-gate/index.ts#sessionId#12',
     line: "console.log(`  session:  ${report.sessionId ?? '(none)'}`);",
     why: "prints the gate's own report field to the console summary",
+  },
+  {
+    key: 'render-gate/index.ts#promptId#1',
+    line: '* user line. Turn segmentation is one variable: a line whose `promptId` differs',
+    why: "names the projector's segmentation rule in the docstring that explains why the appended line must be a human prompt. Prose about a rule `src/project/pipeline.ts` owns, not a read of it",
+  },
+  {
+    key: 'render-gate/index.ts#promptId#2',
+    line: 'promptId: `render-gate-6-2-${stamp}`,',
+    why: 'CONSTRUCTS the field, never reads it: a prompt group no other line can carry, which is what opens the new turn the probe then counts',
+  },
+  {
+    key: 'render-gate/index.ts#parentUuid#1',
+    line: 'parentUuid: null,',
+    why: 'CONSTRUCTS harness-shaped input: the appended record has no parent, and a real one carries the key',
+  },
+  {
+    key: 'render-gate/index.ts#origin#1',
+    line: "origin: { kind: 'human' },",
+    why: 'CONSTRUCTS harness-shaped input: `isHumanPrompt` reads this field behind the door, and the probe writes it so the appended line takes the origin path rather than the prose fallback',
   },
   {
     key: 'render-gate/report.ts#sessionId#1',
@@ -242,27 +317,27 @@ const SUPPRESSIONS: readonly Suppression[] = [
   // string unions and names no harness field at all.
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#1',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
-    why: 'homonym: asserts ArchiveError.origin, the archive\'s own failure-provenance enum (source/archive/log). Same sense as the reviewed cli/commands/archive.ts entries',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
+    why: "homonym: asserts ArchiveError.origin, the archive's own failure-provenance enum (source/archive/log). Same sense as the reviewed cli/commands/archive.ts entries",
   },
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#2',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
     why: 'homonym: the same ArchiveError.origin assertion on a second refusal path',
   },
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#3',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
     why: 'homonym: the same ArchiveError.origin assertion on a third refusal path',
   },
   {
     key: 'archive/__tests__/source-readonly.test.ts#origin#4',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
     why: 'homonym: the same ArchiveError.origin assertion on a fourth refusal path',
   },
   {
     key: 'cli/__tests__/archive.test.ts#origin#1',
-    line: 'origin: ArchiveResult[\'errors\'][number][\'origin\'],',
+    line: "origin: ArchiveResult['errors'][number]['origin'],",
     why: 'homonym: the parameter type of a local error builder, taken off ArchiveResult — the archive-local enum, never a harness value',
   },
   {
@@ -272,22 +347,22 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'cli/__tests__/archive.test.ts#origin#3',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
     why: 'homonym: asserts the exit-code predicate saw an `archive`-side failure',
   },
   {
     key: 'cli/__tests__/archive.test.ts#origin#4',
-    line: 'expect(result.errors[0]?.origin).toBe(\'log\');',
+    line: "expect(result.errors[0]?.origin).toBe('log');",
     why: 'homonym: the same assertion for the `log` side',
   },
   {
     key: 'cli/__tests__/archive.test.ts#origin#5',
-    line: 'expect(result.errors[0]?.origin).toBe(\'source\');',
+    line: "expect(result.errors[0]?.origin).toBe('source');",
     why: 'homonym: the same assertion for the `source` side',
   },
   {
     key: 'cli/__tests__/archive.test.ts#origin#6',
-    line: 'expect(result.errors[0]?.origin).toBe(\'archive\');',
+    line: "expect(result.errors[0]?.origin).toBe('archive');",
     why: 'homonym: the same assertion on the spawned-binary arm',
   },
   {
@@ -352,7 +427,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'db/__tests__/fixtures/index.ts#tool_use_id#1',
-    line: 'message: { role: \'user\', content: [{ type: \'tool_result\', tool_use_id: callId, content }] },',
+    line: "message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: callId, content }] },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Builds a tool_result block bound to a call id',
   },
   {
@@ -367,7 +442,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'db/__tests__/fixtures/index.ts#origin#2',
-    line: 'origin: { kind: \'human\' },',
+    line: "origin: { kind: 'human' },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. Emits the marker that makes a synthetic line a human prompt',
   },
   {
@@ -382,7 +457,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'db/__tests__/sidecars-corpus.test.ts#tool_use_id#2',
-    line: 'if (block.type === \'tool_result\' && block.tool_use_id === callId) result ??= line.timestamp;',
+    line: "if (block.type === 'tool_result' && block.tool_use_id === callId) result ??= line.timestamp;",
     why: 'the second half of that same diagnostic walk, matching the result block to its call',
   },
   {
@@ -412,12 +487,12 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'dev/__tests__/dev-server.test.ts#sessionId#1',
-    line: 'sessionId: \'sess-dev\',',
+    line: "sessionId: 'sess-dev',",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The session id of the one archived line the dev-server suite indexes',
   },
   {
     key: 'project/__tests__/idempotency.property.test.ts#tool_use_id#1',
-    line: 'content: [{ type: \'tool_result\', tool_use_id: callId, content, is_error: true }],',
+    line: "content: [{ type: 'tool_result', tool_use_id: callId, content, is_error: true }],",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The generated failing result block, which must carry `is_error` on the BLOCK where the status ladder reads it',
   },
   {
@@ -432,17 +507,17 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'project/__tests__/segmentation.differential.test.ts#parentUuid#2',
-    line: 'uuid = rawString(at, \'parentUuid\');',
-    why: '★ Task 3.1\'s AC2 REQUIRES this read outside the door. The test re-implements the ancestor walk independently and asserts it agrees with prompt-group segmentation on the real corpus; an implementation that imported the door\'s would be comparing the door with itself',
+    line: "uuid = rawString(at, 'parentUuid');",
+    why: "★ Task 3.1's AC2 REQUIRES this read outside the door. The test re-implements the ancestor walk independently and asserts it agrees with prompt-group segmentation on the real corpus; an implementation that imported the door's would be comparing the door with itself",
   },
   {
     key: 'project/__tests__/segmentation.differential.test.ts#promptId#1',
-    line: 'const group = rawString(line, \'promptId\');',
+    line: "const group = rawString(line, 'promptId');",
     why: 'the prompt-group side of that same differential',
   },
   {
     key: 'project/__tests__/segmentation.differential.test.ts#promptId#2',
-    line: 'const group = rawString(at, \'promptId\');',
+    line: "const group = rawString(at, 'promptId');",
     why: 'the prompt-group side, read at the ancestor being walked',
   },
   {
@@ -457,8 +532,8 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'render-gate/__tests__/render-gate.test.ts#sessionId#1',
-    line: 'sessionId: \'sess-1\',',
-    why: 'homonym: the render gate\'s own Observations record of what it read out of the browser, matching the three reviewed render-gate/index.ts entries',
+    line: "sessionId: 'sess-1',",
+    why: "homonym: the render gate's own Observations record of what it read out of the browser, matching the three reviewed render-gate/index.ts entries",
   },
   {
     key: 'server/__tests__/persistence.test.ts#sessionId#1',
@@ -472,12 +547,12 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'server/__tests__/persistence.test.ts#promptId#1',
-    line: 'promptId: \'p1\',',
+    line: "promptId: 'p1',",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line’s prompt group',
   },
   {
     key: 'server/__tests__/persistence.test.ts#origin#1',
-    line: 'origin: { kind: \'human\' },',
+    line: "origin: { kind: 'human' },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes the seeded line a human prompt, so the session gets a turn',
   },
   {
@@ -497,7 +572,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'server/__tests__/start.test.ts#origin#1',
-    line: 'origin: { kind: \'human\' },',
+    line: "origin: { kind: 'human' },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes them human prompts',
   },
   {
@@ -513,11 +588,11 @@ const SUPPRESSIONS: readonly Suppression[] = [
   {
     key: 'dev/__tests__/dev-server.test.ts#promptId#1',
     line: 'promptId: `p${i}`,',
-    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line\'s prompt group.',
+    why: "CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. That line's prompt group.",
   },
   {
     key: 'dev/__tests__/dev-server.test.ts#origin#1',
-    line: 'origin: { kind: \'human\' },',
+    line: "origin: { kind: 'human' },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes it a human prompt, so the session gets a turn to list.',
   },
 ];
@@ -628,7 +703,6 @@ describe('RFC §7 — harness fields are read behind the one door', () => {
         'read was inserted above this one, the entry now points at a DIFFERENT line: re-review ' +
         'both, do not just renumber.',
     ).toEqual([]);
-
   });
 
   it('the scan is not silently empty', () => {

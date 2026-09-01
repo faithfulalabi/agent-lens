@@ -1,6 +1,7 @@
-import { useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type UIEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+import type { ScrollMetrics } from '@/lib/live';
 import type { Row } from '@/lib/turn-tree';
 
 import { TraceGroup } from './TraceGroup';
@@ -75,6 +76,15 @@ export interface SpanTreeProps {
   initialRect?: { width: number; height: number };
   estimateSize?: number;
   overscan?: number;
+  /**
+   * The row to keep in view, or `undefined` to leave the scroller alone.
+   *
+   * Passed by the page ONLY while follow mode is on, which is what keeps a
+   * programmatic scroll from ever landing under a paused reader.
+   */
+  followIndex?: number | undefined;
+  /** The scroller's own numbers. `atBottom` is decided in `@/lib/live`. */
+  onScrollMetrics?: (metrics: ScrollMetrics) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   onSelect?: (id: string) => void;
   onToggle?: (id: string) => void;
@@ -87,11 +97,23 @@ export function SpanTree({
   initialRect,
   estimateSize = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
+  followIndex,
+  onScrollMetrics,
   onKeyDown,
   onSelect,
   onToggle,
 }: SpanTreeProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  /*
+   * ★ ONE SCROLL EVENT THIS COMPONENT CAUSED IS SWALLOWED, AND IT HAS TO BE.
+   *
+   * Rows are measured, not assumed — `measureElement` corrects each rendered row
+   * against the real DOM — so `scrollToIndex` can land SHORT of the true end
+   * while the rows below it are still estimates. That lands an `onScroll` whose
+   * numbers say "not at the end", the reducer reads it as a reader who moved,
+   * and follow mode pauses on the very frame the pill resumed it.
+   */
+  const programmaticScroll = useRef(false);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -104,12 +126,32 @@ export function SpanTree({
     ...(initialRect === undefined ? {} : { initialRect }),
   });
 
+  useEffect(() => {
+    if (followIndex === undefined) return;
+    programmaticScroll.current = true;
+    virtualizer.scrollToIndex(followIndex, { align: 'end' });
+  }, [followIndex, virtualizer]);
+
+  const onScroll = (event: UIEvent<HTMLDivElement>): void => {
+    if (programmaticScroll.current) {
+      programmaticScroll.current = false;
+      return;
+    }
+    const element = event.currentTarget;
+    onScrollMetrics?.({
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    });
+  };
+
   return (
     <div
       ref={scrollRef}
       data-slot="span-tree-scroller"
       className="h-full overflow-y-auto"
       onKeyDown={onKeyDown}
+      onScroll={onScroll}
     >
       <div
         role="tree"

@@ -25,11 +25,12 @@
  *    exits two ways: against real fetch, aborting the controller REJECTS the
  *    pending read with an AbortError, and `{ done: true }` never arrives.
  *
- * 3. **`lastSeq` is an opaque cursor.** It is read off the wire's id field,
- *    stored as a string and replayed verbatim. It is never parsed, incremented
- *    or compared for gaps — today's sequence is global and Task 6.1's is
- *    per-session, and only arithmetic-free code survives that change. Gap
- *    handling stays server-side.
+ * 3. **There is no resume cursor, and there cannot be one.** Task 6.2 deleted
+ *    the `lastSeq` limb: no Task 6.1 frame carries an `id:` line at all
+ *    (`src/server/stream.ts:112` against its two publish sites), so the cursor
+ *    was permanently undefined and the query it built was unreachable code.
+ *    A reconnecting client takes the next `session_changed` frame and splices
+ *    from the `from_seq` in its PAYLOAD instead.
  */
 
 import { AuthError } from './api.js';
@@ -37,12 +38,6 @@ import { readBootstrap, type Bootstrap } from './bootstrap.js';
 
 /** The stream endpoint. Origin-relative, like every other path in this client. */
 const STREAM_PATH = '/api/stream';
-
-/**
- * The resume cursor's query-parameter name — the seam Task 6.1 owns. If 6.1
- * locks a different name, this constant changes and nothing else does.
- */
-export const RESUME_PARAM = 'from_seq';
 
 /** `src/server/app.ts`'s HEARTBEAT_MS, mirrored to derive the watchdog default. */
 export const HEARTBEAT_MS = 15_000;
@@ -61,18 +56,25 @@ export const BACKOFF_BASE_MS = 500;
 export const BACKOFF_CAP_MS = 30_000;
 
 /**
- * Event names whose data field carries JSON. `raw_event` is what the server
- * publishes today; the rest are Task 6.1's delta names, listed now so 6.1 can
- * start emitting them without touching this file. Anything not in here is
- * ignored, which is the same forward-compatibility from the other direction.
+ * Event names whose data field carries JSON: `STREAM_EVENTS` minus `heartbeat`.
+ *
+ * ★ MIRRORED FROM `src/server/stream.ts:43-48`, WHICH NAMES THIS CONSTANT BACK,
+ * the same two-way citation `HEARTBEAT_MS` above already carries. `ui/` can
+ * reach `../src/shared/*` alone, and `STREAM_EVENTS` is a runtime array in a
+ * server module — so the names are copied and a test pins the copy against that
+ * file's own text.
+ *
+ * `heartbeat` stays out because `handleFrame` returns early for it, which is
+ * rule 1 working rather than an omission. `error` stays out because it is
+ * special-cased there and `StreamEventName` makes it unrepresentable
+ * server-side. `warm_progress` is IN with no producer yet: the allowlist's job
+ * is "does this frame's data carry JSON", Task 7.4's will, and including it
+ * costs one string instead of an edit to this file later.
  */
-const DATA_EVENTS: ReadonlySet<string> = new Set([
-  'raw_event',
-  'span_opened',
-  'span_updated',
-  'span_closed',
-  'trace_updated',
-  'session_updated',
+export const DATA_EVENTS: ReadonlySet<string> = new Set([
+  'session_changed',
+  'session_indexed',
+  'warm_progress',
 ]);
 
 /** One dispatched server-sent event, fields decoded but data still raw text. */
@@ -218,8 +220,6 @@ export interface SseClient {
   /** Terminal, and the only terminal outcome that is not a failure. */
   close(): void;
   readonly state: ConnectionState;
-  /** The last id field seen, verbatim. Replayed on reconnect. */
-  readonly lastSeq: string | undefined;
 }
 
 /** How one connection attempt ended, before the loop decides what to do. */
@@ -239,7 +239,6 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
   let closedByConsumer = false;
   let inflight: AbortController | undefined;
   let state: ConnectionState = { kind: 'connecting' };
-  let lastSeq: string | undefined;
   let running: Promise<void> | undefined;
 
   // Bumped on every arm/disarm so a superseded watchdog loop retires itself.
@@ -254,13 +253,6 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
 
   function report(error: Error): void {
     options.onError?.(error);
-  }
-
-  function streamUrl(): string {
-    if (lastSeq === undefined) return path;
-    const params = new URLSearchParams();
-    params.set(RESUME_PARAM, lastSeq);
-    return `${path}?${params.toString()}`;
   }
 
   function armWatchdog(controller: AbortController): void {
@@ -289,9 +281,6 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
 
   function handleFrame(frame: SseFrame): void {
     touchWatchdog();
-    // Any frame carrying an id advances the cursor, whatever its type.
-    if (frame.id !== undefined && frame.id !== '') lastSeq = frame.id;
-
     if (frame.event === 'heartbeat') return;
     if (frame.event === 'error') {
       // Forward-compatible only: no server code emits this today, because
@@ -331,7 +320,7 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
     let failure: unknown;
 
     try {
-      const res = await fetchImpl(streamUrl(), {
+      const res = await fetchImpl(path, {
         method: 'GET',
         headers: { [bootstrap.tokenHeader]: bootstrap.token },
         signal: controller.signal,
@@ -413,9 +402,6 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
     },
     get state(): ConnectionState {
       return state;
-    },
-    get lastSeq(): string | undefined {
-      return lastSeq;
     },
   };
 }

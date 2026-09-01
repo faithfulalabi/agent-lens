@@ -12,7 +12,7 @@
  * fixtures build.
  */
 
-import type { Page } from '@shared/api.ts';
+import type { Page, SessionChangedFrame } from '@shared/api.ts';
 
 import type {
   ApiClient,
@@ -186,6 +186,37 @@ export function makeSidecarDetail(
     events,
     hasMore: false,
     shown: events.length,
+    fingerprint: '900:500:2',
+  };
+}
+
+/**
+ * One `session_changed` frame, complete, with an epoch that moved FORWARD.
+ *
+ * Forward by default because the splice is the ordinary case: a fixture whose
+ * default refetched would make every splice test opt into the thing it tests.
+ * The epoch pairs with {@link makeSidecarDetail}'s `'900:500:2'`.
+ */
+export function makeChangedFrame(
+  overrides: Partial<SessionChangedFrame<EventRow>> = {},
+): SessionChangedFrame<EventRow> {
+  return {
+    session_id: 'seed-s0',
+    fingerprint: '1000:800:2',
+    from_seq: 0,
+    patched: [],
+    rollups: {
+      last_activity_at: '2026-07-29T09:31:00.000Z',
+      turn_count: 3,
+      tool_call_count: 4,
+      error_count: 1,
+      tokens_in: 2000,
+      tokens_out: 400,
+      tokens_cache_read: 100,
+      tokens_cache_write: 20,
+      est_cost: 0.0246,
+    },
+    ...overrides,
   };
 }
 
