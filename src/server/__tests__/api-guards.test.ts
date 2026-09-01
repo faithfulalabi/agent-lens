@@ -282,11 +282,39 @@ describe('aggregateDrift — the tally is the mapper’s, not the reader’s (sp
     return { id, title: `title ${id}`, harness_version, drift_json: JSON.stringify(drift) };
   }
 
-  it('skips clean sessions by the writer’s own marker', () => {
+  it('counts a clean session in the census, and skips it everywhere else', () => {
+    // `harness_versions` is the CENSUS: the projected population per version,
+    // so a zero report still says how many sessions were checked and on which
+    // release. Every OTHER field still exits at the writer's own marker, which
+    // is what keeps `sessions_with_drift` the thing that goes 0 -> N.
     const report = aggregateDrift([row('clean', '2.1.212', {})]);
+    expect(report.harness_versions).toEqual({ '2.1.212': 1 });
     expect(report.sessions_with_drift).toEqual([]);
-    expect(report.harness_versions).toEqual({});
+    expect(report.unknown_line_types).toEqual({});
+    expect(report.unknown_block_types).toEqual({});
+    expect(report.unknown_top_level_fields).toEqual({});
     expect(report.unjoined_tool_uses).toBe(0);
+    expect(report.unresolved_spills).toBe(0);
+  });
+
+  it('★ names the drifting version through sessions_with_drift, never the census', () => {
+    /*
+     * ★ THE CENSUS CANNOT ATTRIBUTE, AND THAT IS THE COST OF THE HOIST.
+     * `harness_versions` counts clean AND drifting rows, so an assertion over it
+     * passes identically whether or not the session drifted — the two rows below
+     * are proof: one clean, one drifting, one census entry each.
+     * `sessions_with_drift[].harness_version` is the sole surviving carrier of
+     * "which release did this", so every attribution assertion aims there.
+     */
+    const report = aggregateDrift([
+      row('clean', '2.1.212', {}),
+      row('drifty', '2.2.0', { unknown_line_types: { widget_frame: 1 } }),
+    ]);
+
+    expect(report.harness_versions).toEqual({ '2.1.212': 1, '2.2.0': 1 });
+    expect(report.unknown_line_types).toEqual({ widget_frame: 1 });
+    expect(report.sessions_with_drift).toHaveLength(1);
+    expect(report.sessions_with_drift[0]!.harness_version).toBe('2.2.0');
   });
 
   it('★ carries unknown_top_level_fields and sidecar_agent_id_mismatch', () => {
@@ -325,7 +353,8 @@ describe('aggregateDrift — the tally is the mapper’s, not the reader’s (sp
     expect(report.unknown_block_types).toEqual({ widget: 8 });
     expect(report.unjoined_tool_uses).toBe(7);
     expect(report.unresolved_spills).toBe(1);
-    // One number per harness version going 0 -> N is the alarm the route is for.
+    // The census, which here happens to equal the drifting count: all three
+    // rows carry drift. The clean-row case above is what separates the two.
     expect(report.harness_versions).toEqual({ '2.1.212': 2, '2.2.0': 1 });
     expect(report.sessions_with_drift.map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });

@@ -52,6 +52,7 @@ import {
   type NavState,
 } from '@/lib/tree-nav';
 import { buildThread, type SessionViewMode } from '@/lib/thread';
+import { DriftBanner } from '@/components/session/DriftBanner';
 import { EventDetail } from '@/components/session/EventDetail';
 import { FollowPill } from '@/components/session/FollowPill';
 import { SessionHeader } from '@/components/session/SessionHeader';
@@ -418,6 +419,12 @@ export function SessionView({ sessionId, api, bus }: SessionViewProps) {
           shown={data.shown}
           hasMore={data.hasMore}
           unmatchedEventCount={model.unmatchedEventCount}
+        />
+      )}
+      {data === null ? null : (
+        <DriftBanner
+          hasDrift={data.session.has_drift}
+          harnessVersion={data.session.harness_version}
         />
       )}
 

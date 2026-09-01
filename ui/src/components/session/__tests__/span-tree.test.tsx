@@ -349,6 +349,11 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
       'unmatchedEventCount={model.unmatchedEventCount}',
       'selectedId={nav.selectedId}',
       'focusedIndex={nav.focusedIndex}',
+      // Task 7.3. The banner is a pure function of the row on screen, so a
+      // `hasDrift={true}` or a crossover onto another boolean would ship a
+      // permanent alarm — green everywhere else, and AC3 broken.
+      'hasDrift={data.session.has_drift}',
+      'harnessVersion={data.session.harness_version}',
     ]) {
       expect(source, `${wire} is not wired through`).toContain(wire);
     }

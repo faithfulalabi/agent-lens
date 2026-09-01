@@ -109,6 +109,12 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       navigations: 0,
       listResponses: 0,
       detailResponses: 1,
+      archivePath: '/tmp/agent-lens-dev/archive/proj/sess-1.jsonl',
+    },
+    driftBanner: {
+      before: 0,
+      after: 1,
+      appendedType: 'render_gate_unknown_record',
     },
     labels: [
       { index: 0, text: 'turn 1: hello' },
@@ -148,6 +154,11 @@ const SHOT_NAMES = [
   // which is the state that task's AC-R1 asserts on. Shot before the thread, on
   // the same argument as 07: the toggle takes the tree away for good.
   '08-live.png',
+  // Task 7.3, and the only one that can show the durability alarm at all: the
+  // corpus is clean, so nothing but the probe's own append puts a banner on
+  // screen. Shot LAST — after the thread toggle, which the alarm survives
+  // because it draws above the tree/thread split.
+  '09-drift.png',
 ];
 
 /** Screenshots that all clear the byte threshold, so only the override can red. */
@@ -379,6 +390,18 @@ describe('buildReport (AC5)', () => {
           outputMatched: false,
         },
       },
+    ],
+    // Task 7.3's alarm, both directions. A silent alarm is the defect the whole
+    // task exists to prevent, so an unreachable probe scores like the live
+    // probe's null branch rather than the tool-call probe's warning.
+    ['a drift probe that could not reach the transcript', { driftBanner: null }],
+    [
+      'an alarm that never raised on an unrecognised record',
+      { driftBanner: { before: 0, after: 0, appendedType: 'render_gate_unknown_record' } },
+    ],
+    [
+      'an alarm already on screen before any drift existed',
+      { driftBanner: { before: 1, after: 1, appendedType: 'render_gate_unknown_record' } },
     ],
   ])('reds on %s', (_label, overrides) => {
     const report = buildReport({
@@ -781,12 +804,48 @@ describe('buildReport (AC5)', () => {
 
     expect(count?.ok).toBe(true);
     expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
-    expect(count?.expected).toBe('8 screenshots');
+    expect(count?.expected).toBe('9 screenshots');
     expect(report.shots.map((s) => s.name)).toContain('07-subagent.png');
     // Nothing is asserted about its POSITION in the array. The real drive shoots
     // it BEFORE `06-thread.png`, because the thread toggle has no trip back — so
     // a last-element pin here would pass on this fixture and describe a drive
     // order that does not exist.
+  });
+
+  it('expects a drift screenshot, because no clean session can produce one (Test 12)', () => {
+    // The corpus is clean — measured 291 of 293 sessions — so this is the only
+    // shot in the set that can hold an alarm at all. Without it the founder
+    // opens the contact sheet for the alarm task and sees eight pictures of a
+    // product behaving normally.
+    const report = buildReport({
+      task: '7.3',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const count = report.assertions.find((a) => a.name === 'shot-count');
+
+    expect(count?.ok).toBe(true);
+    expect(report.shots.map((s) => s.name)).toContain('09-drift.png');
+  });
+
+  it('names both sides of the alarm, so neither can discharge the other (Test 13)', () => {
+    // A probe that only read the raise would pass over a banner stuck on, which
+    // is AC3's failure; one that only read the silence would pass over a dead
+    // alarm, which is AC2's. Two records, and the `reds on` rows above spoil
+    // each independently.
+    const report = buildReport({
+      task: '7.3',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      result: passingResult(),
+      error: null,
+    });
+    const names = report.assertions.map((a) => a.name);
+
+    expect(names).toContain('drift-banner-silent-when-clean');
+    expect(names).toContain('drift-banner-raised');
+    // Never a warning: `null` is a failing assertion, not an observation.
+    expect(report.warnings.join(' ')).not.toContain('drift-banner');
   });
 
   it('carries the two new readings into the report and the contact sheet', () => {
@@ -890,6 +949,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '06-thread.png',
       '07-subagent.png',
       '08-live.png',
+      '09-drift.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.
@@ -957,14 +1017,15 @@ describe('the gate source itself (AC6)', () => {
     const values = Object.values(SELECTORS);
 
     // Vacuity guard: a silently-shrinking constant would trivially satisfy the
-    // loop. RAISED 8 -> 9 BY TASK 5.5, in lockstep with the ninth real slot
-    // (`span-expand`) that the same commit clicks and `SpanRow.tsx` renders —
-    // the invariant this guards is a constant that shrinks unnoticed. 5.4 raised
-    // it 7 -> 8 for `thread-toggle` on the same terms. `thread-view` is
-    // deliberately NOT an entry: a slot no drive clicks is the vacuity this
+    // loop. RAISED 9 -> 10 BY TASK 7.3, in lockstep with the tenth real slot
+    // (`drift-banner`) that the same commit READS in `probeDriftBanner` and
+    // `DriftBanner.tsx` renders. 5.5 raised it 8 -> 9 for `span-expand` and 5.4
+    // raised it 7 -> 8 for `thread-toggle`, on the same terms — the invariant
+    // this guards is a constant that shrinks unnoticed. `thread-view` is
+    // deliberately NOT an entry: a slot no drive touches is the vacuity this
     // guard exists to catch.
-    expect(values).toHaveLength(9);
-    expect(new Set(values).size).toBe(9);
+    expect(values).toHaveLength(10);
+    expect(new Set(values).size).toBe(10);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
@@ -1069,6 +1130,41 @@ describe('the gate source itself (AC6)', () => {
     // under Vite dev only — the packaged server answers it from the SPA
     // catch-all — and it was observed on the 2026-08-08 run.
     expect([...IGNORED_PATHS]).toEqual(['/favicon.ico']);
+  });
+
+  it('registers the drift revert BEFORE the append, and below the live probe (Test 14)', () => {
+    /*
+     * ★ THREE SOURCE ORDERINGS NO UNIT TEST CAN REACH, ALL LOAD-BEARING.
+     *
+     *   - The truncate is registered before the write, so no window exists in
+     *     which the appended record can outlive the run. This is the ONLY
+     *     witness of that order — a probe that appended first would pass every
+     *     other assertion here and leave bytes in the dev archive on a crash.
+     *   - `probeDriftBanner` sits BELOW `probeLiveUpdate` in the file, because
+     *     `fs-write-sites.test.ts` keys its entries by source order: a probe
+     *     placed above would re-key `#5` and `#6` onto the wrong call sites
+     *     while every one of those entries still read as reviewed.
+     *   - The drive calls it AFTER `probeThreadInline`. An unrecognised line
+     *     becomes an event row, so an earlier append would move the `totalRows`
+     *     reading the live probe's whole assertion rests on.
+     */
+    const index = gateSources().find((s) => s.file === 'index.ts')!.text;
+
+    const drift = index.indexOf('async function probeDriftBanner');
+    expect(drift, 'probeDriftBanner is not in the gate source').toBeGreaterThan(-1);
+    expect(
+      drift,
+      'moving it above probeLiveUpdate re-keys fs-write-sites #5 and #6',
+    ).toBeGreaterThan(index.indexOf('async function probeLiveUpdate'));
+
+    const body = index.slice(drift);
+    expect(body.indexOf('ctx.onCleanup'), 'the revert must register first').toBeLessThan(
+      body.indexOf('appendFileSync'),
+    );
+
+    expect(index.indexOf('await probeDriftBanner(')).toBeGreaterThan(
+      index.indexOf('await probeThreadInline('),
+    );
   });
 
   it("pins the virtualizer's estimate to SpanTree's own constant", () => {

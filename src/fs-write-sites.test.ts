@@ -207,12 +207,12 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'render-gate/index.ts#1',
     callee: 'mkdirSync',
-    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root. CORRECTED WHEN #5 AND #6 LANDED: this entry used to say 'the gate only READS the archive, through the corpus sweep', and that stopped being true — #5 and #6 below append one record to an archived transcript and revert it, so the live tail has bytes to carry. Still never a transcript root: the append targets <dataDir>/archive, and the read-only guarantee over ~/.claude/projects is untouched",
+    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root. CORRECTED WHEN #5 AND #6 LANDED: this entry used to say 'the gate only READS the archive, through the corpus sweep', and that stopped being true — #5 and #6 below append one record to an archived transcript and revert it, so the live tail has bytes to carry. #7 and #8 do the same with an unrecognised record, so the durability alarm has drift to raise on. Still never a transcript root: both appends target <dataDir>/archive, and the read-only guarantee over ~/.claude/projects is untouched",
   },
   {
     key: 'render-gate/index.ts#2',
     callee: 'writeFileSync',
-    why: 'writes one screenshot PNG per shot into the directory from #1; the five names are a closed literal union (ShotName), never derived from any corpus',
+    why: 'writes one screenshot PNG per shot into the directory from #1; the nine names are a closed literal union (ShotName), never derived from any corpus',
   },
   {
     key: 'render-gate/index.ts#3',
@@ -233,6 +233,16 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     key: 'render-gate/index.ts#6',
     callee: 'appendFileSync',
     why: "appends ONE human-prompt JSONL record to <dataDir>/archive/<slug>/<id>.jsonl, so the gate's live-tail assertion has bytes to carry — nothing in the boot path mirrors new ones, since archiveOnce's only production caller is the CLI. NOT a transcript root: the path is found by walking <dataDir>/archive for the id the drive already opened in the browser, and <dataDir> is AGENT_LENS_DEV_DIR or <repoRoot>/.agent-lens-dev. Scope: FINAL COMPONENT ONLY, and weaker than the archive writers next door — appendFileSync takes no O_NOFOLLOW, so a symlink planted at the leaf would be written THROUGH. Tolerated because the gate is a developer tool over a throwaway data dir it also created, never a packaged path; the archive mirror's own guarantee over ~/.claude/projects is untouched, and archive/paths.ts#2 is the site that needed the flag. #5 reverts it",
+  },
+  {
+    key: 'render-gate/index.ts#7',
+    callee: 'truncateSync',
+    why: "REVERTS #8, back to the byte size read immediately before it. Same idiom as #5 and the same reason: registered on the drive's cleanup stack BEFORE the append, so no window exists in which the appended record can outlive the run. The gate unwinds cleanups LIFO (index.ts's `cleanups.reverse()`), so this revert runs BEFORE #5's and the two truncates cannot cross — each shortens the file by exactly what its own append lengthened it by",
+  },
+  {
+    key: 'render-gate/index.ts#8',
+    callee: 'appendFileSync',
+    why: "appends ONE JSONL record carrying a top-level `type` no LINE_TYPES entry names, to the same <dataDir>/archive/<slug>/<id>.jsonl path #6 grew — taken off the live probe's own result rather than resolved a second time. classifyLine counts the unknown type and returns without throwing, so the session reprojects `ready` with drift, which is the state the durability alarm exists for and which no session in the measured corpus carries (291 of 293 are clean). Scope, symlink exposure and justification are #6's verbatim: FINAL COMPONENT ONLY, no O_NOFOLLOW, tolerated because the gate is a developer tool over a throwaway data dir it also created. #7 reverts it",
   },
   {
     key: 'server/config.ts#1',

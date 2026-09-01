@@ -7,6 +7,7 @@ import type { SessionDetailBody } from '../api';
 
 import {
   EVENT_LIMIT,
+  driftNotice,
   initialExpanded,
   loadSessionDetail,
   needsReseed,
@@ -194,6 +195,28 @@ describe('the view says what it is not showing', () => {
     expect(truncationNotes({ shown: 20_000, hasMore: true, unmatchedEventCount: 3 })).toHaveLength(
       2,
     );
+  });
+});
+
+/* ----------------------------------------------------- the drift wording --- */
+
+describe('the alarm speaks only when the row says it should (AC2, AC3)', () => {
+  it('names the release that wrote the shape this build does not know', () => {
+    const notice = driftNotice({ hasDrift: true, harnessVersion: '2.2.0' });
+    expect(notice).toContain('2.2.0');
+    expect(notice, 'the alarm is about records, not about a page').toContain('Unrecognized');
+  });
+
+  it('still speaks when the transcript named no version', () => {
+    const notice = driftNotice({ hasDrift: true, harnessVersion: null });
+    expect(notice).not.toBeNull();
+    expect(notice, 'there is no version to name, so it must not invent one').not.toContain('null');
+  });
+
+  it('says nothing at all on a clean session — no false alarm on a clean corpus', () => {
+    expect(driftNotice({ hasDrift: false, harnessVersion: '2.1.212' })).toBeNull();
+    // The version is irrelevant to the raise. Only the flag decides.
+    expect(driftNotice({ hasDrift: false, harnessVersion: null })).toBeNull();
   });
 });
 
