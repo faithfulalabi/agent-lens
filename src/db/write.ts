@@ -158,9 +158,18 @@ const INSERT_EVENT_SQL = `INSERT INTO events
      raw_subtype, attrs)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
-// FTS population costs 8-14x the rest of the SQLite write (5.6 -> 43.8 ms
-// measured). It belongs in this transaction, and Phase 7 must keep it out of the
-// 1 Hz live loop — stated here so that cost is not discovered there.
+// FTS population costs 8-14x the `events` INSERT (5.6 -> 43.8 ms measured, and
+// re-measured 10.6x / 15.3x / 11.2x on the three largest transcripts). READ THE
+// DENOMINATOR: that INSERT is ~6% of projection wall time. Against a whole live
+// reprojection, both FTS halves together measure ~2.8x the rest — p50 11.1 ms of
+// 15.9, max 92.4 of 135.7 over 312 sessions.
+//
+// So the number is right and the old instruction here — "Phase 7 must keep it
+// out of the 1 Hz live loop" — was wrong, and Task 7.1 retracted it. Population
+// stays in this transaction and runs on the live path too. It is affordable
+// there because the tick reads the ARCHIVE, which an external 15-minute job
+// moves, so a session is reprojected about once per 900 ticks; 2 of 312 sessions
+// exceed `live.ts`'s 100 ms backoff, and that backoff contains them.
 const POPULATE_FTS_SQL = `INSERT INTO events_fts(rowid, text, input)
   SELECT rowid, text, input FROM events WHERE session_id = ?`;
 

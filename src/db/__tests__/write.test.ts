@@ -41,6 +41,8 @@ import {
   upsertSessionIndex,
 } from '../write.js';
 import { foldArchive } from '../freshness.js';
+import { searchEvents } from '../read.js';
+import { INLINE_MAX, PREVIEW_MAX } from '../../project/tools.js';
 
 let sandbox: Sandbox | undefined;
 const open: DatabaseSync[] = [];
@@ -964,5 +966,109 @@ describe('upsertSessionIndex is the Tier-A writer', () => {
     expect(row.file_mtime_ms).toBe(42);
     expect(row.projector_version).toBe(PROJECTOR_VERSION);
     expect(row.projection_state).toBe('ready');
+  });
+});
+
+// --- AC2: tool output is searchable, and exactly where the line falls ---------
+//
+// ★ THIS TEST GOES THROUGH THE PROJECTOR ON PURPOSE. `read.test.ts` seeds rows
+// with raw SQL, so a search test there can only prove FTS5 indexes a string the
+// test handed it. AC2 is a claim about the PROJECTOR — that a Bash result body
+// reaches `events.text` — and the two arms that fail are decided inside
+// `storeOutput`, a function no seed helper ever calls.
+//
+// ★ AC2 IS NARROWED, AND THIS IS THE DURABLE RECORD OF WHERE. Measured over the
+// archive: 17,838 of 17,897 `tool_result` blocks inline whole, 59 spill, 0 land
+// over the preview cap. A spilled body is WHOLLY unsearchable and that is
+// deliberate at both ends — the projector cannot reach a filesystem and the
+// writer keeps `text` NULL on every spill row. The arms below assert what the
+// code does TODAY, so the day that policy changes this reds without the AC
+// moving. Indexing spilled bodies is filed as its own task.
+
+describe('AC2 — a token that appears only in tool output is found by q', () => {
+  const INLINE_TOKEN = 'zzinlinetoken';
+  const HEAD_TOKEN = 'zzheadtoken';
+  const TAIL_TOKEN = 'zztailtoken';
+  const SPILL_TOKEN = 'zzspilltoken';
+
+  /** Over `INLINE_MAX`, with `HEAD_TOKEN` inside the 8 KB head and `TAIL_TOKEN` past it. */
+  function oversizedResult(): string {
+    const filler = 'filler '.repeat(Math.ceil(INLINE_MAX / 'filler '.length) + 1);
+    return `${HEAD_TOKEN} ${filler} ${TAIL_TOKEN}`;
+  }
+
+  /** All three storage clauses in one projected session, the spill really on disk. */
+  function threeArms(): { db: DatabaseSync; id: string } {
+    const db = cache();
+    const { path, dir } = plant('ac2-arms', [
+      humanLine('search my tool output', TS(0)),
+      toolCallLine('toolu_inline', 'Bash', TS(1)),
+      toolResultLine('toolu_inline', `the build failed: ${INLINE_TOKEN} in the log`, TS(2)),
+      toolCallLine('toolu_big', 'Bash', TS(3)),
+      toolResultLine('toolu_big', oversizedResult(), TS(4)),
+      toolCallLine('toolu_spilled', 'Bash', TS(5)),
+      toolResultLine('toolu_spilled', spillMarker('/gone/tool-results/spilled.txt'), TS(6)),
+    ]);
+    // Really on disk, under the session root the harness mirrors `tool-results/`
+    // into. A marker the probe cannot confirm lands `'missing'`, not `'spill'`.
+    writeFile(join(dir, 'tool-results', 'spilled.txt'), `body says ${SPILL_TOKEN}`);
+
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+    return { db, id };
+  }
+
+  function eventOf(db: DatabaseSync, id: string): Record<string, unknown> {
+    return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
+  }
+
+  function find(db: DatabaseSync, q: string): string[] {
+    return searchEvents(db, { q, limit: 50 }).map((hit) => hit.event_id);
+  }
+
+  it('(a) inline: a Bash result body is indexed, with a snippet that marks the term', () => {
+    const { db } = threeArms();
+    expect(eventOf(db, 'toolu_inline').output_storage).toBe('inline');
+
+    const hits = searchEvents(db, { q: INLINE_TOKEN, limit: 50 });
+    expect(hits.map((hit) => hit.event_id)).toEqual(['toolu_inline']);
+    expect(hits[0]!.snippet).toContain(`<mark>${INLINE_TOKEN}</mark>`);
+  });
+
+  it('(b) preview cap: the 8 KB head is searchable and everything past the cut is not', () => {
+    const { db } = threeArms();
+    const row = eventOf(db, 'toolu_big');
+    expect(row.output_storage).toBe('line_ref');
+    expect(Buffer.byteLength(row.text as string, 'utf8')).toBeLessThanOrEqual(PREVIEW_MAX);
+
+    expect(find(db, HEAD_TOKEN)).toEqual(['toolu_big']);
+    expect(find(db, TAIL_TOKEN)).toEqual([]);
+  });
+
+  it('(c) spill: the body is on disk, the row keeps no text, and q finds nothing', () => {
+    const { db } = threeArms();
+    const row = eventOf(db, 'toolu_spilled');
+
+    // Resolved, so this is the spill clause and not the `missing` one.
+    expect(row.output_storage).toBe('spill');
+    expect(row.spill_path).not.toBeNull();
+    expect(row.text).toBeNull();
+
+    // The gap AC2 is narrowed around: the bytes exist and search cannot see them.
+    expect(find(db, SPILL_TOKEN)).toEqual([]);
+  });
+
+  it('non-vacuity: the three arms really did take three different clauses', () => {
+    const { db, id } = threeArms();
+    const clauses = (
+      db
+        .prepare(
+          `SELECT output_storage FROM events
+            WHERE session_id = ? AND kind = 'tool_call' ORDER BY seq`,
+        )
+        .all(id) as { output_storage: string }[]
+    ).map((r) => r.output_storage);
+
+    expect(clauses).toEqual(['inline', 'line_ref', 'spill']);
   });
 });

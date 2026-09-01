@@ -21,7 +21,16 @@
 // live database would hold Tier-A rows with no turns and no events.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -818,4 +827,278 @@ describe('AC3 — the "under 10" bound as a property of the real corpus', () => 
     expect(observed.length, diagnostic).toBeGreaterThanOrEqual(MIN_SESSIONS);
     expect(worst.patched, diagnostic).toBeLessThan(PATCHED_BOUND);
   });
+});
+
+// --- AC4, RE-DERIVED AND MEASURED -------------------------------------------
+//
+// ★ THE AC AS WRITTEN IS FALSE AND IS RETRACTED HERE. It read "FTS population
+// never executes on the 1 Hz live path". It does: the tick calls
+// `ensureProjectedFold`, which reprojects, and `projectSession` populates FTS
+// unconditionally inside its own savepoint. Measured over the real archive, one
+// live reprojection runs p50 15.9 / p90 36.0 / max 135.7 ms, of which FTS is
+// p50 11.1 / max 92.4 — about 2.8x the rest of the reprojection, not the 8-14x
+// that figure's own denominator (the `events` INSERT alone, ~6% of wall time)
+// implies. Deferring the populate would recover roughly half of that half.
+//
+// ★ WHY NOTHING IS DEFERRED. The tick reads the ARCHIVE, and only the
+// `agent-lens archive` CLI writes it, on a 15-minute launchd job. A session's
+// bytes therefore move at most once per 15 minutes, so the 1 Hz loop reprojects
+// a given session about once per 900 ticks; 2 of 312 sessions exceed `SLOW_MS`
+// and the backoff contains both. The alternative costs a `sessions` column, a
+// `SCHEMA_VERSION` bump, a durable dirty-marker protocol and two drain sites.
+// It is filed forward against the day the archive itself becomes live, which is
+// the only change that makes folds move faster than the measurement above.
+//
+// ★ SO THESE ASSERT THE TWO INVARIANTS THE DESIGN DOES GUARANTEE, AND THEY ARE
+// SPLIT BECAUSE THEY NEED OPPOSITE HARNESSES. (a) needs ONE candidate, so the
+// tick reaches the backoff branch at all. (b) needs the WHOLE corpus, because
+// the `DEADLINE_MS` branch is guarded by `visited > 0` and a one-candidate tick
+// never evaluates it. The suite's other backoff test runs on a fake clock with
+// injected costs: it proves the MECHANISM over numbers the test supplies. These
+// two are AC4's only contact with real projection cost.
+
+/** `live.ts:51`, mirrored — the module does not export it. */
+const SLOW_MS = 100;
+
+/** `live.ts:54`, mirrored. */
+const SLOW_INTERVAL_MS = 5000;
+
+/** `live.ts:69`, mirrored. */
+const DEADLINE_MS = 250;
+
+/** A LOOP GUARD, never a bound. The burst is simulated at 19-25 ticks. */
+const MAX_BURST_TICKS = 200;
+
+const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
+
+interface RealSession {
+  absolute: string;
+  id: string;
+  bytes: number;
+}
+
+/** Every TOP-LEVEL transcript in the real archive, largest first. Read-only. */
+function realSessions(): RealSession[] {
+  const rows: RealSession[] = [];
+  for (const relPath of readdirSync(ARCHIVE_ROOT, { recursive: true, encoding: 'utf8' })) {
+    const logical = logicalPathOf(relPath.split('\\').join('/'));
+    if (classifyCorpusPath(logical) !== 'session') continue;
+    const absolute = join(ARCHIVE_ROOT, logical);
+    try {
+      rows.push({ absolute, id: rowIdOf(logical), bytes: statSync(absolute).size });
+    } catch {
+      continue;
+    }
+  }
+  return rows.sort((a, b) => b.bytes - a.bytes);
+}
+
+/**
+ * A real clock a test can push FORWARD. Real elapsed time still flows through
+ * it, which is what lets the >`SLOW_MS` branch fire on genuine projection cost;
+ * the offset only skips the wait for a backoff to expire.
+ */
+function shiftableClock(): { now: () => number; skip: (ms: number) => void } {
+  let offset = 0;
+  return { now: () => Date.now() + offset, skip: (ms) => (offset += ms) };
+}
+
+describe('AC4(a) — a session that exceeds SLOW_MS is backed off on the next tick', () => {
+  /** The largest real session, copied whole into a scratch archive with its sidecars. */
+  function stage(scratch: string): { row: RealSession; target: string; lines: string[] } {
+    const row = realSessions()[0]!;
+    const target = join(scratch, 'archive', SLUG, `${row.id}.jsonl`);
+    const sidecars = row.absolute.slice(0, -'.jsonl'.length);
+    // The sidecars are part of the fold AND part of the cost, so a copy without
+    // them would measure a cheaper session than the one the archive holds.
+    if (existsSync(sidecars))
+      cpSync(sidecars, target.slice(0, -'.jsonl'.length), { recursive: true });
+
+    const reader = createArchiveReader();
+    const text = reader.read(row.absolute, 0, reader.size(row.absolute)).toString('utf8');
+    return { row, target, lines: text.split('\n').filter((line) => line !== '') };
+  }
+
+  /**
+   * Three ticks over one staged session, growing the file before each of the
+   * last two. `skipMs` is how far the clock jumps before the THIRD tick: 0
+   * leaves the backoff holding, past `SLOW_INTERVAL_MS` lets the session back in.
+   *
+   * ★ THE MIDDLE TICK IS THE ONE THAT MATTERS, AND IT IS A REPROJECTION.
+   * Measured, the first (cold) tick over the largest real session runs ~88 ms —
+   * under `SLOW_MS`, because `deleteSessionProjection` has nothing to de-index
+   * yet. A reprojection pays the delete idiom over live rows on top, which is
+   * the ~136 ms the retraction quotes and the operation the live tick actually
+   * performs. The clock is stepped after tick 1 unconditionally so a cold pass
+   * that DID trip the threshold cannot defer tick 2 and hide the measurement.
+   */
+  async function growThenTick(
+    skipMs: number,
+  ): Promise<{ frames: number; reprojectionMs: number; row: RealSession }> {
+    const scratch = mkdtempSync(join(tmpdir(), 'agent-lens-live-backoff-'));
+    const db = openCache();
+    try {
+      const { row, target, lines } = stage(scratch);
+      const hub = recordingHub();
+      const clock = shiftableClock();
+      const sweep = createCorpusSweep({ db, dataDir: scratch, transcriptRoot: scratch });
+      const tick = startLiveTick({
+        db,
+        env: createProjectionEnv(),
+        sweep: { ...sweep, wave2: () => emptyReport() },
+        hub,
+        intervalMs: 0,
+        now: clock.now,
+      });
+
+      writeFile(target, `${lines.slice(0, -2).join('\n')}\n`);
+      await tick.tick();
+
+      clock.skip(SLOW_INTERVAL_MS + 1000);
+      writeFile(target, `${lines.slice(0, -1).join('\n')}\n`);
+      const before = performance.now();
+      await tick.tick();
+      const reprojectionMs = performance.now() - before;
+
+      clock.skip(skipMs);
+      writeFile(target, `${lines.join('\n')}\n`);
+      await tick.tick();
+
+      return { frames: changedFrames(hub).length, reprojectionMs, row };
+    } finally {
+      db.close();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  function report(row: RealSession, ms: number): string {
+    const text = `${row.id} (${(row.bytes / 1e6).toFixed(2)} MB) reprojected in ${ms.toFixed(1)} ms`;
+    console.log(`[diagnostic] ${text}`);
+    return text;
+  }
+
+  runIt(
+    'the grown bytes are DEFERRED, so three ticks publish twice',
+    { timeout: 300_000 },
+    async () => {
+      const { frames, reprojectionMs, row } = await growThenTick(0);
+      const diagnostic = report(row, reprojectionMs);
+
+      // Non-vacuity, and the premise of the whole retraction: slow sessions exist.
+      // If the largest real session reprojects under SLOW_MS the cost model moved,
+      // and this SHOULD red rather than pass on a backoff that never fired.
+      expect(reprojectionMs, diagnostic).toBeGreaterThan(SLOW_MS);
+      expect(frames, diagnostic).toBe(2);
+    },
+  );
+
+  runIt(
+    'control: past the backoff the SAME shape publishes three times',
+    { timeout: 300_000 },
+    async () => {
+      // Without this arm the test above is satisfied by a third tick that had
+      // nothing to publish. Deleting the backoff line in `live.ts` reds the arm
+      // above and leaves this one green — the pair is what makes the claim
+      // falsifiable rather than merely true.
+      const { frames, reprojectionMs, row } = await growThenTick(SLOW_INTERVAL_MS + 1000);
+      const diagnostic = report(row, reprojectionMs);
+
+      expect(reprojectionMs, diagnostic).toBeGreaterThan(SLOW_MS);
+      expect(frames, diagnostic).toBe(3);
+    },
+  );
+});
+
+describe('AC4(b) — one tick is bounded at wave 1 + DEADLINE_MS + one session', () => {
+  runIt(
+    'a whole-corpus burst drains without any tick exceeding the bound',
+    { timeout: 600_000 },
+    async () => {
+      const dataDir = join(homedir(), '.agent-lens');
+      const scratch = mkdtempSync(join(tmpdir(), 'agent-lens-live-burst-'));
+      const walkDb = openCache();
+      const db = openCache();
+      try {
+        // Wave 1 alone, on its own database, so the bound below uses a measured
+        // walk-and-fold rather than a remembered ~20 ms.
+        const walkStart = performance.now();
+        createCorpusSweep({ db: walkDb, dataDir, transcriptRoot: scratch }).wave1();
+        const wave1Ms = performance.now() - walkStart;
+
+        const hub = recordingHub();
+        const clock = shiftableClock();
+        const sweep = createCorpusSweep({ db, dataDir, transcriptRoot: scratch });
+        const tick = startLiveTick({
+          db,
+          env: createProjectionEnv(),
+          // Wave 2 is stubbed for the same reason as everywhere else in this file:
+          // it rolls sub-agents up and has nothing to do with the reprojection bound.
+          sweep: { ...sweep, wave2: () => emptyReport() },
+          hub,
+          intervalMs: 0,
+          now: clock.now,
+        });
+
+        // The worst case the design permits: every session moved at once. The loop
+        // ends when a tick publishes nothing, and the clock steps past the backoff
+        // between ticks so a deferred session really does come back.
+        const tickMs: number[] = [];
+        for (let pass = 0; pass < MAX_BURST_TICKS; pass += 1) {
+          const published = changedFrames(hub).length;
+          const before = performance.now();
+          await tick.tick();
+          tickMs.push(performance.now() - before);
+          if (changedFrames(hub).length === published) break;
+          clock.skip(SLOW_INTERVAL_MS + 1000);
+        }
+
+        // Now the per-session reprojection cost, in the same database and over the
+        // same rows: clearing the size half of the stamp is what forces the gate to
+        // reproject rather than answer `'hit'`.
+        const ids = (
+          db.prepare(`SELECT id FROM sessions WHERE projection_state = 'ready'`).all() as {
+            id: string;
+          }[]
+        ).map((row) => row.id);
+        const env = createProjectionEnv();
+        const costs = new Map<string, number>();
+        for (const id of ids) {
+          db.prepare('UPDATE sessions SET projected_size = NULL WHERE id = ?').run(id);
+          const before = performance.now();
+          ensureProjectedFold(db, id, env);
+          costs.set(id, performance.now() - before);
+        }
+
+        const sorted = [...costs.values()].sort((a, b) => a - b);
+        const at = (p: number): number =>
+          sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
+        const worstSession = sorted[sorted.length - 1] ?? 0;
+        const worstTick = Math.max(...tickMs);
+        const tripping = [...costs]
+          .filter(([, ms]) => ms > SLOW_MS)
+          .map(([id, ms]) => `${id}=${ms.toFixed(1)}ms`);
+
+        // Printed, never pinned. These are the numbers the AC4 retraction rests on.
+        const diagnostic =
+          `${ids.length} sessions in ${tickMs.length} ticks | reprojection p50 ${at(0.5).toFixed(1)} ` +
+          `p90 ${at(0.9).toFixed(1)} p99 ${at(0.99).toFixed(1)} max ${worstSession.toFixed(1)} ms | ` +
+          `wave1 ${wave1Ms.toFixed(1)} ms | worst tick ${worstTick.toFixed(1)} ms | ` +
+          `over SLOW_MS: ${tripping.length === 0 ? 'none' : tripping.join(', ')}`;
+        console.log(`[diagnostic] ${diagnostic}`);
+
+        // A FLOOR on the sample, so a scan that found nothing cannot pass silently.
+        expect(ids.length, diagnostic).toBeGreaterThanOrEqual(MIN_SESSIONS);
+        // The whole burst drained rather than running out of passes.
+        expect(tickMs.length, diagnostic).toBeLessThan(MAX_BURST_TICKS);
+        // The bound the design states: the phase is checked BETWEEN sessions and
+        // never before the first, so a tick costs wave 1, the deadline, and at most
+        // one more session on top of it.
+        expect(worstTick, diagnostic).toBeLessThanOrEqual(wave1Ms + DEADLINE_MS + worstSession);
+      } finally {
+        db.close();
+        walkDb.close();
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 });

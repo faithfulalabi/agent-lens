@@ -488,14 +488,35 @@ describe('5. GET /api/search (spec:349-354)', () => {
     expect(body.items.every((hit) => hit.session_id === SEEDED)).toBe(true);
   });
 
-  it('400s a missing q and a malformed FTS expression, never a 500', async () => {
+  it('400s a missing q — the one param error left on this route', async () => {
     expect((await call('/api/search')).status).toBe(400);
-    // Raw user text reaches FTS5; a lone quote is a malformed param, not a crash.
-    for (const q of ['%22', 'AND']) {
+  });
+
+  // ★ DELIBERATE BEHAVIOUR CHANGE, not a weakening. `%22` (a lone quote) and
+  // `AND` were 400s: FTS5 could not parse them as expressions, and the route
+  // classified that as the user's fault. They are ordinary typed text, so
+  // `searchEvents` now retries them as a literal phrase and searches for them.
+  // The hit COUNT is a property of the fixture, never of the route, so nothing
+  // here asserts one — the key set is what stops a handler that returns `{}`
+  // without querying from passing.
+  it('200s raw user text that is not a legal FTS5 expression', async () => {
+    for (const q of ['%22', 'AND', 'foo-bar', 'ENOENT%3A', 'src%2Fdb%2Fread.ts']) {
       const res = await call(`/api/search?q=${q}`);
-      expect(res.status, q).toBe(400);
-      expect(res.headers.get('content-type')).toContain('application/json');
+      expect(res.status, q).toBe(200);
+      expect(res.headers.get('content-type'), q).toContain('application/json');
+      const body = (await res.json()) as SearchBody;
+      expectKeys(body, ['items', 'scope', 'unprojected_count']);
+      expect(Array.isArray(body.items), q).toBe(true);
     }
+  });
+
+  it('400s a q carrying NUL — the one input the phrase fallback cannot rescue', async () => {
+    // SQLite truncates a bound string at NUL, so the quoted arm loses its closing
+    // quote and BOTH arms throw. Without the guard in `parseSearchQuery` this
+    // exact request is a 500 (`read.test.ts` holds the reader-level witness).
+    const res = await call('/api/search?q=foo-bar%00tail');
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid q' });
   });
 
   it('a REAL reader failure is a JSON 500, never blamed on q and never text/plain', async () => {
