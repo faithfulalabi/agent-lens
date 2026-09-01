@@ -30,6 +30,7 @@ import {
   buildReport,
   renderContactSheet,
   type DetailTexts,
+  type DriftProbe,
   type EventDetailProbe,
   type LiveProbe,
   type Observations,
@@ -41,7 +42,7 @@ import {
 } from './report.js';
 
 /**
- * The nine `data-slot` values the gate drives. `data-slot` carries no styling
+ * The ten `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  *
@@ -63,6 +64,7 @@ export const SELECTORS = {
   spanExpand: 'span-expand',
   spanDetail: 'span-detail',
   threadToggle: 'thread-toggle',
+  driftBanner: 'drift-banner',
 } as const;
 
 /** `SpanTree`'s own `ESTIMATED_ROW_PX`. Pinned by a test — `totalRows` needs it. */
@@ -74,7 +76,7 @@ const DEFAULT_DEADLINE_MS = 180_000;
 const PER_WAIT_TIMEOUT_MS = 15_000;
 
 /**
- * The seven screenshots, numbered in the order a reviewer should read them.
+ * The nine screenshots, numbered in the order a reviewer should read them.
  *
  * ★ THAT IS NO LONGER THE ORDER THEY ARE TAKEN IN, AND IT CANNOT BE.
  * `07-subagent.png` is shot BEFORE `06-thread.png`: the thread toggle swaps the
@@ -101,6 +103,13 @@ const PER_WAIT_TIMEOUT_MS = 15_000;
  * same reason 07 is: the tail is read off the tree, and the thread toggle takes
  * the tree away for good. It is the only shot taken after the open session grew
  * under the reader, which is the state AC-R1 asserts on for that task.
+ *
+ * `09-drift.png` is task 7.3's, and it is shot LAST of all — AFTER the thread
+ * toggle, which it survives because the alarm draws above the tree/thread split
+ * rather than inside either. It is the only shot in which the durability alarm
+ * is on screen at all: the corpus is clean (measured 291 of 293 sessions carry
+ * no drift), so no other shot can hold one, and the AC-R2 eye would otherwise
+ * open the contact sheet for an alarm task and see no alarm.
  */
 type ShotName =
   | '01-sessions.png'
@@ -110,7 +119,8 @@ type ShotName =
   | '05-tool-call.png'
   | '06-thread.png'
   | '07-subagent.png'
-  | '08-live.png';
+  | '08-live.png'
+  | '09-drift.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -565,6 +575,12 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   // below spans the whole drive either way, which is what makes AC1 survive it.
   const threadInline = await probeThreadInline(page, events, shoot);
 
+  // LAST OF ALL, after the thread probe. An unrecognised line becomes an event
+  // row, so appending one any earlier would move the `totalRows` reading the
+  // live probe's whole assertion rests on. The toggle cannot hide the alarm:
+  // it draws above the tree/thread split, so it survives into the thread.
+  const driftBanner = await probeDriftBanner(page, ctx, liveUpdate, shoot);
+
   const detail: DetailTexts = { t0, t1, t2 };
   return {
     shots,
@@ -585,6 +601,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       subagentExpansion,
       threadInline,
       liveUpdate,
+      driftBanner,
       detail,
       consoleErrors,
       failedResponses,
@@ -938,7 +955,84 @@ async function probeLiveUpdate(
     navigations: counters.navigations() - navigationsBefore,
     listResponses: counters.listPaths.length - listBefore,
     detailResponses: counters.detailPaths.length - detailsBefore,
+    // Handed on rather than resolved twice — see `LiveProbe.archivePath`.
+    archivePath: path,
   };
+}
+
+/** A top-level `type` no `LINE_TYPES` entry names. Echoed into the report. */
+const DRIFT_RECORD_TYPE = 'render_gate_unknown_record';
+
+/**
+ * One record the projector cannot name, which is what raises the alarm.
+ *
+ * ★ THREE FIELDS, AND THE SHORTNESS IS THE POINT. `classifyLine` reaches
+ * `noteUnknownType` off `type` alone and returns `kind: 'unknown'` without
+ * throwing, so the session still projects `ready` with `unknown_line_types` at
+ * 1. Every field this record does NOT carry — the five `liveAppendRecord` next
+ * door needs to open a turn — is one of the eleven words in
+ * `one-door.test.ts`'s `TERMS`, and each would buy a suppression entry for a
+ * line that proves nothing extra.
+ */
+function driftAppendRecord(stamp: number): string {
+  const record = {
+    type: DRIFT_RECORD_TYPE,
+    uuid: `ffffffff-7373-4373-8373-${String(stamp).slice(-12).padStart(12, '0')}`,
+    timestamp: new Date(stamp).toISOString(),
+  };
+  return `${JSON.stringify(record)}\n`;
+}
+
+/**
+ * AC-R1 for task 7.3: the durability alarm is SILENT on a clean session and
+ * RAISES when the transcript format moves under the reader.
+ *
+ * ★ IT RUNS LAST OF ALL, AND THAT IS NOT A PREFERENCE. An unknown line becomes
+ * an event row, so appending one before the live probe would perturb the
+ * `totalRows` reading that probe's whole assertion rests on. The thread toggle
+ * is not a hazard the other way: the alarm draws above the tree/thread split, so
+ * it is on screen in both surfaces — checked in the page source, not assumed,
+ * because the ordering hazard 6.2 hit was exactly this shape.
+ *
+ * ★ IT READS BOTH SIDES. The corpus is clean — measured 291 of 293 sessions —
+ * so an observe-only probe could assert nothing but the zero side and would be
+ * green over a dead alarm. Appending the drift it then looks for is what makes
+ * the reading falsifiable in the direction the alarm exists for.
+ *
+ * ★ IT PUTS THE BYTES BACK, on `probeLiveUpdate`'s idiom: the truncate is
+ * registered BEFORE the write, so no window exists in which the append can
+ * outlive the run. The gate unwinds cleanups LIFO, so this revert runs before
+ * the live probe's and the two truncates cannot cross.
+ */
+async function probeDriftBanner(
+  page: Page,
+  ctx: DriveContext,
+  live: LiveProbe | null,
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<DriftProbe | null> {
+  if (live === null) return null;
+  const path = live.archivePath;
+
+  const banner = page.locator(slot(SELECTORS.driftBanner));
+  const before = await banner.count();
+
+  const size = statSync(path).size;
+  ctx.onCleanup(async () => {
+    truncateSync(path, size);
+  });
+  appendFileSync(path, driftAppendRecord(Date.now()));
+
+  // The alarm appearing is the latched fact worth waiting on. No goto and no
+  // reload: the 1 Hz tick replaces the header wholesale on every frame, which
+  // is what carries the reprojected `has_drift` to the screen.
+  await page
+    .waitForSelector(slot(SELECTORS.driftBanner), { timeout: LIVE_SETTLE_MS })
+    .catch(() => null);
+
+  const after = await banner.count();
+  await shoot('09-drift.png');
+
+  return { before, after, appendedType: DRIFT_RECORD_TYPE };
 }
 
 /**

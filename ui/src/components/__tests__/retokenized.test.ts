@@ -67,6 +67,10 @@ const SOURCE_FILES = [
   '../session/TruncationNotice.tsx',
   '../session/SessionHeader.tsx',
   '../session/ThreadView.tsx',
+  // Task 7.3's alarm, in because it is the truncation strip's sibling and
+  // writes the same kind of colour vocabulary. `FollowPill.tsx` stayed out for
+  // the opposite reason: too few distinct classes to clear the bar below.
+  '../session/DriftBanner.tsx',
 ] as const;
 
 function sources(): { name: string; text: string }[] {

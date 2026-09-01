@@ -159,6 +159,34 @@ export interface LiveProbe {
   listResponses: number;
   /** `/api/sessions/:id` responses in the window — the splice's own page request. */
   detailResponses: number;
+  /**
+   * The archived transcript this probe grew, so the drift probe can grow it too.
+   *
+   * ★ CARRIED HERE RATHER THAN RESOLVED TWICE. `probeLiveUpdate` already walks
+   * the archive for this path, and both alternatives — a second walk in the
+   * drive, or handing the drift probe a session id of its own — write one of
+   * `one-door.test.ts`'s eleven TERMS at a source position that re-keys ten
+   * suppression entries and buys one to three more. This field costs none.
+   */
+  archivePath: string;
+}
+
+/**
+ * AC-R1 for task 7.3: an unrecognised record RAISES the alarm, and its absence
+ * before the append is what proves the raise was not already there.
+ *
+ * ★ `null` IS A FAILING ASSERTION, on the live probe's terms. The probe grows
+ * the archive itself, so an empty answer can only mean the transcript could not
+ * be reached — and a silent alarm is the one defect this whole task exists to
+ * prevent. A warning here would ship a green gate over a dead alarm.
+ */
+export interface DriftProbe {
+  /** Banner elements before the unrecognised record was appended. Must be 0. */
+  before: number;
+  /** Banner elements after it. Must be 1 — the raise, with no reload. */
+  after: number;
+  /** The `type` that was appended, echoed so the report names what it sent. */
+  appendedType: string;
 }
 
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
@@ -216,6 +244,8 @@ export interface Observations {
   threadInline: ThreadProbe | null;
   /** The live tail. `null` is a FAILURE — see the type. */
   liveUpdate: LiveProbe | null;
+  /** The durability alarm, raised last of all. `null` is a FAILURE — see the type. */
+  driftBanner: DriftProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -407,6 +437,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     ),
     ...liveAssertions(result.liveUpdate),
     ...threadAssertions(result.threadInline),
+    ...driftAssertions(result.driftBanner),
     {
       name: 'console-errors',
       ok: result.consoleErrors.length === 0,
@@ -436,14 +467,16 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
-      // RAISED 7 -> 8 BY TASK 6.2, with `08-live.png`. Both literals move
-      // together or a test reds: leaving one behind would ship a report reading
-      // `8 screenshot(s) / expected: 7 screenshots` with `ok: true` — a contact
+      // RAISED 8 -> 9 BY TASK 7.3, with `09-drift.png`; 6.2 raised it 7 -> 8.
+      // TWO literals move, and they are the `ok:` line and the `expected:` line
+      // — NOT the `actual:` template between them, which interpolates and holds
+      // no number to change. Leaving one behind ships a report reading
+      // `9 screenshot(s) / expected: 8 screenshots` with `ok: true` — a contact
       // sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 8,
+      ok: result.shots.length === 9,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '8 screenshots',
+      expected: '9 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -633,6 +666,48 @@ function liveAssertions(probe: LiveProbe | null): AssertionRecord[] {
       ok: probe.detailResponses >= 1,
       actual: `${probe.detailResponses} detail response(s) while the tail arrived`,
       expected: '>= 1 GET /api/sessions/:id, which is the spliced page',
+    },
+  ];
+}
+
+/**
+ * AC-R1 for task 7.3, in two records: the alarm was SILENT on the clean session
+ * and it RAISED once an unrecognised record landed.
+ *
+ * ★ BOTH SIDES OR NEITHER. A probe that only read the raise would pass over a
+ * banner stuck permanently on, which is AC3's failure and the exact defect plan
+ * 001's task 3.3 shipped twice. A probe that only read the silence would pass on
+ * a dead alarm, which is AC2's. So the before reading is an assertion of its own
+ * rather than a precondition, and neither can discharge the other.
+ *
+ * ★ A `null` READING FAILS, on `liveAssertions`' terms rather than the tool-call
+ * probe's. Nothing about the corpus can empty this: the probe writes the drift
+ * it then looks for.
+ */
+function driftAssertions(probe: DriftProbe | null): AssertionRecord[] {
+  if (probe === null) {
+    return [
+      {
+        name: 'drift-banner-reached',
+        ok: false,
+        actual: 'the archived transcript of the open session could not carry an unknown record',
+        expected: 'the probe appends one unrecognised record and the session view answers',
+      },
+    ];
+  }
+
+  return [
+    {
+      name: 'drift-banner-silent-when-clean',
+      ok: probe.before === 0,
+      actual: `${probe.before} banner(s) before the append`,
+      expected: 'no drift banner anywhere while every counter is zero',
+    },
+    {
+      name: 'drift-banner-raised',
+      ok: probe.after > 0,
+      actual: `${probe.before} -> ${probe.after} banner(s) after a "${probe.appendedType}" record`,
+      expected: 'the banner raises on the unrecognised record, with no manual refresh',
     },
   ];
 }

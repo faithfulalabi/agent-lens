@@ -176,6 +176,34 @@ export function truncationNotes({
   return notes;
 }
 
+/** What the session row already says about its own drift. Nothing stored. */
+export interface DriftFacts {
+  readonly hasDrift: boolean;
+  readonly harnessVersion: string | null;
+}
+
+/**
+ * The durability alarm's copy: this session holds records the projector did not
+ * recognise, and the release that wrote them.
+ *
+ * ★ A PURE FUNCTION OF THE ROW ON SCREEN, WITH NO STORED STATE, AND THAT IS THE
+ * DESIGN. Plan 001's task 3.3 built a banner twice around stored, monotonic
+ * state and twice the raise could not be falsified by the clear — a stamp ahead
+ * of the clock pinned the key in the future, and a `MIN` that never advances
+ * suppressed the alarm for as long as it stayed a candidate. There is no
+ * timestamp here and no suppression: the raise IS the data, so it clears when
+ * the row does. Reproject without the unrecognised line and the next response
+ * says false, which the 1 Hz tick already delivers through `applyFrame`.
+ *
+ * `null` means silence. A permanent "no drift" strip would train the reader to
+ * stop reading it, on the same rule `truncationNotes` follows next door.
+ */
+export function driftNotice({ hasDrift, harnessVersion }: DriftFacts): string | null {
+  if (!hasDrift) return null;
+  const who = harnessVersion === null ? 'The harness' : `Claude Code ${harnessVersion}`;
+  return `Unrecognized records in this session. ${who} writes a transcript shape this build does not know.`;
+}
+
 /**
  * Which turns are open when the session first draws: the latest one, alone.
  *

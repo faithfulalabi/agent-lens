@@ -585,7 +585,11 @@ describe('9. GET /api/drift (spec:382-392)', () => {
       'sessions_with_drift',
     ]);
 
-    expect(body.harness_versions).toEqual({ '2.2.0': 1 });
+    // The CENSUS: both projected rows, clean and drifting. `SEEDED` defaults to
+    // `2.1.212`/`ready`; the third seeded row goes through `upsertSessionIndex`,
+    // which never sets `projection_state`, so `schema.ts`'s `'none'` default
+    // keeps it out of `readDriftRows`' `WHERE projection_state = 'ready'`.
+    expect(body.harness_versions).toEqual({ '2.1.212': 1, '2.2.0': 1 });
     expect(body.unknown_line_types).toEqual({ summary: 4 });
     // ★ spec:390 requires this by name, and `db/read.ts`'s `parseDrift` drops it.
     expect(body.unknown_top_level_fields).toEqual({ newField: 3 });
@@ -596,6 +600,34 @@ describe('9. GET /api/drift (spec:382-392)', () => {
     // The per-session counts keep `sidecar_agent_id_mismatch`, which the detail
     // response's four-key `drift` has no room for.
     expect(body.sessions_with_drift[0]!.counts.sidecar_agent_id_mismatch).toBe(2);
+  });
+
+  it('★ raises an unrecognised line type 0 -> N and names the release that carried it', async () => {
+    /*
+     * AC2 at the route, in its OWN case rather than in the shared `beforeEach`:
+     * a third drifting row there would move `harness_versions`,
+     * `unknown_line_types`, `unjoined_tool_uses` and the length above, all of
+     * which the case before this one has settled.
+     *
+     * ★ THE VERSION IS READ OFF `sessions_with_drift`, NEVER OFF THE CENSUS.
+     * `harness_versions` counts clean rows too, so the same assertion there
+     * would hold for a session that never drifted at all.
+     */
+    const before = await getJson<DriftBody>('/api/drift');
+    expect(before.body.unknown_line_types['widget_frame']).toBeUndefined();
+
+    seedSessionRow(db, {
+      id: 'widget-1111-4111-8111-widget000001',
+      harness_version: '2.3.0',
+      drift_json: JSON.stringify({ unknown_line_types: { widget_frame: 1 } }),
+    });
+
+    const { body } = await getJson<DriftBody>('/api/drift');
+    expect(body.unknown_line_types['widget_frame']).toBe(1);
+
+    const carrier = body.sessions_with_drift.find((s) => s.harness_version === '2.3.0');
+    expect(carrier?.counts.unknown_line_types).toEqual({ widget_frame: 1 });
+    expect(body.harness_versions).toEqual({ '2.1.212': 1, '2.2.0': 1, '2.3.0': 1 });
   });
 });
 
