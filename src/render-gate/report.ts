@@ -134,6 +134,33 @@ export interface SubagentProbe {
   nestedEventSessionIds: readonly string[];
 }
 
+/**
+ * AC-R1 for task 6.2: the open session GREW while it was on screen, with no
+ * reload and no navigation.
+ *
+ * ★ `null` IS A FAILING ASSERTION, on the thread probe's terms rather than the
+ * tool-call probe's. `toolCallInline` degrades to a warning because a
+ * virtualizer decides which rows exist to read; nothing decides that here. The
+ * probe grows the archive itself, so an empty answer can only mean the tail did
+ * not arrive — which for this task IS the acceptance criterion.
+ *
+ * The counts are taken INSIDE the probe's own window, between the two row
+ * readings. A whole-drive count would mix in the load and the sub-agent's
+ * sidecar and could never say which request the tail caused.
+ */
+export interface LiveProbe {
+  /** `totalRows` before the archive grew. `null` when the derivation was unsafe. */
+  before: number | null;
+  /** `totalRows` after the tree caught up. */
+  after: number | null;
+  /** Main-frame navigations between the two readings. A reload would be one. */
+  navigations: number;
+  /** `/api/sessions` list responses in the window. The list is not even mounted. */
+  listResponses: number;
+  /** `/api/sessions/:id` responses in the window — the splice's own page request. */
+  detailResponses: number;
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -163,6 +190,22 @@ export interface Observations {
    * reds the moment the feature works.
    */
   detailResponsesAtLoad: number;
+  /**
+   * How many had arrived before the LIVE probe grew the archive.
+   *
+   * The sub-agent window is `[atLoad, beforeLive)`, and it has to be: the splice
+   * issues a further detail request by design, so a window open to the end of
+   * the drive would red 5.5's assertion the moment 6.2's feature worked.
+   */
+  detailResponsesBeforeLive: number;
+  /**
+   * The path of every `/api/sessions` LIST response, in arrival order.
+   *
+   * Its own collector rather than a widened predicate: `isSessionDetailPath`
+   * matches `/api/sessions/:id` and can never match the list route, and three
+   * assertions pin that predicate.
+   */
+  listPaths: readonly string[];
   /** `null` when no rendered tool_call row carried both halves. See the type. */
   toolCallInline: ToolCallProbe | null;
   /** The same row, read in the detail pane instead of the tree. See the type. */
@@ -171,6 +214,8 @@ export interface Observations {
   subagentExpansion: SubagentProbe | null;
   /** The thread, read after the toggle. `null` is a FAILURE — see the type. */
   threadInline: ThreadProbe | null;
+  /** The live tail. `null` is a FAILURE — see the type. */
+  liveUpdate: LiveProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -355,9 +400,12 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     ...eventDetailAssertions(result.eventDetail),
     ...subagentAssertions(
       result.subagentExpansion,
-      result.detailPaths,
-      result.detailResponsesAtLoad,
+      // The window CLOSES at the live probe: the splice fetches a page of its
+      // own, and a window open to the end of the drive would red this the
+      // moment task 6.2's feature worked.
+      result.detailPaths.slice(result.detailResponsesAtLoad, result.detailResponsesBeforeLive),
     ),
+    ...liveAssertions(result.liveUpdate),
     ...threadAssertions(result.threadInline),
     {
       name: 'console-errors',
@@ -388,14 +436,14 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
-      // RAISED 6 -> 7 BY TASK 5.5, with `07-subagent.png`. Both literals move
+      // RAISED 7 -> 8 BY TASK 6.2, with `08-live.png`. Both literals move
       // together or a test reds: leaving one behind would ship a report reading
-      // `7 screenshot(s) / expected: 6 screenshots` with `ok: true` — a contact
+      // `8 screenshot(s) / expected: 7 screenshots` with `ok: true` — a contact
       // sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 7,
+      ok: result.shots.length === 8,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '7 screenshots',
+      expected: '8 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -461,11 +509,9 @@ function eventDetailAssertions(probe: EventDetailProbe | null): AssertionRecord[
  */
 function subagentAssertions(
   probe: SubagentProbe | null,
-  detailPaths: readonly string[],
-  atLoad: number,
+  extra: readonly string[],
 ): AssertionRecord[] {
   if (probe === null) return [];
-  const extra = detailPaths.slice(atLoad);
   const wanted = `/api/sessions/${probe.childSessionId}`;
   const stamps = [...new Set(probe.nestedEventSessionIds)];
   return [
@@ -536,6 +582,57 @@ function threadAssertions(probe: ThreadProbe | null): AssertionRecord[] {
         `${probe.thinkingRows} row(s) for ${probe.thinkingEvents} event(s); ` +
         `${probe.markerRows} carry the marker, ${probe.emptyRows} render empty`,
       expected: 'one marker per thinking event, every one carrying the string, none empty',
+    },
+  ];
+}
+
+/**
+ * AC-R1 for task 6.2, in three records: the tree GREW, nothing navigated, and
+ * the growth arrived through a splice rather than through a reload.
+ *
+ * ★ A `null` READING FAILS. `totalRows` is derived from the virtualizer's own
+ * canvas and degrades to `null` behind a plausibility guard — which is the right
+ * answer for a reading nobody acts on, and the wrong one here, where the reading
+ * IS the acceptance criterion. The thread probe's semantics, not the tool-call
+ * probe's.
+ *
+ * The three clauses stay separate because a reader acts on them differently: no
+ * growth is a dead tail, a navigation is a reload wearing a tail's clothes, and
+ * a missing page request means the rows came from somewhere else entirely.
+ */
+function liveAssertions(probe: LiveProbe | null): AssertionRecord[] {
+  if (probe === null) {
+    return [
+      {
+        name: 'live-update-reached',
+        ok: false,
+        actual: 'the archived transcript of the open session could not be grown',
+        expected: 'the probe appends one record to the open session and the tree answers',
+      },
+    ];
+  }
+
+  const shown = (value: number | null): string => (value === null ? 'unknown' : String(value));
+  return [
+    {
+      name: 'live-row-growth',
+      ok: probe.before !== null && probe.after !== null && probe.after > probe.before,
+      actual: `${shown(probe.before)} -> ${shown(probe.after)} total rows`,
+      expected: 'the tree holds more rows after the archive grew, with no manual refresh',
+    },
+    {
+      name: 'live-no-navigation',
+      ok: probe.navigations === 0 && probe.listResponses === 0,
+      actual: `${probe.navigations} navigation(s), ${probe.listResponses} list response(s)`,
+      expected: 'no reload, no navigation, and no further GET /api/sessions',
+    },
+    {
+      // What tells a splice from a reload: the client asked for ONE page, at the
+      // cursor the frame carried. A reload would have re-fetched the document.
+      name: 'live-splice-request',
+      ok: probe.detailResponses >= 1,
+      actual: `${probe.detailResponses} detail response(s) while the tail arrived`,
+      expected: '>= 1 GET /api/sessions/:id, which is the spliced page',
     },
   ];
 }

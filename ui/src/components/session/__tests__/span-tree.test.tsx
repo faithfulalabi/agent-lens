@@ -290,6 +290,50 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
     }
   });
 
+  it('the scroller reports its own numbers, and the follow index reaches the virtualizer', () => {
+    /*
+     * Source text, and NOT a render pin — the reason is the same one this block
+     * opens with, twice over. `renderToStaticMarkup` runs no effect, so
+     * `scrollToIndex` never fires; and React's server renderer emits no
+     * event-handler attributes, so an `onScroll` never reaches the markup. A
+     * render assertion over either would be a test that cannot fail.
+     *
+     * What IS behavioural is every decision behind them: `atBottom` and
+     * `followReducer` are driven as a table in `lib/__tests__/follow.test.ts`.
+     */
+    const source = sourceOf('../SpanTree.tsx');
+
+    expect(source, 'the handler belongs on the element that actually scrolls').toMatch(
+      /ref=\{scrollRef\}[\s\S]{0,400}onScroll=\{onScroll\}/,
+    );
+    for (const metric of ['scrollTop: element.scrollTop', 'scrollHeight: element.scrollHeight']) {
+      expect(source, `${metric} is not read off the scroller`).toContain(metric);
+    }
+    expect(source, 'the tree reads numbers; live.ts decides what they mean').not.toContain(
+      'FOLLOW_EPSILON_PX',
+    );
+    expect(source).toContain("virtualizer.scrollToIndex(followIndex, { align: 'end' })");
+  });
+
+  it('swallows the one scroll event its own scrollToIndex causes', () => {
+    /*
+     * ★ THE DEFECT THIS CLOSES IS INVISIBLE TO EVERY OTHER TEST HERE.
+     *
+     * Rows are MEASURED, not assumed — `measureElement` corrects each rendered
+     * row against the real DOM — so `scrollToIndex(last, { align: 'end' })` can
+     * land short of the true end while the rows below it are still estimates.
+     * That fires an `onScroll` whose numbers say "not at the end", the reducer
+     * reads it as a reader who moved, and follow mode pauses on the very frame
+     * the pill resumed it.
+     */
+    const source = sourceOf('../SpanTree.tsx');
+
+    expect(source).toMatch(/programmaticScroll\.current = true;\s*virtualizer\.scrollToIndex\(/);
+    expect(source, 'the flag must be cleared by the event it swallows').toMatch(
+      /if \(programmaticScroll\.current\) \{\s*programmaticScroll\.current = false;\s*return;/,
+    );
+  });
+
   it('the page wires each surface to the state it is meant to show', () => {
     /*
      * The same source-pin technique as the two above, extended to the props no

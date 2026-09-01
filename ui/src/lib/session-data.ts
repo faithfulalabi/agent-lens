@@ -60,6 +60,15 @@ export interface SessionData {
   readonly hasMore: boolean;
   /** How many events actually arrived — the number the notice strip spells. */
   readonly shown: number;
+  /**
+   * The live-tail epoch of the bytes this data was served from, verbatim.
+   *
+   * `'<mtime_ms>:<size>:<sidecar_count>'`, or `''` when the archive held no
+   * bytes to fold. `movedBackwards` in `live.ts` is the only reader: a frame
+   * whose epoch went backwards describes a file this page cannot be spliced
+   * onto, so the page is fetched again from zero instead.
+   */
+  readonly fingerprint: string;
 }
 
 export interface LoadSessionOptions {
@@ -87,21 +96,32 @@ export async function loadSessionDetail(
   const options = signal === undefined ? undefined : { signal };
   const body = await api.getSession(sessionId, { limit }, options);
 
+  return {
+    session: body.session,
+    turns: body.turns,
+    eventsByTurn: bucketByTurn(body.events),
+    events: body.events,
+    hasMore: body.has_more,
+    shown: body.events.length,
+    fingerprint: body.fingerprint,
+  };
+}
+
+/**
+ * Events grouped by `turn_id`, in arrival order — the shape `buildTurnGroups` takes.
+ *
+ * Exported so the cold load above and `live.ts`'s splice share ONE bucketing
+ * rule. Two copies would be two chances for a spliced page to group differently
+ * from the page it replaced.
+ */
+export function bucketByTurn(events: readonly EventRow[]): Map<string, EventRow[]> {
   const eventsByTurn = new Map<string, EventRow[]>();
-  for (const event of body.events) {
+  for (const event of events) {
     const bucket = eventsByTurn.get(event.turn_id);
     if (bucket === undefined) eventsByTurn.set(event.turn_id, [event]);
     else bucket.push(event);
   }
-
-  return {
-    session: body.session,
-    turns: body.turns,
-    eventsByTurn,
-    events: body.events,
-    hasMore: body.has_more,
-    shown: body.events.length,
-  };
+  return eventsByTurn;
 }
 
 /* ------------------------------------------------------ the notice strip --- */

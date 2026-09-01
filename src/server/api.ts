@@ -225,7 +225,13 @@ export function parseSearchQuery(query: Record<string, string>): ParseResult<Sea
  */
 export const LIVE_WINDOW_MS = 60_000;
 
-/** `live` is stamped by the server, never a column (`data-model-v2.md:278`). */
+/**
+ * `live` is stamped by the server, never a column (`data-model-v2.md:278`).
+ *
+ * Mirrored into the browser by Task 6.2 at `ui/src/lib/live.ts`, which names
+ * this pair back: a list row patched in place from a `session_changed` frame
+ * has to re-decide its own badge, and `ui/` cannot import from `src/server/`.
+ */
 export function isLive(last_activity_at: string, now: number): boolean {
   const at = Date.parse(last_activity_at);
   return !Number.isNaN(at) && now - at < LIVE_WINDOW_MS;
@@ -523,12 +529,13 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
   //    `streamSSE` takes TWO arguments and must keep taking two: a third
   //    `onError` makes hono emit `event: error`, and `error` is hono's name.
   //
-  //    `?from_seq` is ACCEPTED AND IGNORED, deliberately. The client appends it
-  //    on every reconnect (`ui/src/lib/sse.ts:259-264`), and honouring it would
-  //    be the resume bookkeeping this design deletes: whole-file reprojection
+  //    `?from_seq` is ACCEPTED AND IGNORED, deliberately. Task 6.2 deleted the
+  //    client limb that appended it — no frame carries an `id:`, so the cursor
+  //    it was built from could never be set — and honouring it would be the
+  //    resume bookkeeping this design deletes anyway: whole-file reprojection
   //    makes a refetch cheap, so a reconnecting client simply takes the next
   //    `session_changed` frame and splices from the `from_seq` in its payload.
-  //    Rejecting it would break that path for no benefit.
+  //    Accept-and-ignore stays for any other client that sends one.
   app.get('/api/stream', (c) => streamSSE(c, (stream) => deps.hub.attach(stream)));
 
   // 7. Forced reprojection. Worst case in the whole corpus is 45 ms, so this is

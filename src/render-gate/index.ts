@@ -12,7 +12,15 @@
 //   * An OVERALL DEADLINE. A wait that never settles must produce an exit code,
 //     not a hung AFK run.
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Page } from 'playwright-core';
@@ -23,6 +31,7 @@ import {
   renderContactSheet,
   type DetailTexts,
   type EventDetailProbe,
+  type LiveProbe,
   type Observations,
   type RenderGateReport,
   type ShotRecord,
@@ -87,6 +96,11 @@ const PER_WAIT_TIMEOUT_MS = 15_000;
  * `07-subagent.png` is task 5.5's, and it is the only one that can show an
  * embedded sidecar: it is shot while the expanded Agent row's own turns and
  * events are on screen, which is a state none of the six before it reach.
+ *
+ * `08-live.png` is task 6.2's, and it is shot BEFORE `06-thread.png` for the
+ * same reason 07 is: the tail is read off the tree, and the thread toggle takes
+ * the tree away for good. It is the only shot taken after the open session grew
+ * under the reader, which is the state AC-R1 asserts on for that task.
  */
 type ShotName =
   | '01-sessions.png'
@@ -95,7 +109,8 @@ type ShotName =
   | '04-focus.png'
   | '05-tool-call.png'
   | '06-thread.png'
-  | '07-subagent.png';
+  | '07-subagent.png'
+  | '08-live.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -377,6 +392,19 @@ export function isSessionDetailPath(url: string): boolean {
   }
 }
 
+/**
+ * `/api/sessions` exactly — the LIST route, which the predicate above can never
+ * match. Its own function rather than a widened `isSessionDetailPath`: three
+ * assertions pin that one, and widening it would move all of them.
+ */
+export function isSessionListPath(url: string): boolean {
+  try {
+    return new URL(url).pathname === '/api/sessions';
+  } catch {
+    return false;
+  }
+}
+
 declare const document: {
   querySelector(selectors: string): PageElement | null;
   querySelectorAll(selectors: string): readonly PageElement[];
@@ -422,7 +450,14 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
    * is the one AC1 means: one response fills the whole screen.
    */
   const detailPaths: string[] = [];
+  /** The LIST route's own tally — see `isSessionListPath`. */
+  const listPaths: string[] = [];
+  /** Main-frame navigations. A live tail must cause none. */
+  let navigations = 0;
   let wireEvents: Promise<WireEvent[]> | null = null;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) navigations += 1;
+  });
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
     // The URL matters: a bare "Failed to load resource" names nothing, and the
@@ -444,6 +479,9 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
         .json()
         .then((body: { events?: WireEvent[] }) => body.events ?? [])
         .catch(() => []);
+    }
+    if (isSessionListPath(response.url()) && response.status() < 400) {
+      listPaths.push(new URL(response.url()).pathname);
     }
     if (response.status() < 400) return;
     if (isIgnoredRequest(response.url())) return;
@@ -510,10 +548,21 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const detailResponsesAtLoad = detailPaths.length;
   const subagentExpansion = await probeSubagentExpansion(page, shoot);
 
+  // BEFORE the live probe, because the splice fetches a page of its own: the
+  // sub-agent's window has to close here or its "exactly one further response"
+  // reading would red the moment task 6.2's feature worked.
+  const detailResponsesBeforeLive = detailPaths.length;
+  const liveUpdate = await probeLiveUpdate(page, ctx, sessionId, shoot, {
+    detailPaths,
+    listPaths,
+    navigations: () => navigations,
+  });
+
   // LAST of all: the toggle swaps the tree out for the thread, so every tree
-  // reading has to be taken before it. There is no trip back — a return would
-  // be dead motion, and the response count below spans the whole drive either
-  // way, which is what makes AC1 survive the switch.
+  // reading has to be taken before it — INCLUDING the live probe's, which reads
+  // `totalRows` off the tree canvas and would answer null once the tree is gone.
+  // There is no trip back: a return would be dead motion, and the response count
+  // below spans the whole drive either way, which is what makes AC1 survive it.
   const threadInline = await probeThreadInline(page, events, shoot);
 
   const detail: DetailTexts = { t0, t1, t2 };
@@ -529,10 +578,13 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       turnGroupCount,
       detailPaths,
       detailResponsesAtLoad,
+      detailResponsesBeforeLive,
+      listPaths,
       toolCallInline,
       eventDetail,
       subagentExpansion,
       threadInline,
+      liveUpdate,
       detail,
       consoleErrors,
       failedResponses,
@@ -743,6 +795,152 @@ async function probeSubagentExpansion(
   return { parentSessionId, childSessionId, nestedEventSessionIds };
 }
 
+/** How long the tail is given to arrive. The tick runs at 1 Hz; a projection is ms. */
+const LIVE_SETTLE_MS = 30_000;
+
+/** The virtualizer's canvas — the one element whose height states the row count. */
+const TREE_CANVAS = '[data-slot="span-tree"]';
+
+/**
+ * The archived transcript of one session, or `null`.
+ *
+ * `<dataDir>/archive/<slug>/<sessionId>.jsonl`, found by walking rather than by
+ * rebuilding the slug: the slug is the mirror's business and re-deriving it here
+ * would be a second copy of a rule that can drift. A sealed session answers
+ * `null` — its bytes are a `.zst` frame, which appending to would corrupt.
+ */
+export function archivedTranscript(dataDir: string, sessionId: string): string | null {
+  const archive = join(dataDir, 'archive');
+  let names: string[];
+  try {
+    names = readdirSync(archive, { recursive: true, encoding: 'utf8' });
+  } catch {
+    return null;
+  }
+  const wanted = `${sessionId}.jsonl`;
+  const found = names
+    .map((name) => name.split('\\').join('/'))
+    .find((name) => name === wanted || name.endsWith(`/${wanted}`));
+  return found === undefined ? null : join(archive, found);
+}
+
+/**
+ * One human-prompt record, which is the ONLY shape that grows the row count.
+ *
+ * ★ A `task_notification` MOVES `totalRows` BY ZERO, and that is why this is a
+ * user line. Turn segmentation is one variable: a line whose `promptId` differs
+ * from the running one opens a new segment, and a segment that emits earns a
+ * turn row. A turn row draws whether or not it is expanded; an EVENT row draws
+ * only under an expanded turn, and the drive expands turn 1 alone — so an append
+ * that lands inside the last, collapsed turn adds no visible row at all.
+ */
+function liveAppendRecord(sessionId: string, stamp: number): string {
+  const record = {
+    type: 'user',
+    uuid: `ffffffff-6262-4262-8262-${String(stamp).slice(-12).padStart(12, '0')}`,
+    parentUuid: null,
+    sessionId,
+    timestamp: new Date(stamp).toISOString(),
+    // A prompt group nothing else can carry: this is what opens the turn.
+    promptId: `render-gate-6-2-${stamp}`,
+    origin: { kind: 'human' },
+    message: { role: 'user', content: 'render gate: a live append, reverted at teardown' },
+  };
+  return `${JSON.stringify(record)}\n`;
+}
+
+/**
+ * AC-R1 for task 6.2: the open session GROWS UNDER THE READER.
+ *
+ * ★ IT RUNS BEFORE THE THREAD PROBE, AND THAT IS NOT AN ORDERING PREFERENCE.
+ * The thread toggle replaces the tree subtree for good, and `totalRows` is
+ * derived from the tree canvas — so after the toggle this probe could only ever
+ * answer `null`, which `report.ts` scores as a failure.
+ *
+ * ★ IT READS `totalRows`, NEVER A COUNT OF RENDERED ROWS. The tree is
+ * virtualized, so the number of `span-row` elements is bounded by the viewport
+ * and does not move when the session grows. The canvas height does.
+ *
+ * ★ IT GROWS THE ARCHIVE ITSELF, AND PUTS IT BACK. Nothing in the boot path
+ * mirrors new bytes — `archiveOnce`'s only production caller is the CLI, and in
+ * production the mirror is an external job on a 15-minute interval with measured
+ * real gaps of hours. So the probe appends one record and reverts it in
+ * `onCleanup`, against the throwaway data dir `AGENT_LENS_DEV_DIR` names. Both
+ * write sites are reviewed in `src/fs-write-sites.test.ts`.
+ */
+async function probeLiveUpdate(
+  page: Page,
+  ctx: DriveContext,
+  sessionId: string,
+  shoot: (name: ShotName) => Promise<void>,
+  counters: {
+    detailPaths: readonly string[];
+    listPaths: readonly string[];
+    navigations: () => number;
+  },
+): Promise<LiveProbe | null> {
+  const path = archivedTranscript(devDataDir(), sessionId);
+  if (path === null) return null;
+
+  const before = await readTree(page);
+  const height = await page.evaluate(
+    (selector) => document.querySelector(selector)?.getBoundingClientRect().height ?? null,
+    TREE_CANVAS,
+  );
+  if (height === null) return null;
+
+  const detailsBefore = counters.detailPaths.length;
+  const listBefore = counters.listPaths.length;
+  const navigationsBefore = counters.navigations();
+
+  // Registered BEFORE the write, so no window exists in which the append can
+  // outlive the run. Truncating to the pre-append size is a no-op if the append
+  // never happened.
+  const size = statSync(path).size;
+  ctx.onCleanup(async () => {
+    truncateSync(path, size);
+  });
+  appendFileSync(path, liveAppendRecord(sessionId, Date.now()));
+
+  // The canvas growing is the latched fact worth waiting on, and waiting on it
+  // is what makes "without a manual refresh" mechanical: no goto, no reload,
+  // and the assertions below count both.
+  const grew = await page
+    .waitForFunction(
+      ([selector, previous]) => {
+        const tree = document.querySelector(selector);
+        return tree !== null && tree.getBoundingClientRect().height > previous;
+      },
+      [TREE_CANVAS, height] as const,
+      { timeout: LIVE_SETTLE_MS },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+
+  const after = await readTree(page);
+
+  // The shot AC-R2's eye opens has to SHOW the tail, and the newest rows sit
+  // below the fold: `AppShell`'s content pane is `min-h-screen`/`flex-1` with no
+  // `min-h-0`, so the tree's own scroller resolves to auto height and the PAGE
+  // scrolls instead of it. Bringing the last row into view is what puts the
+  // appended turn and the pill in frame. Taken AFTER both readings, and the
+  // scroller itself never moves, so it can disturb no assertion and no state.
+  await page.locator(slot(SELECTORS.spanRow)).last().scrollIntoViewIfNeeded();
+  await shoot('08-live.png');
+
+  return {
+    before: before.totalRows,
+    // A wait that never settled is a tail that never arrived. Reporting the
+    // second reading anyway would let a rounding wobble read as growth.
+    after: grew ? after.totalRows : before.totalRows,
+    navigations: counters.navigations() - navigationsBefore,
+    listResponses: counters.listPaths.length - listBefore,
+    detailResponses: counters.detailPaths.length - detailsBefore,
+  };
+}
+
 /**
  * AC-R1 for task 5.4: the THREAD is read, not merely reached.
  *
@@ -950,7 +1148,7 @@ async function readTree(
   >
 > {
   return page.evaluate(
-    ([traceSlot, spanSlot, estimate]) => {
+    ([traceSlot, spanSlot, estimate, canvas]) => {
       const wrappers = Array.from(document.querySelectorAll('[data-index]'));
       const labels: { index: number; text: string }[] = [];
       let firstIndex: number | null = null;
@@ -972,14 +1170,23 @@ async function readTree(
       }
       labels.sort((a, b) => a.index - b.index);
 
-      const tree = document.querySelector('[data-slot="span-tree"]');
+      const tree = document.querySelector(canvas);
       const totalSize = tree === null ? null : tree.getBoundingClientRect().height;
       let totalRows: number | null = null;
       if (totalSize !== null) {
-        const derived = wrappers.length + Math.round((totalSize - measured) / estimate);
+        // ★ A SHORTFALL UNDER ONE PIXEL PER RENDERED ROW IS ROUNDING, NOT A
+        // FAULT. The virtualizer stores each measured row as a whole number of
+        // pixels while the DOM reports a fractional height, so a list with
+        // EVERY row rendered measures a little taller than its own canvas —
+        // 70 rows measured 3,098.84 against a 3,084 canvas. The count of
+        // unrendered rows cannot be negative, so that remainder is floored at
+        // zero; a larger shortfall is a real inconsistency and still degrades
+        // to `null` rather than reporting a number nobody can stand behind.
+        const remainder = totalSize - measured;
+        const derived = wrappers.length + (remainder > 0 ? Math.round(remainder / estimate) : 0);
         const plausible =
           Number.isInteger(derived) &&
-          derived >= wrappers.length &&
+          remainder > -wrappers.length &&
           (lastIndex === null || derived > lastIndex);
         if (plausible) totalRows = derived;
       }
@@ -992,7 +1199,7 @@ async function readTree(
         totalRows,
       };
     },
-    [slot(SELECTORS.traceRow), slot(SELECTORS.spanRow), ESTIMATED_ROW_PX] as const,
+    [slot(SELECTORS.traceRow), slot(SELECTORS.spanRow), ESTIMATED_ROW_PX, TREE_CANVAS] as const,
   );
 }
 

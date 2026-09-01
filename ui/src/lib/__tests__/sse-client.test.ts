@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { AuthError } from '../api';
 import type { Bootstrap } from '../bootstrap';
 import {
   BACKOFF_BASE_MS,
   BACKOFF_CAP_MS,
+  DATA_EVENTS,
   DEFAULT_WATCHDOG_MS,
   HEARTBEAT_MS,
-  RESUME_PARAM,
   createSseClient,
   type ConnectionState,
   type SseClient,
@@ -107,10 +109,26 @@ function instantSleep(): { delays: number[]; sleepImpl: (ms: number) => Promise<
 const NO_WATCHDOG = Number.POSITIVE_INFINITY;
 
 describe('the SSE client dispatches frames by event name', () => {
-  it('decodes a raw_event payload and hands it to onEvent', async () => {
+  /*
+   * ⭐ THE FALSIFYING TEST FOR THE WHOLE OF TASK 6.2, AND IT IS ONE `Set`.
+   *
+   * The server has published `session_changed` since Task 6.1 merged
+   * (`src/server/live.ts:193`), and the allowlist this file used to carry named
+   * six plan-001 event names, none of them 6.1's — so every frame was dropped at
+   * the `DATA_EVENTS.has` guard and the live feature was green and dead. Revert
+   * that constant and this test reds.
+   */
+  it('decodes a session_changed payload and hands it to onEvent', async () => {
+    const frame = {
+      session_id: 'sess-1',
+      fingerprint: '900:500:2',
+      from_seq: 40,
+      patched: [],
+      rollups: { turn_count: 3 },
+    };
     const { fetchImpl } = scriptedFetch([
       (signal) =>
-        sseResponse([sseFrame('raw_event', '{"seq":3,"span_id":"sp"}', '3')], {
+        sseResponse([sseFrame('session_changed', JSON.stringify(frame))], {
           ...(signal === undefined ? {} : { signal }),
           keepOpen: true,
         }),
@@ -125,9 +143,29 @@ describe('the SSE client dispatches frames by event name', () => {
 
     const running = client.start();
     await tick();
-    expect(events).toEqual([{ event: 'raw_event', data: { seq: 3, span_id: 'sp' }, id: '3' }]);
+    expect(events).toEqual([{ event: 'session_changed', data: frame }]);
     client.close();
     await running;
+  });
+
+  /*
+   * The allowlist is a COPY of a server constant, so something has to red when
+   * the two drift. `ui/` can reach `../src/shared/*` alone and `STREAM_EVENTS`
+   * is a runtime array in a server module, so the pin is over that file's text.
+   */
+  it('mirrors STREAM_EVENTS, minus the heartbeat', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../../../../src/server/stream.ts', import.meta.url)),
+      'utf8',
+    );
+    const literal = /export const STREAM_EVENTS = \[([^\]]*)\]/.exec(source)?.[1];
+    const names = [...(literal ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+
+    // Vacuity guard: a regex that stopped matching would green the compare.
+    expect(names, 'STREAM_EVENTS could not be read out of src/server/stream.ts').toContain(
+      'heartbeat',
+    );
+    expect([...DATA_EVENTS]).toEqual(names.filter((name) => name !== 'heartbeat'));
   });
 
   /*
@@ -174,16 +212,16 @@ describe('the SSE client dispatches frames by event name', () => {
 
     const running = client.start();
     await tick();
-    source().push(sseFrame('raw_event', 'not json at all', '1'));
+    source().push(sseFrame('session_changed', 'not json at all', '1'));
     await tick();
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.message, 'a swallowed parse failure is the bug this pins').toContain(
-      'raw_event',
+      'session_changed',
     );
     expect(client.state.kind, 'one bad payload must not tear down the stream').toBe('open');
 
-    source().push(sseFrame('raw_event', '{"seq":2}', '2'));
+    source().push(sseFrame('session_changed', '{"seq":2}', '2'));
     await tick();
     expect(events).toHaveLength(1);
 
@@ -233,7 +271,8 @@ describe('the SSE client dispatches frames by event name', () => {
 
     const running = client.start();
     await tick();
-    // Task 6.1 must be able to add event names without touching this module.
+    // A name outside STREAM_EVENTS: the allowlist still NARROWS, so a later
+    // task can add one without this module having to guess at it first.
     source().push(sseFrame('something_task_9_invents', '{"a":1}', '4'));
     await tick();
 
@@ -245,73 +284,54 @@ describe('the SSE client dispatches frames by event name', () => {
   });
 });
 
-describe('the SSE client resumes from an opaque cursor', () => {
-  it('tracks the id field, never the payload, and a heartbeat does not clear it', async () => {
-    const { fetchImpl, source } = manualFetch();
-    const client = createSseClient({
-      fetchImpl,
-      bootstrap: BOOTSTRAP,
-      watchdogMs: NO_WATCHDOG,
-    });
-
-    const running = client.start();
-    await tick();
-    expect(client.lastSeq).toBeUndefined();
-
-    source().push(sseFrame('raw_event', '{"seq":5}', '5'));
-    await tick();
-    expect(client.lastSeq).toBe('5');
-
-    // No id line at all — the cursor must survive untouched.
-    source().push(HEARTBEAT_BYTES);
-    await tick();
-    expect(client.lastSeq).toBe('5');
-
-    source().push(sseFrame('raw_event', '{"seq":9}', '9'));
-    await tick();
-    expect(client.lastSeq).toBe('9');
-
-    // A payload whose seq disagrees with the wire must not move the cursor.
-    source().push(sseFrame('raw_event', '{"seq":999}'));
-    await tick();
-    expect(client.lastSeq, 'the cursor comes off the wire, never off the payload').toBe('9');
-
-    client.close();
-    await running;
-  });
-
-  it('replays the last id verbatim on reconnect', async () => {
+/*
+ * ⭐ WHAT THIS BLOCK USED TO BE, AND WHY IT IS NOT THAT ANY MORE.
+ *
+ * Two tests here drove `lastSeq` — the opaque resume cursor read off a frame's
+ * `id:` line and replayed as `?from_seq=` on the next connect. Task 6.2 deleted
+ * the mechanism: hono writes an `id:` line only for a truthy id
+ * (`src/server/stream.ts:112`), and BOTH publish sites pass two arguments while
+ * `beat()` passes none — so no frame Task 6.1 emits carries one, the cursor was
+ * permanently undefined, and the query limb was unreachable in production.
+ * A reconnecting client splices from the `from_seq` in the next frame's PAYLOAD.
+ *
+ * What replaces them is the stronger form: the URL is asserted on the WIRE
+ * across all three ways a connection begins, rather than a constant being
+ * asserted against itself.
+ */
+describe('the stream URL is the bare path, on every attempt', () => {
+  it('sends no query at all across a connect, an EOF reconnect and a watchdog reconnect', async () => {
+    const clock = fakeClock();
     const { calls, fetchImpl } = scriptedFetch([
-      (signal) =>
-        sseResponse(
-          [sseFrame('raw_event', '{"a":1}', '7'), sseFrame('raw_event', '{"a":2}', '8')],
-          signal === undefined ? {} : { signal },
-        ),
+      // 1. connect, then a clean end of body -> reconnect.
+      (signal) => sseResponse([], signal === undefined ? {} : { signal }),
+      // 2. reconnected, then silent forever -> the watchdog aborts it.
       (signal) => sseResponse([], { ...(signal === undefined ? {} : { signal }), keepOpen: true }),
     ]);
-    const { delays, sleepImpl } = instantSleep();
     const client = createSseClient({
       fetchImpl,
       bootstrap: BOOTSTRAP,
-      sleepImpl,
-      watchdogMs: NO_WATCHDOG,
-      random: () => 0.5,
+      sleepImpl: clock.sleep,
+      now: clock.now,
+      random: () => 0,
     });
 
     const running = client.start();
-    await tick();
+    await clock.flush();
+    // The backoff is a sleep on the same injected clock, so time has to move
+    // before the reconnect is issued — even at a zero-jitter delay.
+    await clock.advance(1);
+    expect(calls.length, 'the EOF must have produced a second attempt').toBe(2);
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.url).toBe('/api/stream');
-    expect(calls[1]?.url).toBe(`/api/stream?${RESUME_PARAM}=8`);
-    expect(
-      new URL(calls[1]?.url ?? '', 'https://example.invalid').searchParams.get(RESUME_PARAM),
-      'the cursor is a string replayed as-is',
-    ).toBe('8');
-    // Today's seq is global and Task 6.1's is per-session. Any arithmetic here
-    // is correct now and silently wrong then; gap handling stays server-side.
-    expect(calls[1]?.url, 'the cursor must never be incremented').not.toContain('=9');
-    expect(delays).toHaveLength(1);
+    await clock.advance(DEFAULT_WATCHDOG_MS);
+    await clock.advance(1);
+    expect(calls.length, 'the watchdog must have produced a third').toBe(3);
+
+    for (const call of calls) {
+      expect(call.url, 'no resume cursor, ever — the frame payload carries it now').toBe(
+        '/api/stream',
+      );
+    }
 
     client.close();
     await running;
@@ -396,7 +416,9 @@ describe('a body that ends reconnects; only close() closes', () => {
     ).toBe(false);
     expect(delays).toHaveLength(1);
     expect(calls).toHaveLength(2);
-    expect(calls[1]?.url).toContain(`${RESUME_PARAM}=2`);
+    // The reconnect asks for the same bare path. There is no cursor to replay:
+    // the next `session_changed` frame carries `from_seq` in its payload.
+    expect(calls[1]?.url).toBe('/api/stream');
 
     client.close();
     await running;
@@ -710,36 +732,41 @@ describe('the watchdog covers silent staleness, and only that', () => {
     await running;
   });
 
-  it.each(['heartbeat', 'raw_event'] as const)('a %s frame resets the deadline', async (event) => {
-    const clock = fakeClock();
-    const { calls, fetchImpl, source } = manualFetch();
-    const client = createSseClient({
-      fetchImpl,
-      bootstrap: BOOTSTRAP,
-      sleepImpl: clock.sleep,
-      now: clock.now,
-      random: () => 0.5,
-      watchdogMs: 1_000,
-    });
+  it.each(['heartbeat', 'session_changed'] as const)(
+    'a %s frame resets the deadline',
+    async (event) => {
+      const clock = fakeClock();
+      const { calls, fetchImpl, source } = manualFetch();
+      const client = createSseClient({
+        fetchImpl,
+        bootstrap: BOOTSTRAP,
+        sleepImpl: clock.sleep,
+        now: clock.now,
+        random: () => 0.5,
+        watchdogMs: 1_000,
+      });
 
-    const running = client.start();
-    await clock.flush();
-    await clock.advance(900);
-    expect(client.state.kind).toBe('open');
+      const running = client.start();
+      await clock.flush();
+      await clock.advance(900);
+      expect(client.state.kind).toBe('open');
 
-    source().push(event === 'heartbeat' ? HEARTBEAT_BYTES : sseFrame('raw_event', '{"a":1}', '1'));
-    await clock.flush();
+      source().push(
+        event === 'heartbeat' ? HEARTBEAT_BYTES : sseFrame('session_changed', '{"a":1}'),
+      );
+      await clock.flush();
 
-    // Without the reset the deadline is still 1000 and this would abort.
-    await clock.advance(900);
-    expect(client.state.kind).toBe('open');
-    expect(calls[0]?.signal?.aborted).toBe(false);
+      // Without the reset the deadline is still 1000 and this would abort.
+      await clock.advance(900);
+      expect(client.state.kind).toBe('open');
+      expect(calls[0]?.signal?.aborted).toBe(false);
 
-    // With it, the deadline is now 1800 and silence past that still fires.
-    await clock.advance(200);
-    expect(client.state.kind).toBe('reconnecting');
+      // With it, the deadline is now 1800 and silence past that still fires.
+      await clock.advance(200);
+      expect(client.state.kind).toBe('reconnecting');
 
-    client.close();
-    await running;
-  });
+      client.close();
+      await running;
+    },
+  );
 });

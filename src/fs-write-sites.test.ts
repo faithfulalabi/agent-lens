@@ -207,7 +207,7 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'render-gate/index.ts#1',
     callee: 'mkdirSync',
-    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root; the gate only READS the archive, through the corpus sweep",
+    why: "creates <repoRoot>/.render-gate/<task> for the gate's own artifacts. The only variable component is the --task id, which parseArgv rejects when it holds a path separator or is a bare `..` (index.ts). Scope: lexical — recursive mkdir traverses existing symlinked components, with no containment assert around it, unlike every archive-side caller of archive/paths.ts#1. Never a transcript root. CORRECTED WHEN #5 AND #6 LANDED: this entry used to say 'the gate only READS the archive, through the corpus sweep', and that stopped being true — #5 and #6 below append one record to an archived transcript and revert it, so the live tail has bytes to carry. Still never a transcript root: the append targets <dataDir>/archive, and the read-only guarantee over ~/.claude/projects is untouched",
   },
   {
     key: 'render-gate/index.ts#2',
@@ -223,6 +223,16 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     key: 'render-gate/index.ts#4',
     callee: 'writeFileSync',
     why: 'writes the index.html contact sheet into the directory from #1; fixed name',
+  },
+  {
+    key: 'render-gate/index.ts#5',
+    callee: 'truncateSync',
+    why: "REVERTS #6, back to the byte size read immediately before it. Registered on the drive's cleanup stack BEFORE the append, so no window exists in which the appended record can outlive the run, and truncating to the pre-append size is a no-op when the append never happened. Same path as #6 and the same scope. It shortens a file it just lengthened by a known amount and never removes bytes it did not add; it does not follow a symlink of its own beyond what #6 already resolved",
+  },
+  {
+    key: 'render-gate/index.ts#6',
+    callee: 'appendFileSync',
+    why: "appends ONE human-prompt JSONL record to <dataDir>/archive/<slug>/<id>.jsonl, so the gate's live-tail assertion has bytes to carry — nothing in the boot path mirrors new ones, since archiveOnce's only production caller is the CLI. NOT a transcript root: the path is found by walking <dataDir>/archive for the id the drive already opened in the browser, and <dataDir> is AGENT_LENS_DEV_DIR or <repoRoot>/.agent-lens-dev. Scope: FINAL COMPONENT ONLY, and weaker than the archive writers next door — appendFileSync takes no O_NOFOLLOW, so a symlink planted at the leaf would be written THROUGH. Tolerated because the gate is a developer tool over a throwaway data dir it also created, never a packaged path; the archive mirror's own guarantee over ~/.claude/projects is untouched, and archive/paths.ts#2 is the site that needed the flag. #5 reverts it",
   },
   {
     key: 'server/config.ts#1',

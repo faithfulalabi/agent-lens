@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { createApiClient, type ApiClient } from '@/lib/api';
+import { overlayData, patchListRow, type LiveBus, type Overlay } from '@/lib/live';
 import type { Router } from '@/lib/router';
 import { defaultRouter } from '@/lib/use-route';
 import { useAsync } from '@/lib/use-async';
@@ -12,6 +13,7 @@ import {
   projectsIn,
   selectRows,
   volumeBuckets,
+  type SessionListData,
   type SortColumn,
   type SortDirection,
   type TimeRange,
@@ -60,9 +62,11 @@ const BUCKET_COUNT = 40;
 export interface SessionsProps {
   router?: Router;
   api?: ApiClient;
+  /** The app-wide frame bus. Absent means this screen does not tail. */
+  bus?: LiveBus;
 }
 
-export function Sessions({ router = defaultRouter(), api }: SessionsProps = {}) {
+export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps = {}) {
   const [range, setRange] = useState<TimeRange>('3d');
   const [project, setProject] = useState<string | undefined>(undefined);
   const [sort, setSort] = useState<SortColumn>('last_activity_at');
@@ -76,16 +80,56 @@ export function Sessions({ router = defaultRouter(), api }: SessionsProps = {}) 
    *
    * Reading `Date.now()` during render would let two rows disagree about when
    * "now" is, and would move the range bounds under an in-flight request. Live
-   * elapsed times therefore hold still until something reloads, which is
-   * correct for this task — Phase 6.2 owns the ticking.
+   * elapsed times therefore hold still until something reloads; a live frame
+   * patches the row it names, in place, and reads its own clock to do it.
    */
   const [now] = useState(() => Date.now());
 
-  const state = useAsync(`${range}|${project ?? ''}`, (signal) =>
+  const listKey = `${range}|${project ?? ''}`;
+  const state = useAsync(listKey, (signal) =>
     loadSessionList(client, { range, now, project, signal }),
   );
 
-  const data = state.kind === 'ok' ? state.value : null;
+  const loaded = state.kind === 'ok' ? state.value : null;
+
+  /*
+   * The patched page, held beside the loaded one and consumed through
+   * `overlayData` — KEYED, never a bare `??`.
+   *
+   * Changing the range or the project is this screen's primary gesture and it
+   * changes the load key. An unkeyed overlay would pin the whole screen to the
+   * snapshot the first frame landed on, because `volumeBuckets`, `projectsIn`,
+   * `emptyStateOf` and the rows all read this one value.
+   */
+  const [overlay, setOverlay] = useState<Overlay<SessionListData> | null>(null);
+  const data = overlayData(overlay, listKey, loaded);
+
+  /*
+   * ONE SUBSCRIPTION, AND NO SECOND REQUEST — EVER.
+   *
+   * `patchListRow` takes no `ApiClient`, so a fetch is unrepresentable inside
+   * it, and the frame carries every rollup the row needs. An id this page never
+   * loaded returns the SAME object: inserting a row would make `truncated`,
+   * `outsideRangeCount` and the project narrowing describe a page the server
+   * never served.
+   */
+  const listRef = useRef<{ data: SessionListData | null; base: SessionListData | null }>({
+    data: null,
+    base: null,
+  });
+  listRef.current = { data, base: loaded };
+
+  useEffect(() => {
+    if (bus === undefined) return;
+    return bus.subscribe((frame) => {
+      if (frame.event !== 'session_changed') return;
+      const { data: current, base } = listRef.current;
+      if (current === null || base === null) return;
+      const next = patchListRow(current, frame.data.session_id, frame.data.rollups, Date.now());
+      if (next === current) return;
+      setOverlay({ key: listKey, base, data: next });
+    });
+  }, [bus, listKey]);
   const rows = useMemo(
     () => (data === null ? [] : selectRows(data, { project, sort, direction })),
     [data, project, sort, direction],
