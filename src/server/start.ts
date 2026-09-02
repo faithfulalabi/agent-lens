@@ -24,6 +24,7 @@ import { buildApiApp } from './app.js';
 import { clearConfig, writeConfig } from './config.js';
 import { startLiveTick, type LiveTick } from './live.js';
 import { createStreamHub } from './stream.js';
+import { createWarmQueue } from './warm.js';
 
 /** Options for `startServer`. */
 export interface StartOptions {
@@ -126,6 +127,13 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   // `/api/stream` and still has to beat on it.
   const hub = createStreamHub();
 
+  // UNCONDITIONAL for the identical reason: `bootTestServer` defaults
+  // `sweepIntervalMs` to 0 and `dev/server.ts:102` forwards it, so a queue built
+  // inside the sweep gate below would be undefined on the exact boot every
+  // socket-level test uses — and `POST /api/warm` would 202 while warming
+  // nothing.
+  const warm = createWarmQueue({ db, env: createProjectionEnv(reader), hub });
+
   const app = buildApiApp({
     db,
     token,
@@ -134,6 +142,7 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     env: createProjectionEnv(reader),
     sweep,
     hub,
+    warm,
     resolveContent: createContentResolver(
       (id) => readEventArchivePath(db, id)?.archive_path,
       createContentEnv(reader),
@@ -225,6 +234,10 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
       // fires after the handle is closed throws where no caller can catch it.
       // `tick` is undefined on a `sweepIntervalMs: 0` boot; the hub never is.
       tick?.close();
+      // Synchronous, and before `opened.close()` below: the drain's pending
+      // `setImmediate` would otherwise wake on a closed database and throw where
+      // no caller can catch it.
+      warm.close();
       sweep.close();
 
       // ★ THE CEILING `closeAllConnections` STOOD IN FOR IS DISCHARGED HERE.

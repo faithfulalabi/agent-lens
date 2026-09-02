@@ -19,6 +19,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Hono } from 'hono';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
 import { createStreamHub } from '../stream.js';
+import type { WarmQueue } from '../warm.js';
+
 import {
   SESSION_ID,
   fileEnv,
@@ -34,6 +36,15 @@ import {
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
 import { ensureProjectedFold, fingerprint, foldArchive } from '../../db/freshness.js';
+
+/**
+ * A warm queue that starts nothing. This file never POSTs `/api/warm` through
+ * the middleware, so a real queue would only race `db.close()` in `afterEach`.
+ */
+function stubWarm(): WarmQueue {
+  return { start: () => 0, close: () => undefined };
+}
+
 
 // The real implementation still runs; only the call list and the override are
 // new. `{ spy: true }` is what lets the control neuter one function and restore.
@@ -63,6 +74,7 @@ beforeEach(() => {
     token: TOKEN,
     uiDir: join(sandbox.root, 'no-such-ui'),
     hub: createStreamHub(),
+    warm: stubWarm(),
   });
 });
 

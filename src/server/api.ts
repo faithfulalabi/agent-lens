@@ -41,6 +41,7 @@ import {
 } from '../db/read.js';
 import { deleteSessionProjection, projectSession, type ProjectionEnv } from '../db/write.js';
 import type { StreamHub } from './stream.js';
+import type { WarmQueue } from './warm.js';
 
 /** Wiring the ten routes need. */
 export interface ApiDeps {
@@ -58,6 +59,12 @@ export interface ApiDeps {
    * carrying frames.
    */
   hub: StreamHub;
+  /**
+   * ★ REQUIRED, for the same reason `env` and `hub` are. Route 8 is the queue's
+   * only trigger, and a `/api/warm` the app can boot without is a 202 that
+   * warms nothing.
+   */
+  warm: WarmQueue;
   /** The corpus sweep handle. `files_indexed` lives only in its in-memory report. */
   sweep?: CorpusSweep;
   /** Task 4.4's content resolver. Absent -> the `inline` limb only. */
@@ -579,10 +586,24 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
     });
   });
 
-  // 8. Warm the whole corpus. 202 + the count, then Task 6.1 streams
-  //    `warm_progress` frames over `/api/stream` (spec:377-380). The background
-  //    queue is 6.1's too, so this reports the work rather than starting it.
-  app.post('/api/warm', (c) => c.json({ queued: countUnprojected(db) }, 202));
+  // 8. Warm the whole corpus (spec:391-394). 202 + the count, and the queue
+  //    behind it emits `warm_progress` over `/api/stream` until `done == total`.
+  //
+  //    ★ THE ATTRIBUTION HERE WAS STALE AND IS CORRECTED. This read "Task 6.1
+  //    streams the frames… the background queue is 6.1's too" — 6.1 disclaimed
+  //    both in writing (`stream.ts:36-42`) and shipped the name only. Task 7.4
+  //    owns the queue, and `warm.ts` is it.
+  //
+  //    `start()` snapshots synchronously, before its first yield, so `queued` IS
+  //    the run's `total` for the first POST rather than a second number that
+  //    could disagree. A POST while a run is in flight starts nothing and
+  //    reports the honest remaining count, so it cannot double-count.
+  //
+  //    `queued` is a SUPERSET of `/api/search`'s `unprojected_count`: it also
+  //    counts version-stale rows, which are `projection_state = 'ready'` and so
+  //    invisible to `countUnprojected` — the case nothing else re-warms. The
+  //    body keeps exactly one key; `api-routes.test.ts:588` is set-equality.
+  app.post('/api/warm', (c) => c.json({ queued: deps.warm.start() }, 202));
 
   // 9. THE DURABILITY ALARM (spec:382-392).
   app.get('/api/drift', (c) =>
