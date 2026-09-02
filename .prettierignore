@@ -20,3 +20,5 @@ dist/
 coverage/
 ui/dist/
 package-lock.json
+test-results/
+playwright-report/

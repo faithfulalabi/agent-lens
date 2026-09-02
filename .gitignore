@@ -30,6 +30,11 @@ coverage/
 ui/dist/
 *.local
 
+# `npm run smoke:pack`'s Playwright artifacts: traces and screenshots of a
+# throwaway jail, regenerated on every run.
+test-results/
+playwright-report/
+
 # Editors
 .idea/
 .vscode/

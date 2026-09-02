@@ -21,10 +21,12 @@
     "render-gate": "tsx src/render-gate/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",
-    "build": "tsc -p tsconfig.node.json && npm --prefix ui run build",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && npm --prefix ui run build",
+    "smoke:pack": "node --import tsx scripts/pack-smoke.mjs",
+    "smoke:ui": "playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "postinstall": "npm --prefix ui install"
+    "prepare": "npm --prefix ui install"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.11",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.1.0",
