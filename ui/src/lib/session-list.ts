@@ -472,7 +472,7 @@ export function emptyStateCopy(state: EmptyStateShown): EmptyStateCopy {
   if (state.kind === 'never_captured') {
     return {
       sentence: 'No sessions yet — start a Claude Code session and it will appear here live',
-      hint: 'Not seeing one? agent-lens doctor reports whether capture is installed.',
+      hint: 'Not seeing one? agent-lens doctor reports what the archive holds.',
     };
   }
   if (state.kind === 'outside_range') {
