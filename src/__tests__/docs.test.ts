@@ -25,6 +25,7 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDoctorReport } from '../archive/index.js';
 import { COVERAGE_GAP_STATEMENT, DURABILITY_STATEMENT } from '../cli/commands/doctor.js';
@@ -35,7 +36,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const PUBLIC_DOCS = ['README.md', 'SECURITY.md', 'CONTRIBUTING.md'] as const;
 
 function doc(name: string): string {
-  return readFileSync(new URL(`../../${name}`, import.meta.url), 'utf8');
+  return readFileSync(join(REPO_ROOT, name), 'utf8');
 }
 
 /**
@@ -213,9 +214,7 @@ describe('the tracer-bullet ruling is a fact on disk, not a promise (Test 7)', (
   });
 
   it('vitest no longer includes a glob that matches nothing', () => {
-    expect(readFileSync(new URL('../../vitest.config.ts', import.meta.url), 'utf8')).not.toContain(
-      'experiments/',
-    );
+    expect(doc('vitest.config.ts')).not.toContain('experiments/');
   });
 });
 
