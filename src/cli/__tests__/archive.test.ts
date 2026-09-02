@@ -403,6 +403,46 @@ describe('widening `Command.run` leaves every other command at 0', () => {
   });
 });
 
+describe('the ship-phase commands stay inside the same code namespace', () => {
+  // Extends the never-2 pin from prose to the four commands that arrived with
+  // `rebuild`/`warm`/`prune`, in a SUCCESS and a FAILURE shape each — a rule
+  // asserted only over green paths says nothing about the paths that matter.
+  //
+  // `runCommand` closes stdin, so the `prune` rows arrive at EOF and decline.
+  // Every row carries `--transcriptRoot` as well as the env var: `prune` reads
+  // the transcript tree to resolve a target, and no test may reach a real one.
+  it.each([
+    ['rebuild, nothing to drop', EXIT_OK, (s: Sandbox) => ['rebuild', `--dataDir=${s.dataDir}`]],
+    [
+      'rebuild, unknown session',
+      EXIT_INCOMPLETE,
+      (s: Sandbox) => ['rebuild', 'no-such-session', `--dataDir=${s.dataDir}`],
+    ],
+    ['rebuild, flag with no value', EXIT_INCOMPLETE, () => ['rebuild', '--dataDir']],
+    [
+      'warm, an empty corpus',
+      EXIT_OK,
+      (s: Sandbox) => ['warm', `--dataDir=${s.dataDir}`, `--transcriptRoot=${s.sourceRoot}`],
+    ],
+    ['warm, flag with no value', EXIT_INCOMPLETE, () => ['warm', '--dataDir']],
+    [
+      'prune, declined at EOF',
+      EXIT_OK,
+      (s: Sandbox) => ['prune', `--dataDir=${s.dataDir}`, `--transcriptRoot=${s.sourceRoot}`],
+    ],
+    ['prune, an option it does not recognise', EXIT_INCOMPLETE, () => ['prune', '--older-than=30']],
+    ['doctor', EXIT_OK, (s: Sandbox) => ['doctor', `--dataDir=${s.dataDir}`]],
+  ])('%s exits %i, never 2', async (_name, expected, argsOf) => {
+    const s = sb();
+    mkdirSync(s.dataDir, { recursive: true });
+
+    const status = await runCommand(argsOf(s), s.dataDir);
+
+    expect(status).toBe(expected);
+    expect(status).not.toBe(2); // exit 2 blocks a Claude Code session
+  });
+});
+
 describe('the pass outcomes the contract promises stay at 0 (AC4)', () => {
   it('a diverged pass exits 0 and reports no error', async () => {
     const s = sb();

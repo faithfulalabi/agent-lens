@@ -5,7 +5,7 @@
 
 import { afterEach, describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Through the public barrel, the way anything outside `src/archive/` reaches it.
 import { archiveOnce, buildDoctorReport, SEALED_LEGACY_REASON } from '../../archive/index.js';
@@ -14,6 +14,7 @@ import {
   doctor,
   DURABILITY_STATEMENT,
   formatDoctorReport,
+  readCacheStats,
 } from '../commands/doctor.js';
 import {
   archivePath,
@@ -31,6 +32,9 @@ import {
   writeSource,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { sessionRecords, writeSession } from '../../corpus/__tests__/fixtures.js';
+import { createCorpusSweep } from '../../corpus/watch.js';
+import { openDb } from '../../db/open.js';
 
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
@@ -263,6 +267,141 @@ describe('the rendered report and --json carry the same facts', () => {
     expect(output.split('\n')).toHaveLength(1);
     expect(() => JSON.parse(output)).not.toThrow();
     expect(output).not.toContain(COVERAGE_GAP_STATEMENT);
+  });
+});
+
+/* ------------------------------------------------------- the cache block --- */
+
+const CACHE_ONE = 'aaaaaaaa-1111-4111-8111-dc0000000001';
+const CACHE_TWO = 'aaaaaaaa-1111-4111-8111-dc0000000002';
+
+/** Two archived sessions, indexed AND projected the way a boot sweep leaves them. */
+function seedProjectedCache(s: Sandbox): void {
+  writeSession(
+    s,
+    CACHE_ONE,
+    sessionRecords('c1', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:30.000Z'),
+  );
+  writeSession(
+    s,
+    CACHE_TWO,
+    sessionRecords('c2', '2026-08-14T09:01:00.000Z', '2026-08-14T09:01:30.000Z'),
+  );
+  const opened = openDb({ dataDir: s.dataDir });
+  try {
+    createCorpusSweep({ db: opened.db, dataDir: s.dataDir, transcriptRoot: s.sourceRoot }).tick();
+  } finally {
+    opened.close();
+  }
+}
+
+describe('AC2 — doctor reports the cache beside the archive', () => {
+  it('prints the path, bytes, indexed vs projected, both versions and the drift census', async () => {
+    const s = sb();
+    seedProjectedCache(s);
+
+    const output = await runDoctor(argsFor(s));
+
+    expect(output).toContain(`cache: ${join(s.dataDir, 'cache.db')}`);
+    expect(output).toMatch(/^ {2}\d+ bytes$/m);
+    expect(output).toContain('2 sessions indexed, 2 projected');
+    expect(output).toMatch(/schema_version \d+, projector_version \d+/);
+    // The census counts CLEAN rows too, which is what makes "0 drifting of 2 on
+    // 2.1.212" a different statement from a broken reader returning nothing.
+    expect(output).toContain('drift by harness version');
+    expect(output).toContain('2.1.212: 2 projected, 0 drifting');
+  });
+
+  it('leaves the two closing statements last, after the cache block', async () => {
+    // The property `commands/doctor.ts:20-24` states: a refactor that demotes
+    // them must red. A section appended below them would do exactly that.
+    const s = sb();
+    seedProjectedCache(s);
+
+    const lines = (await runDoctor(argsFor(s))).split('\n');
+
+    expect(lines.at(-2)).toBe(COVERAGE_GAP_STATEMENT);
+    expect(lines.at(-1)).toBe(DURABILITY_STATEMENT);
+    expect(lines.findIndex((l) => l.startsWith('cache: '))).toBeLessThan(lines.length - 2);
+  });
+
+  it('--json carries the same cache numbers the text form renders', async () => {
+    const s = sb();
+    seedProjectedCache(s);
+
+    const json = JSON.parse(await runDoctor(argsFor(s, ['--json']))) as {
+      cache: ReturnType<typeof readCacheStats>;
+    };
+    const text = await runDoctor(argsFor(s));
+
+    expect(json.cache.state).toBe('ready');
+    const stats = (json.cache as { stats: { db_bytes: number; sessions_indexed: number } }).stats;
+    expect(text).toContain(`  ${stats.db_bytes} bytes`);
+    expect(text).toContain(`${stats.sessions_indexed} sessions indexed`);
+  });
+
+  it('no cache yet — one honest line, and doctor still returns normally', async () => {
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(4));
+
+    const output = await runDoctor(argsFor(s));
+
+    expect(output).toContain('not created yet');
+    expect(output).toContain('`agent-lens start` builds it');
+    // The report must not manufacture the evidence it is reporting on.
+    expect(existsSync(join(s.dataDir, 'cache.db'))).toBe(false);
+    expect(existsSync(s.dataDir)).toBe(false);
+  });
+
+  it('a cache held by a live writer still reports, because the handle is read-only', async () => {
+    // MEASURED on node:sqlite/Node 26: a read-only connection reads committed
+    // rows while another process holds the WAL handle. It is why the cache block
+    // does not have to degrade whenever the server happens to be running.
+    const s = sb();
+    seedProjectedCache(s);
+    const holder = openDb({ dataDir: s.dataDir });
+    try {
+      const output = await runDoctor(argsFor(s));
+
+      expect(output).toContain('2 sessions indexed, 2 projected');
+      expect(output).toContain(DURABILITY_STATEMENT);
+    } finally {
+      holder.close();
+    }
+  });
+
+  it('a torn cache degrades to one line and still says nothing was lost', async () => {
+    const s = sb();
+    mkdirSync(s.dataDir, { recursive: true });
+    writeFileSync(join(s.dataDir, 'cache.db'), 'this is not a database');
+
+    const output = await runDoctor(argsFor(s));
+
+    expect(output).toContain('stats unavailable');
+    expect(output).toContain('`agent-lens rebuild` recreates the whole file');
+    expect(output).toContain(DURABILITY_STATEMENT);
+  });
+
+  it('reading a closed cache adds SQLite’s own two sidecars and nothing else', async () => {
+    // The honest qualification on "doctor writes nothing": a read-only handle on
+    // a WAL database whose -shm was checkpointed away RECREATES cache.db-wal and
+    // cache.db-shm. Measured, and pinned here rather than left in a comment —
+    // two empty sidecars of SQLite's own, beside a file that already exists.
+    const s = sb();
+    seedProjectedCache(s);
+    const before = snapshotTreeSafe(s.dataDir);
+    const cacheBefore = stampFile(join(s.dataDir, 'cache.db'));
+
+    await runDoctor(argsFor(s, ['--verify']));
+
+    const after = snapshotTreeSafe(s.dataDir);
+    const added = [...after.keys()].filter((rel) => !before.has(rel)).sort();
+    expect(added).toEqual(['cache.db-shm', 'cache.db-wal']);
+    // The database itself, and the archive it reports on, are untouched.
+    expect(stampFile(join(s.dataDir, 'cache.db'))).toEqual(cacheBefore);
+    for (const [rel, entry] of before) {
+      if (rel.startsWith('archive/')) expect(after.get(rel), rel).toEqual(entry);
+    }
   });
 });
 

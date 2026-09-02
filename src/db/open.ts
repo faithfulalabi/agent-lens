@@ -12,7 +12,7 @@
 // once. Two writers with busy_timeout=0 starve each other on 311-372 of 800
 // transactions; with 5000 they starve on none.
 
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { acquireLock, type Lock, type LockIdentity } from '../archive/lock.js';
@@ -89,6 +89,34 @@ function connect(path: string): DatabaseSync {
 function shutdown(db: DatabaseSync | undefined, lock: Lock): void {
   if (db?.isOpen === true) db.close();
   lock.release();
+}
+
+/**
+ * A reading handle on an EXISTING cache.db: no lock, no pragmas, no schema
+ * check. `undefined` when the file is absent, so a reporting caller can say "no
+ * cache yet" instead of manufacturing the evidence it is reporting on.
+ *
+ * NO `applyConnectionPragmas`: `journal_mode = WAL` is a write, and this handle
+ * must not take the exclusive step a running server would then wait on.
+ *
+ * MEASURED on node:sqlite/Node 26, both arms:
+ *   - With a writer live in another process — WAL handle held, an IMMEDIATE
+ *     transaction open — a read-only connection reads committed rows fine, and
+ *     an INSERT through it fails `attempt to write a readonly database`.
+ *   - With NO writer and the `-shm` already checkpointed away, SQLite RECREATES
+ *     `cache.db-wal` and `cache.db-shm` beside the database to read it. Two
+ *     empty sidecars of SQLite's own, next to a file that already exists — never
+ *     the database itself, which is why the `existsSync` above is the guard that
+ *     matters. Stated rather than hidden: the caller's own docs say it writes
+ *     nothing, and this is the one qualification on that.
+ *
+ * Throws whatever the constructor throws (`file is not a database` on a torn
+ * file); the caller decides whether that is fatal.
+ */
+export function openReadOnlyDb(dataDir: string): DatabaseSync | undefined {
+  const path = join(dataDir, CACHE_DB_FILE);
+  if (!existsSync(path)) return undefined;
+  return new DatabaseSync(path, { readOnly: true });
 }
 
 /**

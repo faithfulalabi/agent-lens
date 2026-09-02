@@ -54,3 +54,13 @@ export {
   resolveTranscriptRoot,
   canonicalizeTranscriptPath,
 } from './paths.js';
+// The two containment guards, published for `agent-lens prune` — the one command
+// that deletes. `assertNotUnderRoot` is the load-bearing half: it is what stands
+// between a destructive command and `~/.claude/projects`. Both labels ship with
+// them so a caller cannot invent a third name for the same root.
+export {
+  assertNotUnderRoot,
+  assertUnderRoot,
+  DATA_DIR_LABEL,
+  TRANSCRIPT_ROOT_LABEL,
+} from './paths.js';
