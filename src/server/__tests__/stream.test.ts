@@ -24,6 +24,16 @@ import { fileEnv, openCache } from '../../db/__tests__/fixtures/index.js';
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
 import { createStreamHub, HEARTBEAT_MS, STREAM_EVENTS, type StreamHub } from '../stream.js';
+import type { WarmQueue } from '../warm.js';
+
+/**
+ * A warm queue that starts nothing. This file never POSTs `/api/warm` through
+ * the middleware, so a real queue would only race `db.close()` in `afterEach`.
+ */
+function stubWarm(): WarmQueue {
+  return { start: () => 0, close: () => undefined };
+}
+
 
 const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -139,6 +149,7 @@ describe('AC1 — the three protocol rules, on the raw wire bytes', () => {
         token: 'tok',
         uiDir: join(SERVER_DIR, 'no-such-ui'),
         hub: failing,
+        warm: stubWarm(),
       });
       const res = await app.request('/api/stream', {
         headers: { Host: 'localhost', [TOKEN_HEADER]: 'tok' },

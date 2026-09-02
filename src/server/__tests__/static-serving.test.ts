@@ -27,6 +27,8 @@ import { openCache } from '../../db/__tests__/fixtures/index.js';
 import { fileEnv } from '../../db/__tests__/fixtures/index.js';
 import { BOOTSTRAP_MARKER, resolveUiDir } from '../static-ui.js';
 import { createStreamHub } from '../stream.js';
+import type { WarmQueue } from '../warm.js';
+
 import {
   bootTestServer,
   cleanupDir,
@@ -35,6 +37,15 @@ import {
   type BootOptions,
   type TestServer,
 } from './helpers.js';
+
+/**
+ * A warm queue that starts nothing. This file never POSTs `/api/warm` through
+ * the middleware, so a real queue would only race `db.close()` in `afterEach`.
+ */
+function stubWarm(): WarmQueue {
+  return { start: () => 0, close: () => undefined };
+}
+
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -300,6 +311,7 @@ describe('AC2 — the SPA fallback is the last route in the app', () => {
         token: 'tok',
         env: fileEnv(),
         hub: createStreamHub(),
+        warm: stubWarm(),
         uiDir: makeFakeUiDist(join(tempDir('ui'), 'dist')),
       });
       app.get('/later-specific', (c) => c.text('LATE SPECIFIC'));

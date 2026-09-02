@@ -13,6 +13,17 @@ import { hrefFor, matchRoute, type Route } from '../route-match';
  * and `/showcase`; everything else is `not_found`. Deep-link COLD-LOAD and
  * back/forward behaviour are Task 5.5's acceptance criteria — this task ships
  * the table and the seam, and says so rather than claiming them.
+ *
+ * ★ TASK 7.2 ADDED `search` AND `event`, UNDER AN EXPLICIT FOUNDER RULING.
+ * `app-routing.test.tsx:35` puts this module AND this file under a standing
+ * do-not-touch rule, and `route-match.ts:42` reserved query state for 7.2
+ * "without touching this table". That reservation is unusable — `hrefFor` emits
+ * no query and `router.ts`'s `sync()` compares the pathname alone — and task
+ * 5.4's founder ruling 6 had already deferred a real deep link here by name.
+ * The rule was ruled to mean "this file has one concern and its purity is
+ * scanned whole", not "this file is frozen". What the rule MECHANICALLY
+ * enforces is the scan at the bottom of this file, and both arms pass it
+ * unchanged.
  */
 
 const MODULE_PATH = fileURLToPath(new URL('../route-match.ts', import.meta.url));
@@ -47,6 +58,28 @@ describe('matchRoute covers every locked route plus the miss', () => {
       path: '/session/abc/trace/3/extra',
       expected: { name: 'not_found', path: '/session/abc/trace/3/extra' },
     },
+    // Task 7.2's two arms. `/search` is the whole projected corpus;
+    // `/search/session/:id` scopes to one session.
+    { path: '/search', expected: { name: 'search' } },
+    { path: '/search/', expected: { name: 'search' } },
+    { path: '/search/session/abc', expected: { name: 'search', sessionId: 'abc' } },
+    { path: '/search/session/', expected: { name: 'not_found', path: '/search/session/' } },
+    { path: '/search/nope', expected: { name: 'not_found', path: '/search/nope' } },
+    // An EVENT seq, which the `trace` arm above cannot express: `turnSeq`
+    // numbers turns and a hit's `seq` numbers events.
+    { path: '/session/abc/event/42', expected: { name: 'event', sessionId: 'abc', seq: 42 } },
+    { path: '/session/abc/event/0', expected: { name: 'event', sessionId: 'abc', seq: 0 } },
+    // The same digits-only rule the read API and the `trace` arm both use.
+    { path: '/session/abc/event/x', expected: { name: 'not_found', path: '/session/abc/event/x' } },
+    {
+      path: '/session/abc/event/-1',
+      expected: { name: 'not_found', path: '/session/abc/event/-1' },
+    },
+    {
+      path: '/session/abc/event/1.5',
+      expected: { name: 'not_found', path: '/session/abc/event/1.5' },
+    },
+    { path: '/session/abc/event', expected: { name: 'not_found', path: '/session/abc/event' } },
   ])('$path', ({ path, expected }) => {
     expect(matchRoute(path)).toEqual(expected);
   });
@@ -72,6 +105,12 @@ describe('hrefFor inverts matchRoute', () => {
       route: { name: 'trace', sessionId: 'abc', turnSeq: 0 } as Route,
       href: '/session/abc/trace/0',
     },
+    { route: { name: 'search' } as Route, href: '/search' },
+    { route: { name: 'search', sessionId: 'abc' } as Route, href: '/search/session/abc' },
+    {
+      route: { name: 'event', sessionId: 'abc', seq: 42 } as Route,
+      href: '/session/abc/event/42',
+    },
   ])('$href', ({ route, href }) => {
     expect(hrefFor(route)).toBe(href);
   });
@@ -82,18 +121,31 @@ describe('hrefFor inverts matchRoute', () => {
     // encoded, which is the failure this property exists to catch.
     const sessionId = fc.string({ minLength: 1 }).filter((value) => value.trim() !== '');
     fc.assert(
-      fc.property(sessionId, fc.nat({ max: 100_000 }), (id, turnSeq) => {
+      fc.property(sessionId, fc.nat({ max: 100_000 }), (id, seq) => {
         const session: Route = { name: 'session', sessionId: id };
-        const trace: Route = { name: 'trace', sessionId: id, turnSeq };
+        const trace: Route = { name: 'trace', sessionId: id, turnSeq: seq };
+        // Task 7.2's arms ride the same property: a search hit's href is built
+        // by `hrefFor` and resolved back by `matchRoute` one navigation later,
+        // so an id that does not survive the round trip lands the reader
+        // nowhere — which is AC1's second clause failing.
+        const search: Route = { name: 'search', sessionId: id };
+        const event: Route = { name: 'event', sessionId: id, seq };
         expect(matchRoute(hrefFor(session))).toEqual(session);
         expect(matchRoute(hrefFor(trace))).toEqual(trace);
+        expect(matchRoute(hrefFor(search))).toEqual(search);
+        expect(matchRoute(hrefFor(event))).toEqual(event);
       }),
       { numRuns: 500 },
     );
 
     for (const id of ['a/b', 'a%b', 'a b', 'sess:0', '日本語', 'a?b#c']) {
-      const route: Route = { name: 'trace', sessionId: id, turnSeq: 7 };
-      expect(matchRoute(hrefFor(route))).toEqual(route);
+      for (const route of [
+        { name: 'trace', sessionId: id, turnSeq: 7 } as Route,
+        { name: 'search', sessionId: id } as Route,
+        { name: 'event', sessionId: id, seq: 7 } as Route,
+      ]) {
+        expect(matchRoute(hrefFor(route))).toEqual(route);
+      }
     }
   });
 });

@@ -18,7 +18,7 @@
 
 import { useEffect, useRef } from 'react';
 
-import type { SessionChangedFrame, SessionIndexedFrame } from '@shared/api.ts';
+import type { SessionChangedFrame, SessionIndexedFrame, WarmProgressFrame } from '@shared/api.ts';
 
 import type { EventRow } from './api.js';
 import type { LiveBus } from './live.js';
@@ -51,6 +51,8 @@ export function useLiveStream(bus: LiveBus, options: UseLiveStreamOptions = {}):
           busRef.current.publish({ event, data: data as SessionChangedFrame<EventRow> });
         } else if (event === 'session_indexed') {
           busRef.current.publish({ event, data: data as SessionIndexedFrame });
+        } else if (event === 'warm_progress') {
+          busRef.current.publish({ event, data: data as WarmProgressFrame });
         }
       },
       onState: (state) => optionsRef.current.onState?.(state),

@@ -251,9 +251,9 @@ export function makeEventContent(overrides: Partial<EventContentBody> = {}): Eve
 /**
  * An `ApiClient` whose methods a test replaces one at a time.
  *
- * The list route answers with an empty page; the two routes that need an id
- * reject by name, because a caller reaching one it did not stub is a test bug
- * worth a loud message rather than an empty object.
+ * The list route answers with an empty page; every other route rejects by name,
+ * because a caller reaching one it did not stub is a test bug worth a loud
+ * message rather than an empty object.
  */
 export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   const unstubbed = (method: string) => (): Promise<never> =>
@@ -263,6 +263,8 @@ export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     listSessions: () => Promise.resolve(makePage<SessionListRow>([])),
     getSession: unstubbed('getSession'),
     getEventContent: unstubbed('getEventContent'),
+    search: unstubbed('search'),
+    warm: unstubbed('warm'),
     ...overrides,
   };
 }

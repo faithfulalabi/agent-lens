@@ -25,6 +25,10 @@ export type Route =
   | { name: 'sessions' }
   | { name: 'session'; sessionId: string }
   | { name: 'trace'; sessionId: string; turnSeq: number }
+  /** Search, over the whole projected corpus or scoped to one session. */
+  | { name: 'search'; sessionId?: string }
+  /** One event of one session, addressed by `seq` — where a search hit lands. */
+  | { name: 'event'; sessionId: string; seq: number }
   | { name: 'showcase' }
   /** Carries the path so a 404 view can show what was asked for. */
   | { name: 'not_found'; path: string };
@@ -38,25 +42,37 @@ const NON_NEGATIVE_INT = /^\d+$/;
 /**
  * Resolve a path to a route.
  *
- * Query and fragment are ignored and one trailing slash is normalised away, so
- * Task 7.2 can put query-string state there without touching this table.
+ * Query and fragment are ignored and one trailing slash is normalised away. That
+ * was written to let Task 7.2 hold query-string state "without touching this
+ * table" — and Task 7.2 could not use it. Nothing NAVIGATES to a query: `hrefFor`
+ * below emits none, and `router.ts`'s `sync()` compares the pathname alone, so a
+ * query could be held and never observed. Task 5.4's founder ruling 6 had
+ * already deferred a real deep link here by name, so the two arms below are
+ * ruled in and the purity scan over this whole file still passes unchanged.
  */
 export function matchRoute(pathname: string): Route {
   const path = normalize(pathname);
   if (path === '/') return { name: 'sessions' };
   if (path === '/showcase') return { name: 'showcase' };
+  if (path === '/search') return { name: 'search' };
 
   const segments = path.slice(1).split('/');
+  if (segments[0] === 'search' && segments.length === 3 && segments[1] === 'session') {
+    const sessionId = decode(segments[2]);
+    if (sessionId !== undefined && sessionId !== '') return { name: 'search', sessionId };
+  }
   if (segments[0] === 'session') {
     const sessionId = decode(segments[1]);
     if (sessionId !== undefined && sessionId !== '') {
       if (segments.length === 2) return { name: 'session', sessionId };
-      if (
-        segments.length === 4 &&
-        segments[2] === 'trace' &&
-        NON_NEGATIVE_INT.test(segments[3] ?? '')
-      ) {
-        return { name: 'trace', sessionId, turnSeq: Number(segments[3]) };
+      if (segments.length === 4 && NON_NEGATIVE_INT.test(segments[3] ?? '')) {
+        // Two sibling arms, one shape: `trace` addresses a TURN sequence and
+        // `event` an EVENT sequence. They are not interchangeable — a hit's
+        // `seq` numbers events, so the pre-existing `trace` arm cannot express
+        // one, which is why this is a second arm rather than a reused one.
+        if (segments[2] === 'trace')
+          return { name: 'trace', sessionId, turnSeq: Number(segments[3]) };
+        if (segments[2] === 'event') return { name: 'event', sessionId, seq: Number(segments[3]) };
       }
     }
   }
@@ -79,6 +95,12 @@ export function hrefFor(route: Route): string {
       return `/session/${encodeURIComponent(route.sessionId)}`;
     case 'trace':
       return `/session/${encodeURIComponent(route.sessionId)}/trace/${route.turnSeq}`;
+    case 'search':
+      return route.sessionId === undefined
+        ? '/search'
+        : `/search/session/${encodeURIComponent(route.sessionId)}`;
+    case 'event':
+      return `/session/${encodeURIComponent(route.sessionId)}/event/${route.seq}`;
     case 'not_found':
       return route.path;
   }

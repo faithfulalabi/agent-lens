@@ -35,6 +35,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import type { Page } from '../shared/api.js';
+import { PROJECTOR_VERSION } from '../transcript/version.js';
 
 type SqlParam = string | number;
 
@@ -623,6 +624,39 @@ export function countUnprojected(db: DatabaseSync): number {
     .prepare(`SELECT count(*) AS n FROM sessions WHERE projection_state NOT IN ('ready', 'empty')`)
     .get() as unknown as { n: number };
   return row.n;
+}
+
+const WARMABLE_SQL = `SELECT id FROM sessions
+  WHERE projection_state NOT IN ('ready', 'empty')
+     OR projector_version IS NOT :version
+  ORDER BY last_activity_at DESC, id DESC`;
+
+/**
+ * Everything the projector must re-read, newest first: never projected, failed,
+ * or projected by a DIFFERENT projector. `POST /api/warm`'s queue and its
+ * `queued` count are both this array, so the two cannot disagree.
+ *
+ * `IS NOT`, never `!=`: a never-projected row carries `projector_version NULL`,
+ * and `!=` drops the NULL case silently.
+ *
+ * The version limb is the whole point. `markRollupComplete` (`write.ts:594`)
+ * only ever moves `rollup_state` `'own'` -> `'complete'`, so the sweep's second
+ * wave warms each tree once and structurally cannot revisit it, and the live
+ * tick only sees sessions whose file moved. After a `PROJECTOR_VERSION` bump
+ * every row stays `projection_state = 'ready'` with a stale version — invisible
+ * to {@link countUnprojected}, reached by nothing else, and reprojected one at a
+ * time inside whichever request opens it.
+ *
+ * NO `TOP_LEVEL_ONLY`, for founder ruling 3's reason: sidecars are 92.9% of the
+ * corpus and the warm exists to project them too. This deliberately does NOT
+ * share a predicate with {@link countUnprojected} — that counter is the SEARCH
+ * denominator and stays frozen; this is a superset of it.
+ */
+export function readWarmableIds(db: DatabaseSync): string[] {
+  const rows = db.prepare(WARMABLE_SQL).all({ version: PROJECTOR_VERSION }) as unknown as {
+    id: string;
+  }[];
+  return rows.map((row) => row.id);
 }
 
 // --- Drift -----------------------------------------------------------------

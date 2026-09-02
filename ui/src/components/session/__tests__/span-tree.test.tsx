@@ -395,6 +395,86 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
     ).toBe(1);
     expect(markup.match(/tabindex="-1"/g) ?? []).toHaveLength(rows.length - 1 + 3);
   });
+
+  /* ----------------------- Task 7.2 — the jump from a search hit --------- */
+
+  it('scrolls to revealIndex, centred, and still swallows its own event (Test 8)', () => {
+    /*
+     * Source text for the same reason the follow pin above is: no effect fires
+     * here, so `scrollToIndex` can only be read, never observed. The BEHAVIOUR
+     * this wiring carries is `revealStep`'s and is driven as a pure table in
+     * `lib/__tests__/search.test.ts` (Test 6) — a source pin cannot fail on a
+     * re-fire, which is the defect that matters.
+     */
+    const source = sourceOf('../SpanTree.tsx');
+
+    expect(source).toContain("virtualizer.scrollToIndex(revealIndex, { align: 'center' })");
+    expect(
+      source,
+      'a jumped-to row read against the bottom edge shows no context above it',
+    ).not.toContain("virtualizer.scrollToIndex(revealIndex, { align: 'end' })");
+    // The same swallow, or the jump pauses follow mode on the frame it lands.
+    expect(source).toMatch(
+      /programmaticScroll\.current = true;\s*virtualizer\.scrollToIndex\(revealIndex/,
+    );
+    // `followIndex`'s own branch is untouched: its docstring's invariant — the
+    // tree is handed one ONLY while following — is what the render gate's
+    // `live-no-navigation` reading rests on.
+    expect(source).toContain("virtualizer.scrollToIndex(followIndex, { align: 'end' })");
+    expect(source).toMatch(/if \(followIndex === undefined\) return;/);
+    expect(source).toMatch(/if \(revealIndex === undefined\) return;/);
+  });
+
+  it('renders the same tree whether or not a reveal index is given (Test 8)', () => {
+    // The prop must be inert on the markup: it drives an effect and nothing
+    // else, so a reveal must never change what a static render emits.
+    const rows = NESTED_ROWS;
+    const rect = { width: 1280, height: 720 };
+    const without = renderToStaticMarkup(
+      <SpanTree rows={rows} focusedIndex={0} initialRect={rect} />,
+    );
+    const with_ = renderToStaticMarkup(
+      <SpanTree rows={rows} focusedIndex={0} initialRect={rect} revealIndex={2} />,
+    );
+    expect(with_).toBe(without);
+  });
+
+  it('the page seeds the reveal latch AFTER rows, and never with a selection (Test 7)', () => {
+    /*
+     * ★ THE ORDER IS THE ASSERTION, and test 6 cannot see it.
+     *
+     * The seed has to sit below `const rows = useMemo(`: above it, in the
+     * `needsReseed` block, the reseed would replace the navigation state the
+     * seed had just expanded. And the seed must set the expansion and the latch
+     * ONLY — writing `selectedId` there consumes the latch on the very next
+     * render, so `SpanTree` is handed no index at all and the scroll never
+     * fires. That is founder ruling 3, and this is the only instrument that can
+     * see it.
+     */
+    const source = sourceOf('../../../pages/SessionView.tsx');
+
+    const rowsAt = source.indexOf('const rows = useMemo(');
+    const seedAt = source.indexOf('setRevealLatch(revealed)');
+    expect(rowsAt, 'the rows memo must exist to be ordered against').toBeGreaterThan(-1);
+    expect(seedAt, 'the seed must exist to be ordered').toBeGreaterThan(-1);
+    expect(seedAt, 'no row index can be computed above the rows memo').toBeGreaterThan(rowsAt);
+
+    // The seed block, read whole: expansion and latch, and no selection.
+    const seedBlock = source.slice(source.indexOf('if (revealed !== null'), seedAt);
+    expect(seedBlock).toContain('expandMany(current, [revealed.turnId])');
+    expect(seedBlock, 'seeding a selection consumes the latch before delivery').not.toContain(
+      'selectedId',
+    );
+
+    // Delivery sets both keys in ONE update — the shape `onSelect` already uses.
+    expect(source).toMatch(
+      /setNav\(\(current\) => \(\{ \.\.\.current, focusedIndex, selectedId \}\)\)/,
+    );
+    expect(source, 'the write-back guard is what stops an endless loop').toContain(
+      'if (nextLatch === revealLatch) return;',
+    );
+    expect(source).toContain('revealIndex={revealIndex}');
+  });
 });
 
 /* ------------- Test 3 — every kind and every status renders (the blank guard) */

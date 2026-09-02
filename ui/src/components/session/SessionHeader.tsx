@@ -99,6 +99,14 @@ export function SessionHeader({ session, now, view, onViewChange }: SessionHeade
         {session.project_path}
       </h1>
 
+      <a
+        href={hrefFor({ name: 'search', sessionId: session.id })}
+        data-slot="in-session-search"
+        className="shrink-0 text-2xs uppercase tracking-widest text-muted transition-colors hover:text-foreground"
+      >
+        Search
+      </a>
+
       {view === undefined || onViewChange === undefined ? null : (
         <ViewToggle view={view} onViewChange={onViewChange} />
       )}

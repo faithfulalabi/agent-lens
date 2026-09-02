@@ -28,9 +28,10 @@ export interface Page<T> {
 }
 
 // --- `/api/stream` frame payloads (Task 6.1) --------------------------------
-// One frame type per event name that has a producer. `warm_progress` is a
-// reserved name with none, so it deliberately has no type here: a payload shape
-// for a frame nothing emits would be an invention, not a contract.
+// One frame type per event name that has a producer, and as of Task 7.4 that is
+// all four of `STREAM_EVENTS`: `POST /api/warm`'s queue is `warm_progress`'s
+// producer, so the payload shape below is a contract rather than the invention
+// it would have been while nothing emitted the frame.
 
 /**
  * The own-file aggregates of one session, and deliberately nothing else.
@@ -78,6 +79,21 @@ export interface SessionChangedFrame<Event = unknown> {
 /** `event: session_indexed` — the tick saw this id for the first time. */
 export interface SessionIndexedFrame {
   session_id: string;
+}
+
+/**
+ * `event: warm_progress` (spec:382) — one frame per session the warm queue
+ * attempted, ending at `done === total`.
+ *
+ * `done` counts ATTEMPTS, not successes: a session the projector cannot read is
+ * stamped `'failed'` and counted anyway, because a run that skipped it could
+ * never reach its own terminal condition. There is deliberately no `failed`
+ * key — the residual is `/api/search`'s `unprojected_count`, which already
+ * reports it.
+ */
+export interface WarmProgressFrame {
+  done: number;
+  total: number;
 }
 
 /**

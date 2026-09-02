@@ -22,6 +22,16 @@ import { hostGuard } from '../middleware/host-guard.js';
 import { tokenAuth } from '../middleware/token-auth.js';
 import { registerUi } from '../static-ui.js';
 import { createStreamHub, type StreamHub } from '../stream.js';
+import type { WarmQueue } from '../warm.js';
+
+/**
+ * A warm queue that starts nothing. This file never POSTs `/api/warm` through
+ * the middleware, so a real queue would only race `db.close()` in `afterEach`.
+ */
+function stubWarm(): WarmQueue {
+  return { start: () => 0, close: () => undefined };
+}
+
 
 const TOKEN = 'test-token';
 const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -41,7 +51,7 @@ beforeEach(() => {
   seedSessionRow(db, { id: 'session-1' });
   uiDir = join(sandbox.root, 'no-such-ui');
   hub = createStreamHub();
-  app = buildApiApp({ db, env: fileEnv(), token: TOKEN, uiDir, hub });
+  app = buildApiApp({ db, env: fileEnv(), token: TOKEN, uiDir, hub, warm: stubWarm() });
 });
 
 afterEach(async () => {
@@ -113,7 +123,7 @@ describe('AC2 — the mutation controls, each a mis-ordered app built here', () 
     local.use('*', hostGuard([]));
     local.use('/api/*', tokenAuth(TOKEN));
     if (options.terminatorFirst === true) local.all('/api/*', jsonNotFound);
-    registerApi(local, { db, env: fileEnv(), hub });
+    registerApi(local, { db, env: fileEnv(), hub, warm: stubWarm() });
     if (options.uiBeforeTerminator === true) {
       registerUi(local, { token: TOKEN, uiDir });
       local.all('/api/*', jsonNotFound);

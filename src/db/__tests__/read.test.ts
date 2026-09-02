@@ -24,9 +24,11 @@ import {
   readSessionHeader,
   readSessionList,
   readTurns,
+  readWarmableIds,
   searchEvents,
   type SessionRow,
 } from '../read.js';
+import { PROJECTOR_VERSION } from '../../transcript/version.js';
 import type { Page } from '../../shared/api.js';
 import { openCache, seedProjection, seedSessionRow, seedSidecarRow } from './fixtures/index.js';
 
@@ -352,6 +354,74 @@ describe('AC1 — the eight query families return the spec shapes', () => {
     seedSessionRow(db, { id: 'none-1', projection_state: 'none' });
     seedSessionRow(db, { id: 'failed-1', projection_state: 'failed' });
     expect(countUnprojected(db)).toBe(2);
+  });
+
+  it('7c. readWarmableIds is the state x version matrix, row by row', () => {
+    // ★ THE ENDPOINT'S WHOLE PREDICATE, executable. `POST /api/warm` is the only
+    // bulk re-warm the system has, and a version-stale row — `'ready'` with an
+    // older `projector_version` — is invisible to `countUnprojected`, never
+    // revisited by the sweep's second wave (`rollup_state` only goes
+    // `'own'` -> `'complete'`), and never seen by the live tick, whose candidates
+    // are sessions whose file moved. `render-gate/index.ts:737` measured 287 of
+    // 293 real rows in exactly that state.
+    const stale = PROJECTOR_VERSION - 1;
+    seedSessionRow(db, { id: 'none-cur', projection_state: 'none' });
+    seedSessionRow(db, { id: 'failed-cur', projection_state: 'failed' });
+    seedSessionRow(db, {
+      id: 'ready-cur',
+      projection_state: 'ready',
+      projector_version: PROJECTOR_VERSION,
+    });
+    seedSessionRow(db, { id: 'ready-stale', projection_state: 'ready', projector_version: stale });
+    seedSessionRow(db, { id: 'ready-null', projection_state: 'ready' });
+    seedSessionRow(db, {
+      id: 'empty-cur',
+      projection_state: 'empty',
+      projector_version: PROJECTOR_VERSION,
+    });
+    seedSessionRow(db, { id: 'empty-stale', projection_state: 'empty', projector_version: stale });
+    // `seedSessionRow` defaults the version to 1 and `?? ` cannot pass NULL, so
+    // the never-projected row is written here. It is the case `!=` would drop.
+    db.prepare(`UPDATE sessions SET projector_version = NULL WHERE id = ?`).run('ready-null');
+
+    expect([...readWarmableIds(db)].sort()).toEqual([
+      'empty-stale',
+      'failed-cur',
+      'none-cur',
+      'ready-null',
+      'ready-stale',
+    ]);
+    // `none-cur` and `failed-cur` carry the CURRENT version, so they are selected
+    // by the state limb alone — without it the two would drop out silently.
+    expect(readWarmableIds(db)).toContain('none-cur');
+    // A superset of the search denominator, never equal to it: that is the
+    // difference the endpoint exists for.
+    expect(readWarmableIds(db).length).toBeGreaterThan(countUnprojected(db));
+  });
+
+  it('7d. readWarmableIds skips `empty` at the current version — a tombstone is projected', () => {
+    // The rot direction of 7c: `empty` means the file projected nothing, which is
+    // a finished projection. Only a stale version brings one back.
+    seedSessionRow(db, {
+      id: 'empty-cur',
+      projection_state: 'empty',
+      projector_version: PROJECTOR_VERSION,
+    });
+    expect(readWarmableIds(db)).toEqual([]);
+    db.prepare(`UPDATE sessions SET projector_version = ? WHERE id = ?`).run(
+      PROJECTOR_VERSION - 1,
+      'empty-cur',
+    );
+    expect(readWarmableIds(db)).toEqual(['empty-cur']);
+  });
+
+  it('7e. readWarmableIds is newest-first, with id DESC breaking a tie', () => {
+    seedSessionRow(db, { id: 'a-old', last_activity_at: '2026-08-14T09:00:00.000Z' });
+    seedSessionRow(db, { id: 'b-new', last_activity_at: '2026-08-14T11:00:00.000Z' });
+    seedSessionRow(db, { id: 'c-new', last_activity_at: '2026-08-14T11:00:00.000Z' });
+    // All three are `ready@1` against a projector at 5, so all three are warmable
+    // and the assertion is about order alone.
+    expect(readWarmableIds(db)).toEqual(['c-new', 'b-new', 'a-old']);
   });
 
   it('8. readDriftRows selects raw rows — the aggregation is the mapper’s (Q4)', () => {

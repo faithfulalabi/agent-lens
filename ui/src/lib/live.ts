@@ -16,7 +16,12 @@
  * rather than of a spy: `patchListRow` has nothing to fetch WITH.
  */
 
-import type { SessionChangedFrame, SessionIndexedFrame, SessionRollups } from '@shared/api.ts';
+import type {
+  SessionChangedFrame,
+  SessionIndexedFrame,
+  SessionRollups,
+  WarmProgressFrame,
+} from '@shared/api.ts';
 
 import type { EventRow, SessionDetailBody } from './api.js';
 import { bucketByTurn, type SessionData } from './session-data.js';
@@ -307,7 +312,8 @@ export function pillLabel(state: FollowState): string | null {
 /** One decoded frame, narrowed by name at the single decode boundary. */
 export type LiveFrame =
   | { readonly event: 'session_changed'; readonly data: SessionChangedFrame<EventRow> }
-  | { readonly event: 'session_indexed'; readonly data: SessionIndexedFrame };
+  | { readonly event: 'session_indexed'; readonly data: SessionIndexedFrame }
+  | { readonly event: 'warm_progress'; readonly data: WarmProgressFrame };
 
 /** The port both pages take, so either renders against a hand-built double. */
 export interface LiveBus {

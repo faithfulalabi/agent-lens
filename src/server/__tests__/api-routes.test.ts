@@ -40,6 +40,7 @@ import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
 import type { DriftReport } from '../api.js';
 import { createStreamHub, type StreamHub } from '../stream.js';
+import { createWarmQueue, type WarmQueue } from '../warm.js';
 
 const TOKEN = 'test-token';
 
@@ -217,6 +218,13 @@ let sandbox: Sandbox;
 let db: DatabaseSync;
 let app: Hono;
 let hub: StreamHub;
+/**
+ * ★ HELD SO `afterEach` CAN CLOSE IT. The queue yields with `setImmediate`, so
+ * a run left in flight wakes AFTER `db.close()` below and throws "database is
+ * not open" from a timer callback — across the rest of this file, with nothing
+ * able to stop it. `close()` sets the stop flag synchronously.
+ */
+let warm: WarmQueue;
 
 /** The searchable, fully-seeded row. No file behind it: it never meets the gate. */
 const SEEDED = 'seeded-1111-4111-8111-seeded000001';
@@ -253,16 +261,21 @@ beforeEach(() => {
   });
 
   hub = createStreamHub();
+  warm = createWarmQueue({ db, env: fileEnv(), hub });
   app = buildApiApp({
     db,
     env: fileEnv(),
     token: TOKEN,
     uiDir: join(sandbox.root, 'no-such-ui'),
     hub,
+    warm,
   });
 });
 
 afterEach(async () => {
+  // BEFORE `db.close()`: a warm run started by the POST tests is still draining,
+  // and its next wake would otherwise land on a closed database.
+  warm.close();
   // The stream test below leaves a parked client attached; the drain is what
   // unparks it and ends its body.
   await hub.drain();
@@ -455,6 +468,8 @@ describe('4. GET /api/events/:id/content (spec:334-345)', () => {
       token: TOKEN,
       uiDir: join(sandbox.root, 'no-such-ui'),
       hub: createStreamHub(),
+      // Never POSTed through, so it starts nothing there is anything to close.
+      warm: { start: () => 0, close: () => undefined },
       resolveContent: (row, field) => ({
         storage: 'line_ref',
         content: `resolved ${row.id} ${field}`,
@@ -580,13 +595,39 @@ describe('7. POST /api/sessions/:id/reproject (spec:373-375)', () => {
   });
 });
 
-describe('8. POST /api/warm (spec:377-380)', () => {
-  it('is 202 { queued }', async () => {
+// `spec:377-380` was the wrong block — that is `POST .../reproject`'s response
+// body. `POST /api/warm` is `:391-394`, and "missing or stale" is `:392`.
+describe('8. POST /api/warm (spec:391-394)', () => {
+  it('is 202 { queued }, counting the version-stale rows too', async () => {
     const res = await call('/api/warm', { method: 'POST' });
     expect(res.status).toBe(202);
     const body = (await res.json()) as { queued: number };
     expectKeys(body, ['queued']);
-    expect(typeof body.queued).toBe('number');
+
+    // ★ 3, AND ONLY VIA THE VERSION LIMB. `seedSessionRow` stamps
+    // `projection_state: 'ready'` and `projector_version: 1` (`fixtures:377-379`),
+    // so `SEEDED` and `DRIFTY` are `ready@1` against a projector at 5 —
+    // `countUnprojected` cannot see either, and a predicate without
+    // `OR projector_version IS NOT :version` returns only `SESSION_ID`. This is
+    // the assertion that reds if the queue is narrowed to the search denominator.
+    expect(body.queued).toBe(3);
+    expect(body.queued).toBeGreaterThan(
+      (await getJson<SearchBody>('/api/search?q=parser')).body.unprojected_count,
+    );
+  });
+
+  it('a second POST mid-run never reports more than the first', async () => {
+    // AC4 at the HTTP boundary. The behavioural half — exactly N frames, no
+    // repeated `done` — is `warm.test.ts`, which owns a corpus that can project;
+    // two of this file's three rows point at `/Users/dev/…` and never will.
+    const first = (await (await call('/api/warm', { method: 'POST' })).json()) as {
+      queued: number;
+    };
+    const second = await call('/api/warm', { method: 'POST' });
+    expect(second.status).toBe(202);
+    const body = (await second.json()) as { queued: number };
+    expectKeys(body, ['queued']);
+    expect(body.queued).toBeLessThanOrEqual(first.queued);
   });
 });
 
@@ -688,6 +729,7 @@ describe('10. GET /api/health (spec:394-396)', () => {
       token: TOKEN,
       uiDir: join(sandbox.root, 'no-such-ui'),
       hub: createStreamHub(),
+      warm: { start: () => 0, close: () => undefined },
       sweep: {
         tick: () => {
           throw new Error('unused');

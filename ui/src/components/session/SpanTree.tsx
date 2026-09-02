@@ -83,6 +83,19 @@ export interface SpanTreeProps {
    * programmatic scroll from ever landing under a paused reader.
    */
   followIndex?: number | undefined;
+  /**
+   * A row to scroll to ONCE, because a search hit named it.
+   *
+   * Its own prop rather than a widened `followIndex`, so that prop's stated
+   * invariant above stays literally true and the two land differently: a jumped
+   * row is centred, a followed one sits at the end.
+   *
+   * ★ THE PAGE HANDS THIS OVER ON EXACTLY ONE RENDER. It is a latch consumed on
+   * delivery (`revealStep` in `@/lib/search`), never `rows.findIndex(...)`
+   * recomputed each render — `rows` is rebuilt on every expand and collapse, so
+   * a derived index would move and yank a reader who only opened a turn.
+   */
+  revealIndex?: number | undefined;
   /** The scroller's own numbers. `atBottom` is decided in `@/lib/live`. */
   onScrollMetrics?: (metrics: ScrollMetrics) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -98,6 +111,7 @@ export function SpanTree({
   estimateSize = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
   followIndex,
+  revealIndex,
   onScrollMetrics,
   onKeyDown,
   onSelect,
@@ -131,6 +145,15 @@ export function SpanTree({
     programmaticScroll.current = true;
     virtualizer.scrollToIndex(followIndex, { align: 'end' });
   }, [followIndex, virtualizer]);
+
+  // The same body and the same swallow, aimed at the other prop. Centred rather
+  // than ended: a jumped-to row read against the bottom edge shows no context
+  // above it, which is the whole reason a reader followed the hit.
+  useEffect(() => {
+    if (revealIndex === undefined) return;
+    programmaticScroll.current = true;
+    virtualizer.scrollToIndex(revealIndex, { align: 'center' });
+  }, [revealIndex, virtualizer]);
 
   const onScroll = (event: UIEvent<HTMLDivElement>): void => {
     if (programmaticScroll.current) {

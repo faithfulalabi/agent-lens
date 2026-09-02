@@ -18,6 +18,7 @@ import {
   isSessionDetailPath,
   parseArgv,
   pickPayloadRow,
+  pickSearchTerm,
   runRenderGate,
   type DriveOutcome,
   type WireEvent,
@@ -54,6 +55,18 @@ function gateSources(): { file: string; text: string }[] {
     .sort()
     .map((file) => ({ file, text: readFileSync(join(GATE_DIR, file), 'utf8') }));
 }
+
+/** Task 7.2's search reading, green — the base every spoiler row varies one field of. */
+const PASSING_SEARCH = {
+  path: '/search/session/sess-1',
+  scopeText: 'Searching this session.',
+  term: 'ENOENT',
+  hitCount: 3,
+  eventId: 'toolu_1',
+  markedRuns: 1,
+  warmControls: 0,
+  landedSelected: true,
+} as const;
 
 /** A drive result whose every assertion passes, so a test can spoil one field. */
 function passingObservations(overrides: Partial<Observations> = {}): Observations {
@@ -116,6 +129,9 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       after: 1,
       appendedType: 'render_gate_unknown_record',
     },
+    // MEASURED `warmControls: 0` over the dev corpus — 293 of 293 `ready` — so
+    // the control is correctly absent and its absence is what the gate asserts.
+    searchScreen: { ...PASSING_SEARCH },
     labels: [
       { index: 0, text: 'turn 1: hello' },
       { index: 1, text: 'tool Read, ok' },
@@ -159,6 +175,12 @@ const SHOT_NAMES = [
   // screen. Shot LAST — after the thread toggle, which the alarm survives
   // because it draws above the tree/thread split.
   '09-drift.png',
+  // Task 7.2, and the only one that can show the search screen at all. Shot
+  // LAST OF ALL: its drive navigates away from the session twice, so every
+  // reading any earlier probe takes has to be finished first. It shows no warm
+  // control, which is correct rather than missing — `countUnprojected` is 0 over
+  // this corpus, so there is nothing left to warm. 7.4's gate shows the raise.
+  '10-search.png',
 ];
 
 /** Screenshots that all clear the byte threshold, so only the override can red. */
@@ -402,6 +424,35 @@ describe('buildReport (AC5)', () => {
     [
       'an alarm already on screen before any drift existed',
       { driftBanner: { before: 1, after: 1, appendedType: 'render_gate_unknown_record' } },
+    ],
+    /*
+     * Task 7.2's search screen, all five directions. The query is derived from
+     * the open session's own events and scoped to that session, so none of these
+     * can be a fact about the corpus — every one is the screen failing.
+     */
+    ['a search probe that never reached the screen', { searchScreen: null }],
+    [
+      'an entry point that dropped the session scope',
+      { searchScreen: { ...PASSING_SEARCH, path: '/search' } },
+    ],
+    [
+      'a scope strip that never named the session',
+      { searchScreen: { ...PASSING_SEARCH, scopeText: 'Searching all projected transcripts.' } },
+    ],
+    ['a query that drew no hit', { searchScreen: { ...PASSING_SEARCH, hitCount: 0 } }],
+    [
+      'a hit whose snippet carried no highlight',
+      { searchScreen: { ...PASSING_SEARCH, markedRuns: 0 } },
+    ],
+    [
+      'a hit that navigated nowhere',
+      { searchScreen: { ...PASSING_SEARCH, landedSelected: false } },
+    ],
+    [
+      // The falsifiable half of the silent side: a control stuck permanently on
+      // reds here, which is what makes asserting absence worth doing.
+      'a warm control on a corpus with nothing left to warm',
+      { searchScreen: { ...PASSING_SEARCH, warmControls: 1 } },
     ],
   ])('reds on %s', (_label, overrides) => {
     const report = buildReport({
@@ -804,7 +855,7 @@ describe('buildReport (AC5)', () => {
 
     expect(count?.ok).toBe(true);
     expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
-    expect(count?.expected).toBe('9 screenshots');
+    expect(count?.expected).toBe('10 screenshots');
     expect(report.shots.map((s) => s.name)).toContain('07-subagent.png');
     // Nothing is asserted about its POSITION in the array. The real drive shoots
     // it BEFORE `06-thread.png`, because the thread toggle has no trip back — so
@@ -950,6 +1001,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
       '07-subagent.png',
       '08-live.png',
       '09-drift.png',
+      '10-search.png',
     ]);
     expect(readFileSync(join(outDir, 'index.html'), 'utf8')).toContain('01-sessions.png');
     // The bytes asserted are the bytes on disk.
@@ -1016,16 +1068,34 @@ describe('the gate source itself (AC6)', () => {
   it('every SELECTORS value is a data-slot that exists in ui/src', () => {
     const values = Object.values(SELECTORS);
 
-    // Vacuity guard: a silently-shrinking constant would trivially satisfy the
-    // loop. RAISED 9 -> 10 BY TASK 7.3, in lockstep with the tenth real slot
-    // (`drift-banner`) that the same commit READS in `probeDriftBanner` and
-    // `DriftBanner.tsx` renders. 5.5 raised it 8 -> 9 for `span-expand` and 5.4
-    // raised it 7 -> 8 for `thread-toggle`, on the same terms — the invariant
-    // this guards is a constant that shrinks unnoticed. `thread-view` is
-    // deliberately NOT an entry: a slot no drive touches is the vacuity this
-    // guard exists to catch.
-    expect(values).toHaveLength(10);
-    expect(new Set(values).size).toBe(10);
+    /*
+     * Vacuity guard: a silently-shrinking constant would trivially satisfy the
+     * loop. 7.3 raised it 9 -> 10 for `drift-banner`, 5.5 raised it 8 -> 9 for
+     * `span-expand`, and 5.4 raised it 7 -> 8 for `thread-toggle` — each in
+     * lockstep with a real slot the same commit READS. `thread-view` is
+     * deliberately NOT an entry: a slot no drive touches is the vacuity this
+     * guard exists to catch.
+     *
+     * ★ RAISED 10 -> 13 BY TASK 7.2, and every one of the three is read by
+     * `probeSearch` in the same commit:
+     *
+     *   `in-session-search` — CLICKED, and that click is what makes AC2's
+     *     "reachable from the session view" gate-verified rather than pinned in
+     *     source. A `goto` would have proven the route resolves while an
+     *     unreachable control sat broken on the header.
+     *   `search-input`      — the term is TYPED into it.
+     *   `search-scope`      — its text is READ and asserted to name the session
+     *     scope.
+     *
+     * ★ AND IT IS 13, NOT 14. `search-warm` gets no entry: `countUnprojected`
+     * is 0 over the dev corpus (measured, 293 of 293 `ready`) and the gate
+     * snapshot copies the same database, so the control cannot be driven at all
+     * — which is precisely the vacuity above. The probe reads it as a raw
+     * attribute selector and asserts its ABSENCE. Task 7.4's probe adds the
+     * entry when it can drive the raise side.
+     */
+    expect(values).toHaveLength(13);
+    expect(new Set(values).size).toBe(13);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
@@ -1165,6 +1235,122 @@ describe('the gate source itself (AC6)', () => {
     expect(index.indexOf('await probeDriftBanner(')).toBeGreaterThan(
       index.indexOf('await probeThreadInline('),
     );
+  });
+
+  /*
+   * ★ THE PURE HALF OF TASK 7.2's PROBE, on `pickPayloadRow`'s split.
+   *
+   * Everything around it — click, type, wait for a hit, click it, wait for
+   * `aria-selected` — is Playwright. This is the decision.
+   */
+  describe('pickSearchTerm — the query, derived from the wire (Test 27)', () => {
+    const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
+      kind: 'tool_call',
+      input: null,
+      text: null,
+      output_storage: 'inline',
+      ...overrides,
+    });
+
+    it('picks the word that appears in the MOST events', () => {
+      // Breadth, not frequency: a word in many events is one the index
+      // certainly holds, which is what makes the query's hit predictable.
+      const term = pickSearchTerm([
+        wire({ id: '1', text: 'plumbus plumbus plumbus' }),
+        wire({ id: '2', text: 'grumbo' }),
+        wire({ id: '3', text: 'grumbo' }),
+        wire({ id: '4', text: 'grumbo' }),
+      ]);
+      expect(term).toBe('grumbo');
+    });
+
+    it('reads input as well as text, because the index covers both', () => {
+      expect(pickSearchTerm([wire({ id: '1', input: '{"pattern":"needle"}' })])).toBe('needle');
+    });
+
+    it('never truncates a long identifier into a token the index does not hold', () => {
+      // Word boundaries on BOTH ends. Cutting a 20-character identifier at 16
+      // would produce a term `unicode61` never tokenized, and the query would
+      // return nothing on a screen that works.
+      const term = pickSearchTerm([wire({ id: '1', text: 'supercalifragilisticex' })]);
+      expect(term).toBeNull();
+    });
+
+    it('skips FTS5 operators, which parse as syntax rather than as words', () => {
+      expect(pickSearchTerm([wire({ id: '1', text: 'NEAR NEAR NEAR' })])).toBeNull();
+    });
+
+    it.each([
+      { label: 'no events', events: [] },
+      { label: 'events with no content', events: [wire({ id: '1' })] },
+      { label: 'words too short to be distinctive', events: [wire({ id: '1', text: 'a bc d' })] },
+      // Non-ASCII is excluded so the tokenizer's folding cannot surprise the
+      // probe. A null answer degrades to a `null` probe, which reds honestly.
+      { label: 'non-ascii only', events: [wire({ id: '1', text: '日本語のテキスト' })] },
+    ])('answers null for $label rather than a term that cannot hit', ({ events }) => {
+      expect(pickSearchTerm(events)).toBeNull();
+    });
+
+    it('is deterministic on a tie, so a failing run reproduces', () => {
+      const events = [
+        wire({ id: '1', text: 'alpha bravo' }),
+        wire({ id: '2', text: 'bravo alpha' }),
+      ];
+      expect(pickSearchTerm(events)).toBe(pickSearchTerm([...events].reverse()));
+    });
+  });
+
+  it('calls probeSearch LAST of all, because it navigates away (Test 25)', () => {
+    /*
+     * A source ordering no unit test can reach, and it is load-bearing twice.
+     *
+     *   - The search drive leaves the session for the search screen and then
+     *     follows a hit back into a session. Every other probe reads the SESSION
+     *     view, so any of them running after it would read a page that is no
+     *     longer there.
+     *   - `probeSearch` is appended at the END of the file and writes nothing,
+     *     so neither ordinal-keyed manifest moves: `fs-write-sites.test.ts` keys
+     *     on write sites in source order and this probe has none, and
+     *     `one-door.test.ts` keys on the eleven TERMS, none of which it names.
+     */
+    const index = gateSources().find((s) => s.file === 'index.ts')!.text;
+
+    const call = index.indexOf('await probeSearch(');
+    expect(call, 'probeSearch is not called by the drive').toBeGreaterThan(-1);
+    for (const earlier of [
+      'await probeDriftBanner(',
+      'await probeThreadInline(',
+      'await probeLiveUpdate(',
+    ]) {
+      expect(call, `${earlier} reads the session view and must run first`).toBeGreaterThan(
+        index.indexOf(earlier),
+      );
+    }
+
+    const body = index.slice(index.indexOf('async function probeSearch'));
+    expect(body, 'the probe must write no file, or fs-write-sites re-keys').not.toContain(
+      'appendFileSync',
+    );
+    expect(body).not.toContain('writeFileSync');
+  });
+
+  it('reaches the search screen by CLICKING the in-session control (Test 25)', () => {
+    // AC2's "reachable from the session view", gate-verified. A `goto` here
+    // would prove the route resolves while an unreachable control sat broken on
+    // the header — which is exactly the failure this task's Why was written
+    // against.
+    const index = gateSources().find((s) => s.file === 'index.ts')!.text;
+    const body = index.slice(
+      index.indexOf('async function probeSearch'),
+      index.indexOf(
+        '/* ----------------------------------------------------------------- misc --- */',
+      ),
+    );
+
+    expect(body, 'the probe body must exist to be checked').not.toBe('');
+    expect(body).toContain('slot(SELECTORS.inSessionSearch)');
+    expect(body).toMatch(/entry\.click\(\)/);
+    expect(body, 'a goto would skip the control the AC is about').not.toContain('page.goto');
   });
 
   it("pins the virtualizer's estimate to SpanTree's own constant", () => {

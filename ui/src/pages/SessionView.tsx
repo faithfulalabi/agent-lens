@@ -22,9 +22,11 @@ import {
   initialExpanded,
   loadSessionDetail,
   needsReseed,
+  revealTarget,
   rowsChangedAction,
   type SessionData,
 } from '@/lib/session-data';
+import { revealStep, type RevealLatch } from '@/lib/search';
 import {
   applyFrame,
   atBottom,
@@ -121,9 +123,16 @@ export interface SessionViewProps {
   api?: ApiClient;
   /** The app-wide frame bus. Absent means this screen does not tail. */
   bus?: LiveBus;
+  /**
+   * The event `seq` a search hit named. Absent means an ordinary open.
+   *
+   * A `seq` rather than a row index, because a `seq` survives a reprojection and
+   * a row index does not.
+   */
+  revealSeq?: number;
 }
 
-export function SessionView({ sessionId, api, bus }: SessionViewProps) {
+export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps) {
   const client = useMemo(() => api ?? createApiClient(), [api]);
 
   /*
@@ -206,6 +215,55 @@ export function SessionView({ sessionId, api, bus }: SessionViewProps) {
     () => flatten(model, nav.expandedIds, undefined, { rootSessionId, subtrees }),
     [model, nav.expandedIds, rootSessionId, subtrees],
   );
+
+  /*
+   * ★ THE JUMP FROM A SEARCH HIT, AS A ONE-SHOT LATCH.
+   *
+   * Seeded HERE and not beside `needsReseed` above, for two reasons. The seed
+   * has to run after that block or the reseed would replace the navigation state
+   * it just expanded; and this is where `rows` exists, which is what test 7 pins.
+   *
+   * ★ THE SEED SETS THE EXPANSION AND THE LATCH, AND NOTHING ELSE. Setting
+   * `selectedId` here would consume the latch on the very next render, and the
+   * tree would never receive an index to scroll to at all. `initialExpanded`
+   * opens the last turn alone, so a hit's row is usually absent from `rows` on
+   * arrival — `expandMany` is what makes it appear.
+   */
+  const revealed = revealTarget(data, revealSeq);
+  const revealKey = revealed === null ? null : `${rootSessionId}|${String(revealSeq)}`;
+  const [revealSeededFor, setRevealSeededFor] = useState<string | null>(null);
+  const [revealLatch, setRevealLatch] = useState<RevealLatch | null>(null);
+  if (revealed !== null && revealKey !== revealSeededFor) {
+    setRevealSeededFor(revealKey);
+    setNav((current) => expandMany(current, [revealed.turnId]));
+    setRevealLatch(revealed);
+  }
+
+  /*
+   * ★ CONSUMED ON DELIVERY, AND THE WRITE-BACK IS AN EFFECT ON PURPOSE.
+   *
+   * `revealStep` is pure and its rule is one-shot: it keeps the latch while the
+   * row is absent and drops it the render the row appears, answering the index,
+   * the selection and the focus together.
+   *
+   * The write-back cannot be a render-phase update. React re-runs a component
+   * that sets its own state during render and DISCARDS that pass without
+   * rendering children — so clearing the latch during render would throw away
+   * the one render in which `SpanTree` is handed an index, and the scroll would
+   * never fire. Clearing it after the commit is what lets the delivery render
+   * reach the tree. The guard is still the guard: writing back unconditionally
+   * would loop forever.
+   */
+  const { latch: nextLatch, revealIndex, selectedId, focusedIndex } = revealStep(revealLatch, rows);
+  useEffect(() => {
+    if (nextLatch === revealLatch) return;
+    setRevealLatch(nextLatch);
+    if (selectedId === undefined || focusedIndex === undefined) return;
+    // Selection and focus in ONE update, the shape the pointer path already
+    // uses below: a row that is selected but not focused is a row the keyboard
+    // would then move away from.
+    setNav((current) => ({ ...current, focusedIndex, selectedId }));
+  }, [nextLatch, revealLatch, selectedId, focusedIndex]);
 
   /*
    * The second reader over the SAME array. `useAsync` reads its loader through a
@@ -446,6 +504,7 @@ export function SessionView({ sessionId, api, bus }: SessionViewProps) {
                 selectedId={nav.selectedId}
                 focusedIndex={nav.focusedIndex}
                 followIndex={follow.following && rows.length > 0 ? rows.length - 1 : undefined}
+                revealIndex={revealIndex}
                 onScrollMetrics={onScrollMetrics}
                 onKeyDown={onKeyDown}
                 onSelect={onSelect}

@@ -12,6 +12,7 @@ import {
   createApiClient,
   isAuthError,
   type ApiClient,
+  type SearchBody,
   type SessionDetailBody,
   type SessionListRow,
 } from '../api';
@@ -46,6 +47,8 @@ const BOOTSTRAP: Bootstrap = Object.freeze({
 interface Recorded {
   url: string;
   headers: Headers;
+  /** Task 7.2: the client was GET-only, so `warm` has to be asserted explicitly. */
+  method: string | undefined;
 }
 
 function recordingFetch(respond: (url: string) => Response | Promise<Response>): {
@@ -55,7 +58,7 @@ function recordingFetch(respond: (url: string) => Response | Promise<Response>):
   const calls: Recorded[] = [];
   const fetchImpl: typeof fetch = (input, init) => {
     const url = String(input);
-    calls.push({ url, headers: new Headers(init?.headers) });
+    calls.push({ url, headers: new Headers(init?.headers), method: init?.method });
     return Promise.resolve(respond(url));
   };
   return { calls, fetchImpl };
@@ -85,6 +88,11 @@ const METHODS: readonly { name: string; path: string; call: (c: ApiClient) => Pr
       path: '/api/events/ev-1/content?field=text',
       call: (c) => c.getEventContent('ev-1', 'text'),
     },
+    // Task 7.2. Both go through the same `request` helper, so both inherit the
+    // token header, the error taxonomy and the origin-relative URL for free —
+    // and they are in this table so that stays asserted rather than assumed.
+    { name: 'search', path: '/api/search?q=needle&limit=200', call: (c) => c.search('needle') },
+    { name: 'warm', path: '/api/warm', call: (c) => c.warm() },
   ];
 
 describe('the API client authenticates by header', () => {
@@ -326,6 +334,87 @@ describe('the API client returns the shared wire shapes', () => {
     const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
     await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).listSessions(query);
     expect(calls[0]?.url).toBe(`/api/sessions${search}`);
+  });
+
+  /* ---------------------------------------------- Task 7.2, Tests 9, 20 --- */
+
+  it('search sends q, session and limit, and drops empty values (Test 9)', async () => {
+    const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
+    const client = createApiClient({ fetchImpl, bootstrap: BOOTSTRAP });
+
+    await client.search('ENOENT');
+    await client.search('ENOENT', { session: 's1' });
+    await client.search('ENOENT', { session: '' });
+    // Raw, never classified: 7.1's phrase fallback answers 200 for a term that
+    // is not a valid FTS5 expression, so blaming it on the client would refuse
+    // text the server can search.
+    await client.search('foo-bar');
+
+    expect(calls[0]?.url).toBe('/api/search?q=ENOENT&limit=200');
+    expect(calls[1]?.url).toBe('/api/search?q=ENOENT&session=s1&limit=200');
+    expect(calls[2]?.url, "the server reads '' as not supplied; sending it is a lie").toBe(
+      '/api/search?q=ENOENT&limit=200',
+    );
+    expect(calls[3]?.url).toBe('/api/search?q=foo-bar&limit=200');
+    // The limit is the client's own constant and is never a user input, which
+    // is what puts `parsePageParams`' 400 arms out of the screen's reach.
+    for (const { url } of calls) expect(url).toContain('limit=200');
+  });
+
+  it('search returns the three keys the route sends (Test 9)', async () => {
+    const body = {
+      items: [
+        {
+          session_id: 's1',
+          session_title: null,
+          project_path: '/repo',
+          turn_id: 't1',
+          event_id: 'ev-1',
+          seq: 7,
+          kind: 'tool_call',
+          name: 'Bash',
+          ts: '2026-09-01T00:00:00.000Z',
+          snippet: 'a <mark>hit</mark>',
+        },
+      ],
+      scope: 'projected',
+      unprojected_count: 12,
+    };
+    const { fetchImpl } = recordingFetch(() => json(body));
+    const search: SearchBody = await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).search(
+      'hit',
+    );
+
+    expect(search.scope).toBe('projected');
+    // The honest denominator rides on EVERY response, which is what lets the
+    // screen refresh it with no stream frame at all.
+    expect(search.unprojected_count).toBe(12);
+    expect(search.items[0]?.seq, 'the jump target rides on the hit').toBe(7);
+    expect(search.items[0]?.session_id).toBe('s1');
+  });
+
+  it('warm POSTs, carries the token header, and reads queued off a 202 (Test 20)', async () => {
+    // The method is asserted EXPLICITLY: `request` was GET-only before this
+    // task, and a `warm` that silently issued a GET would 404 rather than warm.
+    const { calls, fetchImpl } = recordingFetch(() => json({ queued: 41 }, 202));
+    const body = await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).warm();
+
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.url).toBe('/api/warm');
+    expect(calls[0]?.headers.get(BOOTSTRAP.tokenHeader)).toBe(BOOTSTRAP.token);
+    // 202 passes `res.ok`, so accepted-but-not-finished needs no special case.
+    expect(body.queued).toBe(41);
+  });
+
+  it('every other method stays a GET', async () => {
+    const { calls, fetchImpl } = recordingFetch(() => json(EMPTY_PAGE));
+    const client = createApiClient({ fetchImpl, bootstrap: BOOTSTRAP });
+    await client.listSessions();
+    await client.getSession('s1');
+    await client.getEventContent('ev-1', 'text');
+    await client.search('q');
+
+    for (const call of calls) expect(call.method).toBe('GET');
   });
 
   it('getEventContent names the field as a bare param, and encodes the id', async () => {

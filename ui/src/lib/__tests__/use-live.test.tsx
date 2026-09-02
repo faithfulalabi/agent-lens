@@ -59,14 +59,23 @@ describe('the seams no server render can reach are pinned to the source', () => 
     expect(SOURCE).toContain('}, []);');
   });
 
-  it('forwards only the two frame names that have a producer', () => {
+  it('forwards every frame name that has a producer, warm_progress included', () => {
     expect(SOURCE).toContain("if (event === 'session_changed')");
     expect(SOURCE).toContain("} else if (event === 'session_indexed')");
-    // `warm_progress` is in the transport's allowlist so Task 7.4 need not edit
-    // `sse.ts`, and deliberately has no payload type and no consumer here.
-    expect(SOURCE, 'a payload shape for a frame nothing emits is an invention').not.toContain(
-      'warm_progress',
-    );
+    // ★ THIS ASSERTED THE OPPOSITE UNTIL TASK 7.4, and deleting it is that
+    // commit's job rather than a later one's. The message was "a payload shape
+    // for a frame nothing emits is an invention" — true while `warm_progress`
+    // was a reserved name with no producer. 7.4 shipped `src/server/warm.ts`,
+    // which IS the producer, so the shape became a contract (`WarmProgressFrame`)
+    // and the limb below decodes it.
+    expect(SOURCE).toContain("} else if (event === 'warm_progress')");
+    // The limb PUBLISHES rather than merely matching: a branch that decodes and
+    // drops would satisfy the name check above and carry no frame to either page.
+    // Source text is the honest instrument here for the reason this file states —
+    // no effect runs under `environment: 'node'`, so `create` is never called and
+    // the socket, the subscription and this dispatch are all unreachable at
+    // runtime. `live.test.ts` carries the behaviour the frames feed.
+    expect(SOURCE).toContain("busRef.current.publish({ event, data: data as WarmProgressFrame })");
   });
 });
 

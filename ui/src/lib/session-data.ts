@@ -219,6 +219,26 @@ export function initialExpanded(turns: readonly TurnRow[]): Set<string> {
 }
 
 /**
+ * The turn and event a jump names, found by `seq` in the page already loaded.
+ *
+ * `seq` rather than a row index, because a row index does not survive a
+ * reprojection and a `seq` does. No second request is needed: `EVENT_LIMIT` is
+ * 10,000 against a largest measured session of 624 events, so the target is
+ * always in `data.events`.
+ *
+ * Total. An unknown `seq` answers `null` — a deep link to an event that has been
+ * reprojected away should open the session, not blow up the render.
+ */
+export function revealTarget(
+  data: SessionData | null,
+  seq: number | undefined,
+): { turnId: string; eventId: string } | null {
+  if (data === null || seq === undefined) return null;
+  const event = data.events.find((candidate) => candidate.seq === seq);
+  return event === undefined ? null : { turnId: event.turn_id, eventId: event.id };
+}
+
+/**
  * Does the navigation state have to start over for the data now in hand?
  *
  * ===========================================================================
