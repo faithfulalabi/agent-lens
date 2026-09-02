@@ -6,6 +6,7 @@ import { createLiveBus } from './lib/live.js';
 import type { Router } from './lib/router.js';
 import { useLiveStream } from './lib/use-live.js';
 import { useRoute } from './lib/use-route.js';
+import { Search } from './pages/Search.js';
 import { SessionView } from './pages/SessionView.js';
 import { Sessions } from './pages/Sessions.js';
 import { Showcase } from './pages/Showcase.js';
@@ -57,6 +58,11 @@ export function App({ router, api }: AppProps = {}) {
    * cold-loads to the exact view state", and 5.4 owns the detail pane the
    * selection drives.
    *
+   * Task 7.2 added two arms. `search` is its own page; `event` reaches the SAME
+   * session view carrying the `seq` a search hit named, which is the deep link
+   * `trace` could never express — `turnSeq` numbers turns and a hit's `seq`
+   * numbers events.
+   *
    * The switch stays INLINE inside `<AppShell>`. Extracting it into a helper
    * would move the page elements outside the slice that `components.test.tsx`
    * reads, and break a pin for no reason.
@@ -65,10 +71,16 @@ export function App({ router, api }: AppProps = {}) {
     <AppShell>
       {route.name === 'showcase' ? (
         <Showcase />
-      ) : route.name === 'session' || route.name === 'trace' ? (
+      ) : route.name === 'search' ? (
+        <Search
+          {...(route.sessionId === undefined ? {} : { sessionId: route.sessionId })}
+          {...(api === undefined ? {} : { api })}
+        />
+      ) : route.name === 'session' || route.name === 'trace' || route.name === 'event' ? (
         <SessionView
           sessionId={route.sessionId}
           bus={bus}
+          {...(route.name === 'event' ? { revealSeq: route.seq } : {})}
           {...(api === undefined ? {} : { api })}
         />
       ) : (

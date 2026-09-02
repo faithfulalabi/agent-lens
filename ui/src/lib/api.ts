@@ -227,6 +227,51 @@ export interface EventContentBody {
   spill_path?: string;
 }
 
+/**
+ * One search hit, mirroring `SearchHit` (`src/db/read.ts:201-212`) verbatim.
+ *
+ * ★ `snippet` IS UNTRUSTED TEXT CARRYING MARKERS, NEVER MARKUP TO INSERT.
+ * `searchEvents` wraps each match in `<mark>`/`</mark>` literals around whatever
+ * the transcript held, and transcripts hold source code. MEASURED against
+ * `.agent-lens-dev/cache.db` (293 sessions, 30,286 events) with `q=script`,
+ * `limit=300`, stripping the two marker literals: 81 of the 300 snippets carry a
+ * raw `<` and 67 carry a literal opening script tag. `splitSnippet` in
+ * `search.ts` is what reads the markers; React then escapes every text node.
+ *
+ * The jump target rides here too — `session_id` and `seq` — so landing on the
+ * matched event needs no second lookup.
+ */
+export interface SearchHitRow {
+  session_id: string;
+  session_title: string | null;
+  project_path: string;
+  turn_id: string;
+  event_id: string;
+  seq: number;
+  kind: string;
+  name: string | null;
+  ts: string;
+  snippet: string | null;
+}
+
+/**
+ * `GET /api/search` — the body `src/server/api.ts:527-531` builds.
+ *
+ * `scope` is `'session'` only when the request named one. `unprojected_count`
+ * rides on EVERY response, so the honest denominator refreshes on each query
+ * with no stream frame at all.
+ */
+export interface SearchBody {
+  items: SearchHitRow[];
+  scope: 'projected' | 'session';
+  unprojected_count: number;
+}
+
+/** `POST /api/warm` — how many sessions the queue took, off a 202. */
+export interface WarmBody {
+  queued: number;
+}
+
 /** Discriminant shared by every failure this client throws. */
 export type ApiErrorKind = 'auth' | 'http' | 'network';
 
@@ -317,6 +362,17 @@ export interface SessionDetailQuery {
   from_seq?: number;
 }
 
+/**
+ * `GET /api/search` params. `session` scopes to one session; omitting it
+ * searches every projected transcript.
+ *
+ * `limit` is deliberately absent: the client owns it as a constant and never
+ * surfaces it, so `parsePageParams`' 400 arms are unreachable from the screen.
+ */
+export interface SearchQuery {
+  session?: string;
+}
+
 /** Per-request cancellation, passed straight through to `fetch`. */
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -341,6 +397,14 @@ export interface ApiClient {
     field: ContentField,
     options?: RequestOptions,
   ): Promise<EventContentBody>;
+  /**
+   * FTS5 over the projected corpus, or over one session when `query.session` is
+   * set. `q` is sent raw: the server retries an unparseable term as a literal
+   * phrase, so `foo-bar` and `ENOENT:` are searched rather than blamed.
+   */
+  search(q: string, query?: SearchQuery, options?: RequestOptions): Promise<SearchBody>;
+  /** Start the warm queue. Answers 202 with the number of sessions it took. */
+  warm(options?: RequestOptions): Promise<WarmBody>;
 }
 
 export interface ApiClientOptions {
@@ -357,12 +421,16 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     path: string,
     query: Record<string, string | number | undefined>,
     requestOptions: RequestOptions | undefined,
+    // Defaulted rather than required, so the three GET callers stay unchanged
+    // and the one POST inherits the token header, the error taxonomy and
+    // `buildUrl` without a second request path to keep in step.
+    method: 'GET' | 'POST' = 'GET',
   ): Promise<T> {
     const url = buildUrl(path, query);
     let res: Response;
     try {
       res = await fetchImpl(url, {
-        method: 'GET',
+        method,
         // The credential rides in a header and nowhere else, so it never lands
         // in a URL, a referrer or a server log.
         headers: { [bootstrap.tokenHeader]: bootstrap.token },
@@ -395,8 +463,24 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         { field },
         options,
       ),
+
+    search: (q, query = {}, options) =>
+      request<SearchBody>('/api/search', { q, ...query, limit: SEARCH_LIMIT }, options),
+
+    // A 202 passes `res.ok`, so the accepted-but-not-finished status needs no
+    // special case — it parses as an ordinary JSON body.
+    warm: (options) => request<WarmBody>('/api/warm', {}, options, 'POST'),
   };
 }
+
+/**
+ * Hits per query. The client's own constant, never a user input.
+ *
+ * Stated rather than omitted: the server's default is 50, and a screen that
+ * silently showed a fifth of what matched would be the same "searched part of
+ * the corpus" dishonesty this whole screen exists against.
+ */
+const SEARCH_LIMIT = 200;
 
 /**
  * An origin-relative path with its query appended. Absent and empty values are

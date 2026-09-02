@@ -98,3 +98,44 @@ describe('App routes the session URLs to the session view (Test 20)', () => {
     expect(renderAt('/session/a%2Fb')).toContain('data-slot="session-view"');
   });
 });
+
+/*
+ * ★ Test 18 — `App.tsx` BRANCHES on Task 7.2's two arms.
+ *
+ * Neither existing instrument can fail on this. The page-list pin derives its
+ * list from `App.tsx`'s own imports, so importing the page and never routing to
+ * it passes; and `route-match.test.ts` proves the table round-trips a path the
+ * app may never act on. Without these two cases the only thing that would catch
+ * a missing branch is the render gate, a browser away.
+ */
+describe('App routes Task 7.2 search and event URLs (Test 18)', () => {
+  it('renders /search as the search screen and NOT as the session view', () => {
+    const markup = renderAt('/search');
+    expect(markup).toContain('data-slot="app-shell"');
+    expect(markup).toContain('data-slot="search-view"');
+    expect(markup).toContain('data-slot="search-input"');
+    expect(markup, 'the session view is another branch and must not also render').not.toContain(
+      'data-slot="session-view"',
+    );
+    expect(markup, 'the list is the fall-through and must not draw either').not.toContain(
+      'data-slot="range-control"',
+    );
+  });
+
+  it('renders /search/session/:id as the same screen, scoped', () => {
+    expect(renderAt('/search/session/seed-s0')).toContain('data-slot="search-input"');
+  });
+
+  it('renders an event deep link as the session view', () => {
+    // `/session/:id/event/:seq` is where a search hit lands. It resolves to the
+    // session; the scroll to the row is `revealStep`'s and fires on an effect,
+    // which never runs here.
+    const markup = renderAt('/session/seed-s0/event/3');
+    expect(markup).toContain('data-slot="session-view"');
+    expect(markup).not.toContain('data-slot="search-input"');
+  });
+
+  it('leaves an event path with a non-numeric seq on the fall-through', () => {
+    expect(renderAt('/session/seed-s0/event/x')).toContain('data-slot="range-control"');
+  });
+});

@@ -189,6 +189,47 @@ export interface DriftProbe {
   appendedType: string;
 }
 
+/**
+ * AC-R1 for task 7.2: the search screen was REACHED from the session view, it
+ * drew a highlighted hit, and clicking that hit landed on the matched row.
+ *
+ * ★ `null` IS A FAILURE, on `threadAssertions`' terms rather than the tool-call
+ * probe's. Nothing about the corpus can empty this: the term is derived from the
+ * open session's OWN wire events and the search is scoped to that session, so a
+ * query with no hit means the screen is broken rather than the corpus quiet.
+ *
+ * ★ THE PATH IS RECORDED BECAUSE THE ENTRY POINT IS AN ACCEPTANCE CRITERION.
+ * AC2's "in-session search is reachable from the session view" is discharged by
+ * CLICKING `in-session-search` and reading where it landed — not by a source pin
+ * that would pass over an anchor nothing can reach.
+ */
+export interface SearchProbe {
+  /** Where clicking `in-session-search` landed. Must name the open session. */
+  path: string;
+  /** The `search-scope` strip's text, read on the search screen. */
+  scopeText: string;
+  /** The query, derived from the open session's own wire events. */
+  term: string;
+  /** `data-slot="search-hit"` anchors the query drew. */
+  hitCount: number;
+  /** The first hit's `data-event-id` — the row that must end up selected. */
+  eventId: string;
+  /** Highlighted runs inside that hit's snippet. Zero means no highlight drawn. */
+  markedRuns: number;
+  /**
+   * `data-slot="search-warm"` controls on screen.
+   *
+   * MEASURED 0: `countUnprojected` reports 0 over the dev corpus (293 of 293
+   * `ready`) and the gate snapshot copies the same database, so the control is
+   * correctly absent. Asserting the ABSENCE is falsifiable — a control stuck
+   * permanently on reds here. The raise side belongs to task 7.4's probe, whose
+   * own AC needs the count to start above zero.
+   */
+  warmControls: number;
+  /** Did the row carrying `eventId` become `aria-selected` after the click? */
+  landedSelected: boolean;
+}
+
 /** Everything the drive read out of the page. Screenshot bytes are added on write. */
 export interface Observations {
   viteUrl: string;
@@ -246,6 +287,8 @@ export interface Observations {
   liveUpdate: LiveProbe | null;
   /** The durability alarm, raised last of all. `null` is a FAILURE — see the type. */
   driftBanner: DriftProbe | null;
+  /** The search screen, driven last of all. `null` is a FAILURE — see the type. */
+  searchScreen: SearchProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
   windowFirstIndex: number | null;
@@ -438,6 +481,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     ...liveAssertions(result.liveUpdate),
     ...threadAssertions(result.threadInline),
     ...driftAssertions(result.driftBanner),
+    ...searchAssertions(result.searchScreen),
     {
       name: 'console-errors',
       ok: result.consoleErrors.length === 0,
@@ -467,16 +511,17 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'Enter moves aria-selected to another data-index',
     },
     {
-      // RAISED 8 -> 9 BY TASK 7.3, with `09-drift.png`; 6.2 raised it 7 -> 8.
+      // RAISED 9 -> 10 BY TASK 7.2, with `10-search.png`; 7.3 raised it 8 -> 9
+      // and 6.2 raised it 7 -> 8.
       // TWO literals move, and they are the `ok:` line and the `expected:` line
       // — NOT the `actual:` template between them, which interpolates and holds
       // no number to change. Leaving one behind ships a report reading
-      // `9 screenshot(s) / expected: 8 screenshots` with `ok: true` — a contact
+      // `10 screenshot(s) / expected: 9 screenshots` with `ok: true` — a contact
       // sheet that contradicts itself while passing.
       name: 'shot-count',
-      ok: result.shots.length === 9,
+      ok: result.shots.length === 10,
       actual: `${result.shots.length} screenshot(s)`,
-      expected: '9 screenshots',
+      expected: '10 screenshots',
     },
     ...result.shots.map(evaluateShot),
   ];
@@ -708,6 +753,70 @@ function driftAssertions(probe: DriftProbe | null): AssertionRecord[] {
       ok: probe.after > 0,
       actual: `${probe.before} -> ${probe.after} banner(s) after a "${probe.appendedType}" record`,
       expected: 'the banner raises on the unrecognised record, with no manual refresh',
+    },
+  ];
+}
+
+/**
+ * AC-R1 for task 7.2, in four records: the screen was REACHED from the session
+ * view, it drew a highlighted hit, the hit landed on its own row, and the warm
+ * control stayed silent over a fully-projected corpus.
+ *
+ * ★ A `null` READING FAILS, on `threadAssertions`' terms. The query is derived
+ * from the open session's own wire events and the search is scoped to that
+ * session, so "no hit" cannot be a fact about the corpus — it is the screen
+ * failing.
+ *
+ * The four clauses stay separate because a reader acts on each differently: a
+ * wrong path is a broken entry point, a missing highlight is a rendering defect,
+ * an unselected row is a broken jump, and a warm control on a corpus with
+ * nothing to warm is the "stuck permanently on" defect the silence catches.
+ */
+function searchAssertions(probe: SearchProbe | null): AssertionRecord[] {
+  if (probe === null) {
+    return [
+      {
+        name: 'search-reached',
+        ok: false,
+        actual: 'the in-session search control was not found, or the screen drew no scope',
+        expected: 'the session view offers in-session search, and it reaches the search screen',
+      },
+    ];
+  }
+
+  return [
+    {
+      // AC2, GATE-VERIFIED rather than source-pinned: the control was clicked
+      // and this is where it landed.
+      name: 'search-reachable-in-session',
+      ok: probe.path.startsWith('/search/session/') && probe.scopeText.includes('this session'),
+      actual: `landed on ${quote(probe.path)}, scope reads ${quote(probe.scopeText)}`,
+      expected:
+        'clicking in-session search reaches /search/session/:id and states the session scope',
+    },
+    {
+      name: 'search-hit-highlighted',
+      ok: probe.hitCount > 0 && probe.markedRuns > 0,
+      actual: `${probe.hitCount} hit(s) for ${quote(probe.term)}, ${probe.markedRuns} highlighted run(s) in the first`,
+      expected: '>= 1 search hit, and its snippet carries a highlighted run',
+    },
+    {
+      name: 'search-jump-lands-on-event',
+      ok: probe.landedSelected,
+      actual: probe.landedSelected
+        ? `the row carrying ${quote(probe.eventId)} is aria-selected`
+        : `no row carrying ${quote(probe.eventId)} became aria-selected`,
+      expected: 'clicking the hit navigates and selects the row it named',
+    },
+    {
+      // MEASURED: `countUnprojected` is 0 over the dev corpus — 293 of 293
+      // `ready` — so the control is correctly absent and its ABSENCE is the
+      // falsifiable reading. Task 7.4's probe owns the raise side; if this ever
+      // reds, the count has risen and that probe is the one to look at.
+      name: 'search-warm-silent-when-nothing-to-warm',
+      ok: probe.warmControls === 0,
+      actual: `${probe.warmControls} warm control(s) on screen`,
+      expected: 'no warm control while every transcript is already projected',
     },
   ];
 }

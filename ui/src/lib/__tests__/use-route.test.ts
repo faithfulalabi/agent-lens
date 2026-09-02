@@ -37,7 +37,9 @@ function Probe({ router }: { router: ReturnType<typeof createRouter> }) {
 }
 
 function hrefish(route: Route): string {
-  return 'sessionId' in route ? route.sessionId : '-';
+  // `??` and not a bare read: Task 7.2's `search` arm carries an OPTIONAL
+  // session id, so the key is present on a route that names no session.
+  return 'sessionId' in route ? (route.sessionId ?? '-') : '-';
 }
 
 describe('useRoute', () => {

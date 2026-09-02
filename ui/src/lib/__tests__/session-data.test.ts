@@ -11,6 +11,7 @@ import {
   initialExpanded,
   loadSessionDetail,
   needsReseed,
+  revealTarget,
   rowsChangedAction,
   truncationNotes,
   type SessionData,
@@ -276,6 +277,47 @@ describe('the navigation state restarts on the session that ARRIVED (needsReseed
     const expanded = initialExpanded(dataFor('B').turns);
     expect([...expanded]).toEqual(['B:0']);
     expect(expanded.has('A:0')).toBe(false);
+  });
+});
+
+/* ------------------------------------- Task 7.2, Test 5 — the jump target --- */
+
+describe('revealTarget finds the event a search hit named, by seq', () => {
+  /** A `SessionData` whose page holds three events at known sequences. */
+  function dataWithEvents(): SessionData {
+    return {
+      session: { ...makeSessionRow(), projection: { state: 'ready' } },
+      turns: [makeTurnRow({ id: 't-1', seq: 0 })],
+      eventsByTurn: new Map(),
+      events: [
+        makeEventRow({ id: 'ev-a', turn_id: 't-1', seq: 0 }),
+        makeEventRow({ id: 'ev-b', turn_id: 't-2', seq: 7 }),
+        makeEventRow({ id: 'ev-c', turn_id: 't-3', seq: 9 }),
+      ],
+      hasMore: false,
+      shown: 3,
+      fingerprint: '900:500:2',
+    };
+  }
+
+  it('answers the turn and the event carrying the seq', () => {
+    // No second request: `EVENT_LIMIT` is 10,000 against a largest measured
+    // session of 624 events, so the target is always on the page in hand.
+    expect(revealTarget(dataWithEvents(), 7)).toEqual({ turnId: 't-2', eventId: 'ev-b' });
+  });
+
+  it('finds seq 0, which is a real sequence rather than a missing one', () => {
+    expect(revealTarget(dataWithEvents(), 0)).toEqual({ turnId: 't-1', eventId: 'ev-a' });
+  });
+
+  it.each([
+    { label: 'an unknown seq', data: dataWithEvents(), seq: 999 },
+    { label: 'no seq at all', data: dataWithEvents(), seq: undefined },
+    { label: 'no data yet', data: null, seq: 7 },
+  ])('answers null for $label, never a throw', ({ data, seq }) => {
+    // A deep link to an event that has been reprojected away should open the
+    // session, not blow up the render.
+    expect(revealTarget(data, seq)).toBeNull();
   });
 });
 

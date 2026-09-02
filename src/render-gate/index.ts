@@ -35,6 +35,7 @@ import {
   type LiveProbe,
   type Observations,
   type RenderGateReport,
+  type SearchProbe,
   type ShotRecord,
   type SubagentProbe,
   type ThreadProbe,
@@ -42,7 +43,7 @@ import {
 } from './report.js';
 
 /**
- * The ten `data-slot` values the gate drives. `data-slot` carries no styling
+ * The thirteen `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  *
@@ -50,9 +51,15 @@ import {
  * deliberately not listed: the container is reached through `data-thread-kind`,
  * and an entry no drive touches is the vacuity the guard exists to catch.
  *
+ * ★ `search-warm` IS DELIBERATELY NOT AN ENTRY EITHER, for exactly that reason.
+ * MEASURED: `countUnprojected` is 0 over the dev corpus — 293 of 293 `ready` —
+ * and the gate snapshot copies the same database, so the control cannot be
+ * driven at all. `probeSearch` reads it as a raw attribute selector instead, on
+ * `TREE_CANVAS`'s precedent below, and asserts its ABSENCE. Task 7.4's probe
+ * adds the entry when it can drive the raise side.
+ *
  * `spanExpand` is task 5.5's, and it is the toggle AC-R1(b) commits to clicking
- * by name. Every slot the drive touches goes through this constant; there is no
- * inline `data-slot` literal anywhere in this file, deliberately.
+ * by name. Every slot the drive touches goes through this constant.
  */
 export const SELECTORS = {
   sessionCount: 'session-list-count',
@@ -65,6 +72,9 @@ export const SELECTORS = {
   spanDetail: 'span-detail',
   threadToggle: 'thread-toggle',
   driftBanner: 'drift-banner',
+  inSessionSearch: 'in-session-search',
+  searchInput: 'search-input',
+  searchScope: 'search-scope',
 } as const;
 
 /** `SpanTree`'s own `ESTIMATED_ROW_PX`. Pinned by a test — `totalRows` needs it. */
@@ -104,12 +114,19 @@ const PER_WAIT_TIMEOUT_MS = 15_000;
  * the tree away for good. It is the only shot taken after the open session grew
  * under the reader, which is the state AC-R1 asserts on for that task.
  *
- * `09-drift.png` is task 7.3's, and it is shot LAST of all — AFTER the thread
- * toggle, which it survives because the alarm draws above the tree/thread split
- * rather than inside either. It is the only shot in which the durability alarm
- * is on screen at all: the corpus is clean (measured 291 of 293 sessions carry
- * no drift), so no other shot can hold one, and the AC-R2 eye would otherwise
- * open the contact sheet for an alarm task and see no alarm.
+ * `09-drift.png` is task 7.3's, and it is shot after the thread toggle, which it
+ * survives because the alarm draws above the tree/thread split rather than
+ * inside either. It is the only shot in which the durability alarm is on screen
+ * at all: the corpus is clean (measured 291 of 293 sessions carry no drift), so
+ * no other shot can hold one, and the AC-R2 eye would otherwise open the contact
+ * sheet for an alarm task and see no alarm.
+ *
+ * `10-search.png` is task 7.2's, and it is shot LAST OF ALL — the search drive
+ * NAVIGATES AWAY from the session, so every reading taken on the session view
+ * has to be finished before it. It is the only shot that can show the search
+ * screen. It shows NO warm control, and that is correct rather than missing:
+ * `countUnprojected` is 0 over this corpus, so there is nothing left to warm.
+ * Task 7.4's gate photographs the raise side.
  */
 type ShotName =
   | '01-sessions.png'
@@ -120,7 +137,8 @@ type ShotName =
   | '06-thread.png'
   | '07-subagent.png'
   | '08-live.png'
-  | '09-drift.png';
+  | '09-drift.png'
+  | '10-search.png';
 
 /**
  * The one reviewed exclusion, in the style of `no-egress.test.ts`'s
@@ -581,6 +599,12 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   // it draws above the tree/thread split, so it survives into the thread.
   const driftBanner = await probeDriftBanner(page, ctx, liveUpdate, shoot);
 
+  // LAST OF ALL, after the alarm. This probe NAVIGATES — twice — so every
+  // reading taken on the session view has to be finished before it runs. It
+  // leaves the session for the search screen and then follows a hit back into a
+  // session, which no earlier reading would survive.
+  const searchScreen = await probeSearch(page, events, shoot);
+
   const detail: DetailTexts = { t0, t1, t2 };
   return {
     shots,
@@ -602,6 +626,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       threadInline,
       liveUpdate,
       driftBanner,
+      searchScreen,
       detail,
       consoleErrors,
       failedResponses,
@@ -1297,7 +1322,183 @@ async function readTree(
   );
 }
 
+/* ------------------------------------------------- task 7.2, the search --- */
+
+/**
+ * FTS5 keywords. A bareword query that is one of these parses as an OPERATOR.
+ *
+ * `searchEvents` retries an unparseable term as a quoted phrase, so one of these
+ * still answers 200 — but it answers about the wrong thing, and the probe needs
+ * a term whose hit it can predict.
+ */
+const FTS_OPERATORS = new Set(['AND', 'OR', 'NOT', 'NEAR']);
+
+/**
+ * A query derived FROM THE WIRE, not from a literal nobody re-measures.
+ *
+ * ★ THE MOST FREQUENT WORD WINS, and that is what makes the hit predictable.
+ * The index is built over `events.text` and `events.input`, so a word taken from
+ * either is a token in it; taking the one that appears in the most events makes
+ * the query robust against any single event being a spilled-output marker whose
+ * body never entered the index (measured, 59 of 17,897 tool results).
+ *
+ * The shape rule is deliberately narrow. Word boundaries on both ends, so a long
+ * identifier is never truncated into a token the index does not hold; ASCII
+ * only, so the `unicode61` tokenizer's folding cannot surprise it; and never an
+ * operator, so the query means what it says.
+ *
+ * Pure and exported, because the choreography around it is Playwright and this
+ * is the only part of the probe a unit test can reach. The same split
+ * `pickPayloadRow` already uses.
+ */
+export function pickSearchTerm(events: readonly WireEvent[]): string | null {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    // Per EVENT, not per occurrence: a word repeated 400 times in one blob is
+    // one event's word, and the point of the count is breadth.
+    const seen = new Set<string>();
+    for (const field of [event.text, event.input]) {
+      if (field === null) continue;
+      for (const word of field.match(/\b[A-Za-z][A-Za-z0-9]{4,15}\b/g) ?? []) {
+        if (FTS_OPERATORS.has(word.toUpperCase())) continue;
+        seen.add(word);
+      }
+    }
+    for (const word of seen) counts.set(word, (counts.get(word) ?? 0) + 1);
+  }
+
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [word, count] of counts) {
+    // Ties break on the lower word, so the same corpus always yields the same
+    // query and a failing run is reproducible.
+    if (count > bestCount || (count === bestCount && best !== null && word < best)) {
+      best = word;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * The two search slots that stay raw selectors.
+ *
+ * `search-warm` cannot be driven at all while `countUnprojected` is 0, so an
+ * entry for it would be the exact vacuity the `SELECTORS` guard exists to catch.
+ * `search-hit` is driven, but the raise this task pays for is the three slots
+ * that carry AC2 — the entry point, the input and the scope — and a fourth
+ * would be a raise nothing in the guard's own comment accounts for. Both follow
+ * `TREE_CANVAS`'s precedent above.
+ */
+const WARM_CONTROL = '[data-slot="search-warm"]';
+const SEARCH_HIT = '[data-slot="search-hit"]';
+
+/**
+ * AC-R1 for task 7.2: the search screen is REACHED, it HIGHLIGHTS, and the hit
+ * LANDS on the event it named.
+ *
+ * ★ IT RUNS LAST OF ALL, AND THAT IS NOT A PREFERENCE. This is the only probe
+ * that navigates away from the open session, twice — once to the search screen
+ * and once back into a session by following a hit. Every reading any earlier
+ * probe takes is off the session view, so none of them would survive it.
+ *
+ * ★ IT REACHES THE SCREEN BY CLICKING, NEVER BY A `goto`. AC2 asks for
+ * in-session search to be REACHABLE from the session view. A `goto` would prove
+ * the route resolves while an unreachable control sat broken on the header, which
+ * is the "validated structure, never validated experience" failure this whole
+ * task was written against. Clicking is what makes that clause gate-verified.
+ *
+ * ★ THE QUERY IS SCOPED TO THE OPEN SESSION AND DERIVED FROM ITS OWN EVENTS, so
+ * `null` is a failure rather than a fact about the corpus — `report.ts` scores it
+ * on `threadAssertions`' terms.
+ *
+ * ★ IT WRITES NO FILE AND TAKES NO SESSION IDENTIFIER, so neither ordinal-keyed
+ * manifest moves. `fs-write-sites.test.ts` keys on write sites in source order
+ * and this probe has none. `one-door.test.ts` keys on the eleven harness terms
+ * and this file alone carries twelve suppressions for the session one — and
+ * that scan reads RAW SOURCE, comments included, so a single extra mention
+ * anywhere in this file re-keys every one of them. Hence this paragraph naming
+ * the identifier by role rather than spelling it, the same constraint
+ * `lib/route-match.ts`'s own header works under.
+ *
+ * The path the entry point landed on is read off the page instead, which is the
+ * stronger reading anyway: it is what the browser did, not what the drive
+ * already knew.
+ */
+async function probeSearch(
+  page: Page,
+  events: readonly WireEvent[],
+  shoot: (name: ShotName) => Promise<void>,
+): Promise<SearchProbe | null> {
+  const term = pickSearchTerm(events);
+  if (term === null) return null;
+
+  const entry = page.locator(slot(SELECTORS.inSessionSearch));
+  if ((await entry.count()) === 0) return null;
+  await entry.click();
+
+  // The input appearing is the latched fact worth waiting on — it exists only on
+  // the search screen, so this cannot resolve against the page just left.
+  const input = page.locator(slot(SELECTORS.searchInput));
+  await input.waitFor({ state: 'visible' });
+  const path = pathnameOf(page.url());
+
+  await input.fill(term);
+
+  // A hit appearing is what the query changes. No sleep: the request is issued
+  // by the load key changing, and the row is the latched result of it.
+  const hits = page.locator(SEARCH_HIT);
+  await page.waitForSelector(SEARCH_HIT).catch(() => null);
+
+  const scopeText = oneLine(
+    await page
+      .locator(slot(SELECTORS.searchScope))
+      .innerText()
+      .catch(() => ''),
+  );
+  const warmControls = await page.locator(WARM_CONTROL).count();
+  const hitCount = await hits.count();
+  await shoot('10-search.png');
+
+  if (hitCount === 0) {
+    return {
+      path,
+      scopeText,
+      term,
+      hitCount,
+      eventId: '',
+      markedRuns: 0,
+      warmControls,
+      landedSelected: false,
+    };
+  }
+
+  const first = hits.first();
+  const eventId = (await first.getAttribute('data-event-id')) ?? '';
+  // The highlight is an element this screen DREW, never markup the server sent —
+  // counting the elements is what tells those two apart.
+  const markedRuns = await first.locator('mark').count();
+
+  await first.click();
+  const landed = `${slot(SELECTORS.spanRow)}[data-event-id="${cssAttrValue(eventId)}"][aria-selected="true"]`;
+  const landedSelected = await page.waitForSelector(landed, { timeout: LIVE_SETTLE_MS }).then(
+    () => true,
+    () => false,
+  );
+
+  return { path, scopeText, term, hitCount, eventId, markedRuns, warmControls, landedSelected };
+}
+
 /* ----------------------------------------------------------------- misc --- */
+
+/** The path an absolute page URL names, or the raw value when it parses as none. */
+function pathnameOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
 
 function slot(name: string): string {
   return `[data-slot="${name}"]`;
