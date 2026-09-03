@@ -10,6 +10,8 @@ export { startLiveTick } from './live.js';
 export type { LiveTick, LiveTickOptions } from './live.js';
 export { createWarmQueue } from './warm.js';
 export type { WarmQueue, WarmQueueOptions } from './warm.js';
+export { aggregateDrift } from './drift-report.js';
+export type { DriftReport, DriftSession, RawDrift } from './drift-report.js';
 export { registerUi, injectToken } from './static-ui.js';
 export { readConfig, writeConfig, clearConfig } from './config.js';
 export type { RuntimeConfig } from './config.js';

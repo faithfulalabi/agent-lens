@@ -1,0 +1,29 @@
+// The SHIPPING build. `tsconfig.node.json` stays the typecheck config, so
+// `npm run typecheck` keeps covering tests; this one decides what reaches a
+// consumer's disk.
+//
+// `exclude` REPLACES the parent's rather than merging, so node_modules/dist/ui
+// are re-listed here on purpose. `src/dev` imports vite and `src/render-gate`
+// imports playwright-core — devDependencies that do not exist in a consumer's
+// install — and neither is reachable from the tarball's entry point.
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declaration": false,
+    // Not only size. Doc comments carry example paths — `src/corpus/paths.ts:58`
+    // spells out `/Users/me/Desktop/...` to explain slug decoding — and the pack
+    // smoke gates on zero `/Users/` in the shipped tree. Stripping comments keeps
+    // that gate strict instead of teaching it exceptions.
+    "removeComments": true
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "ui",
+    "src/dev",
+    "src/render-gate",
+    "**/__tests__/**",
+    "**/*.test.ts"
+  ]
+}

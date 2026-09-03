@@ -7,11 +7,19 @@
 // `commands/archive.ts:1` states the whole code namespace. What is left to
 // settle is the mismatch semantics, not the plumbing.
 
+import type { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
 import {
   buildDoctorReport,
+  resolveDataDir,
   type DoctorReport,
   type RetentionSetting,
 } from '../../archive/index.js';
+import { CACHE_DB_FILE, openReadOnlyDb } from '../../db/open.js';
+import { readDriftRows, readHealthCounts, readMeta } from '../../db/read.js';
+// Deep import, never the `server/index.js` barrel: that barrel loads the HTTP
+// server, and with it `hono/streaming`, into a command that binds no socket.
+import { aggregateDrift } from '../../server/drift-report.js';
 import { parseStringFlag } from './archive.js';
 
 /** Long lists are capped so a 30-day-old machine does not print thousands of rows. */
@@ -40,7 +48,115 @@ function files(n: number): string {
   return n === 1 ? '1 file' : `${n} files`;
 }
 
-function formatRetention(retention: RetentionSetting): string {
+/** What one projected harness version contributes to the census. */
+export interface HarnessCensusRow {
+  version: string;
+  projected: number;
+  drifting: number;
+}
+
+export interface CacheStats {
+  db_bytes: number;
+  sessions_indexed: number;
+  sessions_projected: number;
+  /** `undefined` on a cache no gate has stamped yet. Printed, never repaired. */
+  schema_version: string | undefined;
+  projector_version: string | undefined;
+  /** Sorted by version, so two runs over one cache render identically. */
+  harness: HarnessCensusRow[];
+}
+
+/**
+ * Three states, never a half-filled object: a cache that is absent and one that
+ * is unreadable are different facts, and neither is a zeroed `CacheStats`.
+ */
+export type CacheReport =
+  | { state: 'absent'; path: string }
+  | { state: 'unreadable'; path: string; message: string }
+  | { state: 'ready'; path: string; stats: CacheStats };
+
+/**
+ * Reads cache.db WITHOUT taking the single-instance lock, so `doctor` still
+ * reports while the server holds it. Never throws: an unreadable cache is a line
+ * in the report, not a failed command.
+ */
+export function readCacheStats(dataDir?: string): CacheReport {
+  const dir = resolveDataDir(dataDir);
+  const path = join(dir, CACHE_DB_FILE);
+  let db: DatabaseSync | undefined;
+  try {
+    db = openReadOnlyDb(dir);
+    if (db === undefined) return { state: 'absent', path };
+    const counts = readHealthCounts(db);
+    const drift = aggregateDrift(readDriftRows(db));
+    const drifting = new Map<string, number>();
+    for (const session of drift.sessions_with_drift) {
+      const version = session.harness_version ?? 'unknown';
+      drifting.set(version, (drifting.get(version) ?? 0) + 1);
+    }
+    return {
+      state: 'ready',
+      path,
+      stats: {
+        db_bytes: counts.db_bytes,
+        sessions_indexed: counts.sessions_indexed,
+        sessions_projected: counts.sessions_projected,
+        schema_version: readMeta(db, 'schema_version'),
+        projector_version: readMeta(db, 'projector_version'),
+        harness: Object.entries(drift.harness_versions)
+          .map(([version, projected]) => ({
+            version,
+            projected,
+            drifting: drifting.get(version) ?? 0,
+          }))
+          .sort((a, b) => (a.version < b.version ? -1 : 1)),
+      },
+    };
+  } catch (error) {
+    return { state: 'unreadable', path, message: String((error as Error).message ?? error) };
+  } finally {
+    if (db?.isOpen === true) db.close();
+  }
+}
+
+/**
+ * The cache block. Both degraded arms still name the path and say the cache is
+ * disposable, because the state a user reaches this line in is the one where
+ * "did I just lose something?" is the live question.
+ */
+export function formatCacheSection(cache: CacheReport): string[] {
+  if (cache.state === 'absent') {
+    return ['', `cache: ${cache.path} — not created yet; \`agent-lens start\` builds it`];
+  }
+  if (cache.state === 'unreadable') {
+    return [
+      '',
+      `cache: ${cache.path} — stats unavailable: ${cache.message}`,
+      '  nothing is lost either way — `agent-lens rebuild` recreates the whole file',
+    ];
+  }
+
+  const { stats } = cache;
+  const lines = [
+    '',
+    `cache: ${cache.path}`,
+    `  ${stats.db_bytes} bytes`,
+    `  ${stats.sessions_indexed} sessions indexed, ${stats.sessions_projected} projected`,
+    `  schema_version ${stats.schema_version ?? 'unstamped'}, ` +
+      `projector_version ${stats.projector_version ?? 'unstamped'}`,
+  ];
+  if (stats.harness.length === 0) {
+    lines.push('  no projected session carries a harness version yet');
+    return lines;
+  }
+  lines.push('  drift by harness version (the census counts clean rows too):');
+  for (const row of stats.harness) {
+    lines.push(`    ${row.version}: ${row.projected} projected, ${row.drifting} drifting`);
+  }
+  return lines;
+}
+
+export function formatRetention(retention: RetentionSetting): string {
   switch (retention.state) {
     case 'set':
       return `Claude Code retention (cleanupPeriodDays): ${retention.days} days`;
@@ -53,7 +169,12 @@ function formatRetention(retention: RetentionSetting): string {
   }
 }
 
-export function formatDoctorReport(report: DoctorReport): string {
+/**
+ * `cache` is optional so the whole existing archive report stays reachable with
+ * one argument — `--json` round-trips through this, and the pure-formatter tests
+ * pass a report alone.
+ */
+export function formatDoctorReport(report: DoctorReport, cache?: CacheReport): string {
   const { coverage, bytes, integrity, retention } = report;
   const lines = [
     'agent-lens doctor',
@@ -131,25 +252,31 @@ export function formatDoctorReport(report: DoctorReport): string {
     '',
     formatRetention(retention),
     `  read from ${report.settingsPath} — reported only; doctor never writes it`,
-    '',
-    COVERAGE_GAP_STATEMENT,
-    DURABILITY_STATEMENT,
   );
+
+  // BEFORE the two closing statements and never after them: those two sentences
+  // are the last thing on screen by design, and a section appended below would
+  // quietly demote them.
+  if (cache !== undefined) lines.push(...formatCacheSection(cache));
+
+  lines.push('', COVERAGE_GAP_STATEMENT, DURABILITY_STATEMENT);
 
   return lines.join('\n');
 }
 
 export async function doctor(args: string[] = []): Promise<void> {
+  const dataDir = parseStringFlag(args, 'dataDir');
   const report = buildDoctorReport({
-    dataDir: parseStringFlag(args, 'dataDir'),
+    dataDir,
     transcriptRoot: parseStringFlag(args, 'transcriptRoot'),
     settingsPath: parseStringFlag(args, 'settingsPath'),
     verify: args.includes('--verify'),
   });
+  const cache = readCacheStats(dataDir);
 
   if (args.includes('--json')) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify({ ...report, cache }));
   } else {
-    console.log(formatDoctorReport(report));
+    console.log(formatDoctorReport(report, cache));
   }
 }

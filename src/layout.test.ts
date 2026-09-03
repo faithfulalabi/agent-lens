@@ -35,8 +35,8 @@ describe('repo layout conforms to the tech plan', () => {
     expect(existsSync(resolve(srcDir, 'transcript', 'index.ts'))).toBe(false);
   });
 
-  it('has the three CLI commands, and none of the deleted four', () => {
-    for (const cmd of ['start', 'doctor', 'archive']) {
+  it('has the six CLI commands, and none of the deleted four', () => {
+    for (const cmd of ['start', 'doctor', 'archive', 'rebuild', 'warm', 'prune']) {
       expect(existsSync(resolve(srcDir, 'cli', 'commands', `${cmd}.ts`)), cmd).toBe(true);
     }
     for (const cmd of ['hook', 'install', 'uninstall', 'import']) {

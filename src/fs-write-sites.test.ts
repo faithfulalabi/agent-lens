@@ -200,6 +200,16 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     why: 'writes the one JSONL line to the fd from #2; no path of its own, and O_APPEND is what puts it at EOF',
   },
   {
+    key: 'cli/commands/prune.ts#1',
+    callee: 'rmSync',
+    why: "the product's ONLY destructive write. Removes <dataDir>/archive whole, or one session's <slug>/<id>.jsonl(.zst) plus its <slug>/<id>/ directory. One call site, not two: the paths are a loop over PruneTarget.paths, the same shape db/open.ts#1 uses for its suffixes. NARROWED FOUR WAYS, every one of them before this line runs — (a) the command refuses any argument it does not recognise, so a mistyped --dataDir cannot silently retarget the real archive; (b) assertUnderRoot(path, resolveDataDir(...), DATA_DIR_LABEL) refuses anything resolving outside the data dir; (c) assertNotUnderRoot(path, resolveTranscriptRoot(...), TRANSCRIPT_ROOT_LABEL) refuses anything resolving INSIDE ~/.claude/projects, and that assert is the whole reason the read-only guarantee over the corpus survives the one command that deletes; (d) a human types the exact confirm literal, with EOF and every near-miss declining. Both asserts canonicalize through realpathDeepest, so a <dataDir>/archive symlinked AT the corpus is refused rather than followed. Scope: check-then-act, like every other caller of these guards. A link planted between the assert and this call is not covered and cannot be — that needs unlinkat against a dirfd and Node exposes no such API. PERMANENT, the same limit archive/mirror.ts#1 records",
+  },
+  {
+    key: 'cli/commands/rebuild.ts#1',
+    callee: 'rmSync',
+    why: "removes <dataDir>/cache.db and its -wal/-shm siblings for a whole-cache `agent-lens rebuild`. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm'], db/open.ts#1's idiom verbatim. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and never a transcript root. The removal runs only while THIS process holds <dataDir>/cache.db.lock: a lock already `held` returns 1 above this line, because unlinking under another process's live handle forks the database silently — its writes keep succeeding and are lost on close. `force: true` is load-bearing: a cleanly closed cache has no -wal/-shm to remove. Nothing durable is at risk here at all — cache.db is a projection of the archive, which this command never touches",
+  },
+  {
     key: 'db/open.ts#1',
     callee: 'rmSync',
     why: "removes <dataDir>/cache.db and its -wal/-shm siblings when user_version does not match SCHEMA_VERSION. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm']. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and the removal runs only while THIS process holds the cache lock — unlinking under a live handle forks the database silently, which is why the lock is taken before the open. `force: true` is load-bearing: a first run on an empty data dir reads user_version 0, takes this branch, and finds no -wal/-shm to remove",

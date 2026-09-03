@@ -32,6 +32,21 @@ export const COMMANDS: Command[] = [
     summary: 'Mirror Claude Code transcripts into the durable archive',
     run: (args) => import('./commands/archive.js').then((m) => m.archive(args)),
   },
+  {
+    name: 'rebuild',
+    summary: 'Drop the disposable cache, or one session’s projection',
+    run: (args) => import('./commands/rebuild.js').then((m) => m.rebuild(args)),
+  },
+  {
+    name: 'warm',
+    summary: 'Project every indexed session, printing progress to completion',
+    run: (args) => import('./commands/warm.js').then((m) => m.warm(args)),
+  },
+  {
+    name: 'prune',
+    summary: 'Permanently delete archived transcripts — asks first, no undo',
+    run: (args) => import('./commands/prune.js').then((m) => m.prune(args)),
+  },
 ];
 
 export function printHelp(): void {

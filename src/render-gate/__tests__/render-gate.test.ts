@@ -5,8 +5,17 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -1363,13 +1372,81 @@ describe('the gate source itself (AC6)', () => {
 
 describe('install carries no browser download (AC1)', () => {
   const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'));
+
+  /** Every lockfile entry for a playwright package, keyed by install path. */
+  const playwrightInstalls = (): [string, { version?: string; hasInstallScript?: boolean }][] =>
+    Object.entries(
+      lock.packages as Record<string, { version?: string; hasInstallScript?: boolean }>,
+    )
+      .filter(([path]) =>
+        /node_modules\/(@playwright\/test|playwright|playwright-core)$/.test(path),
+      )
+      .sort(([a], [b]) => a.localeCompare(b));
 
   it('keeps playwright-core in devDependencies only', () => {
     expect(pkg.devDependencies['playwright-core']).toBeDefined();
     expect(pkg.dependencies['playwright-core']).toBeUndefined();
-    // `playwright` / `@playwright/test` are what carry the browser postinstall.
-    expect(pkg.devDependencies['playwright']).toBeUndefined();
-    expect(pkg.devDependencies['@playwright/test']).toBeUndefined();
+  });
+
+  // ★ AMENDED BY TASK 8.2 — 2026-09-02, on a founder ruling. Read this before
+  // concluding a guard was deleted to make a branch green.
+  //
+  // This block used to assert `devDependencies['@playwright/test']` was
+  // undefined, on the premise it stated outright: "`playwright` /
+  // `@playwright/test` are what carry the browser postinstall". That premise was
+  // MEASURED FALSE at 1.62.1 — all three packages report `hasInstallScript:
+  // false`, `playwright` and `playwright-core` carry no `scripts` key at all, and
+  // installing the runner produced no browser cache anywhere on the machine.
+  // Task 8.2 needs the runner for its packing smoke, so the key ban is replaced
+  // by the three checks below, which assert the PROPERTY task 0.3 cared about
+  // rather than a proxy for it. This is STRICTER, not looser: a key ban was blind
+  // to a browser download arriving through any package it did not name, and blind
+  // to a second `playwright-core` being hoisted beside the gate's own. These are
+  // not.
+  it('installs no playwright package that downloads a browser', () => {
+    const installs = playwrightInstalls();
+
+    // Set-equality first, so a missing package cannot make the loop vacuous.
+    expect(installs.map(([path]) => path)).toEqual([
+      'node_modules/@playwright/test',
+      'node_modules/playwright',
+      'node_modules/playwright-core',
+    ]);
+    for (const [path, meta] of installs) {
+      expect(`${path} hasInstallScript=${meta.hasInstallScript ?? false}`).toBe(
+        `${path} hasInstallScript=false`,
+      );
+    }
+  });
+
+  it('resolves exactly one playwright-core, and it is the gate driver', () => {
+    // AC3's "neither replaced nor duplicated", enforced mechanically. `playwright`
+    // pins `playwright-core` to an exact version, which is why one copy dedupes;
+    // a range drift would hoist a second beside it and this would red.
+    const cores = Object.entries(lock.packages as Record<string, { version?: string }>).filter(
+      ([path]) => path.endsWith('node_modules/playwright-core'),
+    );
+    expect(cores.map(([path]) => path)).toEqual(['node_modules/playwright-core']);
+
+    // Resolved the way the gate itself resolves it, not re-derived from here.
+    const fromGate = createRequire(join(GATE_DIR, 'index.ts')).resolve(
+      'playwright-core/package.json',
+    );
+    expect(fromGate).toBe(join(REPO_ROOT, 'node_modules', 'playwright-core', 'package.json'));
+    expect(JSON.parse(readFileSync(fromGate, 'utf8')).version).toBe(cores[0]![1].version);
+  });
+
+  it('leaves no browser cache on the machine', () => {
+    // Deliberately machine-global, not repo-local: that is the only scope in
+    // which "no browser download" is a real claim. It also catches a stray
+    // `playwright install` run by hand, which no manifest check ever could.
+    for (const dir of [
+      join(homedir(), 'Library', 'Caches', 'ms-playwright'),
+      join(homedir(), '.cache', 'ms-playwright'),
+    ]) {
+      expect(`${dir} exists=${existsSync(dir)}`).toBe(`${dir} exists=false`);
+    }
   });
 
   it('adds no browser-install script', () => {

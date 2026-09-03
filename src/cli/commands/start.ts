@@ -1,4 +1,35 @@
+import {
+  discover,
+  resolveArchiveRoot,
+  resolveTranscriptRoot,
+  type DiscoveredEntry,
+} from '../../archive/index.js';
 import { startServer } from '../../server/index.js';
+
+/**
+ * The next step a first boot needs, or `undefined` when the archive already has
+ * bytes. The corpus sweep walks `<dataDir>/archive` and NOTHING else
+ * (`corpus/watch.ts:179`; `scanCorpus`'s own doc says `sourceRoot` "is used for
+ * path math alone"), so `agent-lens start` on a machine that never ran
+ * `agent-lens archive` renders an empty session list with no explanation.
+ *
+ * It PRINTS and does not mirror: a first boot must not silently start copying
+ * hundreds of megabytes. The wording follows `dev/server.ts:88-95`, which was
+ * written for this same confusion — two directories, named separately, because
+ * one sentence naming only the measured tree reads as though the sweep indexed
+ * it.
+ */
+export function emptyArchiveNotice(dataDir?: string, transcriptRoot?: string): string | undefined {
+  const archiveRoot = resolveArchiveRoot(dataDir);
+  const root = resolveTranscriptRoot(transcriptRoot);
+  const entries: DiscoveredEntry[] = discover(root, archiveRoot);
+  if (entries.some((entry) => entry.presence !== 'source-only')) return undefined;
+  return (
+    `agent-lens: ${archiveRoot} is empty, so the session list will be too — ` +
+    `${entries.length} file(s) of transcripts under ${root} ` +
+    'are what `agent-lens archive` mirrors into it. Nothing is indexed until it runs.'
+  );
+}
 
 /** Parse `--port <n>` / `--port=<n>` from the subcommand args. */
 export function parsePort(args: string[]): number | undefined {
@@ -73,6 +104,13 @@ export async function start(args: string[] = []): Promise<void> {
   const options: { port?: number; host?: string } = {};
   if (port !== undefined) options.port = port;
   if (host !== undefined) options.host = host;
+
+  // BEFORE `startServer`, for `dev/server.ts:82-84`'s reason: the sweep's first
+  // tick runs before the socket binds, so a line printed afterwards leaves the
+  // user watching a silent hang.
+  const notice = emptyArchiveNotice();
+  if (notice !== undefined) console.log(notice);
+
   const handle = await startServer(options);
 
   await new Promise<void>((resolve) => {
