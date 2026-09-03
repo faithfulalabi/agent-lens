@@ -1,112 +1,126 @@
 # agent-lens
 
-An open-source, local-first agentic tracing platform: install a plugin in your agent harness (Claude Code first), spin up a local UI, and inspect everything your agent did in a session — tool calls, sub-agents, prompts, inputs/outputs — so you can improve your workflow and guide the agent better.
+A local-first tracing platform for coding agents. Run one command, open a local UI, and read back
+everything a Claude Code session did — prompts, tool calls, sub-agents, inputs and outputs — so you
+can see where a session went and steer the next one better.
 
-## Status
+It reads the transcripts Claude Code already writes to disk. There is nothing to add to your
+harness and nothing to configure.
 
-Pre-alpha. Product spec and technical planning live in [`internal_docs/agent-lens/`](internal_docs/agent-lens/) — start with [`PROJECT.md`](internal_docs/agent-lens/PROJECT.md).
-
-## The archive — read this before you delete anything
-
-Claude Code deletes its own transcripts. Measured on a real corpus: the files
-thin out from about 25 days old and **nothing older than 41 days survives**, and
-53 of 97 referenced `tool-results/*.txt` spill files were already gone. Once a
-file expires, no one can ever see it again.
-
-`agent-lens archive` mirrors `~/.claude/projects/**` verbatim into
-`~/.agent-lens/archive/**` — the same bytes at a different path, so `cp` backs it
-up and a byte comparison verifies it. It is append-only and never writes to
-`~/.claude/projects`.
-
-> **`rm cache.db` loses nothing** — the database is a derived cache and can be
-> rebuilt from the archive.
-> **`rm -rf ~/.agent-lens/archive` loses data permanently.** It is the system of
-> record. There is no other copy.
-
-Put it on a cron. It is safe to run every minute: an advisory lock means a second
-pass copies nothing and exits 0, an unchanged corpus copies zero bytes, and a
-pass with nothing to report writes no log line.
+## Quickstart
 
 ```bash
-* * * * * /path/to/agent-lens archive
+npx agent-lens
 ```
+
+That starts the local server and the UI and prints the URL. Open it. Sessions you have already run
+are there; new ones show up as they happen.
+
+Requires Node.js `>=24`.
+
+## The durability contract — read this before you delete anything
+
+Three directories, three completely different promises.
+
+| Path                     | What it is                                                                                                            | What deleting it costs                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `~/.claude/projects`     | The **source**. Claude Code owns it, writes it, and expires files from it on its own schedule. agent-lens only reads. | Not your call — Claude Code is already doing it. That is the whole reason this tool exists. |
+| `~/.agent-lens/archive`  | The **system of record**. A verbatim mirror: the same bytes at a different path, append-only, never written back.     | **Everything past the source's cliff.** There is no other copy.                             |
+| `~/.agent-lens/cache.db` | A **disposable** cache — search indexes and projections, all derived.                                                 | Nothing. It rebuilds from the archive.                                                      |
+
+> **rm cache.db loses nothing. rm -rf ~/.agent-lens/archive loses data permanently.**
+
+The inversion is the point. The directory that looks canonical is the one being erased, and the
+unremarkable one in your home directory is the one holding the only surviving copy.
+
+### The limitation, stated plainly
+
+> **agent-lens can only archive what exists while it runs — a gap in uptime is a gap in the record.**
+
+A coverage figure of 100% is 100% _of the survivors_. Anything Claude Code expired before the
+archive existed, or during a long gap in it, is gone and no tool can bring it back.
+
+What the archive does hold, it holds forever. The shape is consistent even though the numbers are
+not: the source thins out with age and then stops — past a cliff a few weeks back there is nothing
+left in it at all — while the archive keeps going. Every session older than that cliff exists only
+in the archive.
+
+Do not take a number from this page. Your corpus is not the author's, and both move day to day.
+`agent-lens doctor` prints yours, including how many files have no live source left and are held
+only by the archive.
+
+## Keeping the archive current
+
+Run `agent-lens archive` on a schedule, using whatever your OS already provides — a launchd agent
+on macOS, a systemd timer or cron elsewhere. It is safe to run often: an advisory lock means a
+second concurrent pass copies nothing and exits 0, an unchanged corpus copies zero bytes, and a
+pass with nothing to report writes no log line.
+
+One caveat worth knowing before you rely on an interval: a wall-clock schedule does not fire while
+the machine is asleep. Treat the interval as a bound on _wake_ time, not on elapsed time.
 
 | Flag                     | Meaning                                                      |
 | ------------------------ | ------------------------------------------------------------ |
 | `--json`                 | emit the full pass report (the stable contract for `doctor`) |
 | `--dataDir <dir>`        | override `~/.agent-lens`                                     |
 | `--transcriptRoot <dir>` | override `~/.claude/projects`                                |
-| `--verify`               | full-file integrity audit — **not for the per-minute cron**  |
+| `--verify`               | full-file integrity audit — **not for the scheduled pass**   |
 
-Each pass compares a 4 KB head and a 4 KB seam per file, which is roughly 1% of
-the corpus by bytes: enough to catch a rewritten file at the point an append
-would splice onto it, and deliberately not a full integrity check. `--verify`
-re-reads every archived file and its source in full and is the real audit — it
-costs a read of the entire corpus, so run it periodically by hand or on a weekly
-cron, never every minute.
+Each pass compares a 4 KB head and a 4 KB seam per file, roughly 1% of the corpus by bytes: enough
+to catch a rewritten file at the point an append would splice onto it, and deliberately not a full
+integrity check. `--verify` re-reads every archived file and its source in full. It is the real
+audit and it costs a read of the entire corpus, so run it by hand or on a weekly schedule, never on
+the frequent one.
 
-When a source has been rewritten (it shrank, or its head or seam changed), the
-archived bytes are **kept** and the file is marked `diverged` rather than
-overwritten, and the event is recorded in `~/.agent-lens/logs/archive.jsonl`.
+When a source has been rewritten — it shrank, or its head or seam changed — the archived bytes are
+**kept** and the file is marked `diverged` rather than overwritten, and the event is recorded in
+`~/.agent-lens/logs/archive.jsonl`.
 
-### `agent-lens doctor` — what is protected, and what is not
+## `agent-lens doctor` — what is protected, and what is not
 
-`doctor` reads both trees and reports archive coverage, integrity, total archive
-bytes split hot vs sealed, every diverged file, and Claude Code's own
-`cleanupPeriodDays` retention setting. It **writes nothing** — not the archive,
-not the log, not the lock, and never your `settings.json`. It reports retention;
-it does not repair it.
+`doctor` reads both trees and reports archive coverage, integrity, total archive bytes split hot vs
+sealed, every diverged file, and Claude Code's own retention setting. It **writes nothing** — not
+the archive, not the log, not the lock, and never anything belonging to your harness. It reports
+retention; it does not repair it.
 
 ```bash
 agent-lens doctor --verify
 ```
 
-| Flag                     | Meaning                                                                 |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `--json`                 | emit the full report as one JSON line                                   |
-| `--dataDir <dir>`        | override `~/.agent-lens`                                                |
-| `--transcriptRoot <dir>` | override `~/.claude/projects`                                           |
-| `--settingsPath <file>`  | override `~/.claude/settings.json` (also `AGENT_LENS_CLAUDE_SETTINGS`)  |
-| `--verify`               | recompute the full prefix hash — the real audit, not the per-minute one |
+| Flag                     | Meaning                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `--json`                 | emit the full report as one JSON line                                                         |
+| `--dataDir <dir>`        | override `~/.agent-lens`                                                                      |
+| `--transcriptRoot <dir>` | override `~/.claude/projects`                                                                 |
+| `--settingsPath <file>`  | override where the harness retention setting is read from (also `AGENT_LENS_CLAUDE_SETTINGS`) |
+| `--verify`               | recompute the full prefix hash — the real audit, not the sampled one                          |
 
-Read the integrity line carefully. It prints three counts that sum to the number
-of archived files: **verified**, **diverged** and **unverifiable**. A file is
-unverifiable when nothing exists to check it against — its source has already
-expired, or it is sealed — and there is no stored per-file hash yet (task 1.2).
-Those files are never counted as verified. On a machine that has been off for a
-month, expect the unverifiable count to be the large one: that is the truthful
-answer, not a failure.
+Read the integrity line carefully. It prints three counts that sum to the number of archived files:
+**verified**, **diverged** and **unverifiable**. A file is unverifiable when nothing exists to check
+it against — its source has already expired, or it is sealed — and there is no stored per-file hash
+yet. Those files are never counted as verified. On a machine that has been off for a month, expect
+unverifiable to be the large one. That is the truthful answer, not a failure.
 
-Two things `doctor` prints on every run, including a completely clean one:
-
-- **agent-lens can only archive what exists while it runs** — a gap in uptime is
-  a gap in the record, and a 100% coverage ratio is 100% _of the survivors_.
-- **`rm cache.db` loses nothing; `rm -rf ~/.agent-lens/archive` loses data
-  permanently.**
-
-## Development
-
-Requires Node.js `>=24` (the SQLite layer uses the built-in `node:sqlite`).
+## Starting the server
 
 ```bash
-npm install      # installs root + ui deps
-npm test         # run the Vitest suite
-npm run dev       # boot the collector + Vite UI against your real sessions
-npm run dev:ui    # boot the Vite UI alone (CSS work, no collector)
-npm run render-gate -- --task 0.3  # drive the real UI in Chrome, assert what rendered
-npm run typecheck # TypeScript strict check (src + ui)
-npm run lint      # ESLint
-node ./bin        # print the CLI help
-
-npm run snapshots:update  # regenerate the golden projection snapshots
+agent-lens start
 ```
 
-With the dev server running, [`/showcase`](http://localhost:5173/showcase) renders
-every design token — colors, type scale, radii, shadow, motion — as the visual
-reference for UI work. Copy class names from there; the tokens are defined once in
-`ui/src/styles/theme.css` and tested against `internal_docs/agent-lens/spec/design-system.md`.
+| Flag            | Meaning                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--port <n>`    | bind port (auto-increments on collision)                                                                      |
+| `--host <host>` | bind host. Defaults to loopback; anything else prints a network-exposure warning and is your decision to make |
 
-`snapshots:update` is the **only** supported way to change the committed
-projection snapshots in `src/capture/__tests__/__snapshots__/golden/`. Run it
-when a schema or normalizer change is intentional, then review the resulting
-line diff like any other code change — never hand-edit a snapshot.
+The server binds `127.0.0.1` by default and every `/api/*` request carries a token. See
+[SECURITY.md](SECURITY.md) for the trust boundary, including the one property that surprises
+people: on a shared machine, the agent being traced can read the trace API too.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the render loop against a real corpus, and the
+one-door rule every change to transcript reading has to satisfy.
+
+## License
+
+MIT.
