@@ -84,13 +84,24 @@ function millisOf(when: number | Date): number {
 /**
  * Estimated cost.
  *
- * `0` renders as the em dash, NOT as `$0`. That is the whole rule, and it is
- * the one the acceptance criterion cashes out to: a session's `est_cost` is
- * never null on the wire — the column is `NOT NULL DEFAULT 0` and
- * `src/db/rollups.ts:130` wraps the sum in `COALESCE(…, 0)` — so "unpriced"
- * arrives as zero and nothing else. `design-system.md:141` mandates the same
- * mapping independently. Null and undefined are still handled, because span
- * level costs genuinely are nullable and Task 5.4 will pass them here.
+ * `0` renders as the em dash, NOT as `$0` — `design-system.md:153` and
+ * `spec/data-model.md:269` both state that mapping, and it is what the
+ * acceptance criterion cashes out to.
+ *
+ * ===========================================================================
+ * THIS FUNCTION CANNOT TELL THE TWO ABSENCES APART. {@link costUnknownLabel} CAN.
+ * ===========================================================================
+ * ⚠️ CORRECTED 2026-09-03. This comment used to claim `est_cost` is never null
+ * on the wire, on the strength of a `NOT NULL DEFAULT 0` column and a
+ * `COALESCE(…, 0)` in `src/db/rollups.ts:130`. Both claims are false: the
+ * column is nullable and carries the note "NULL = unpriceable model, NEVER 0"
+ * (`src/db/schema.ts:97`), and that rollups module no longer exists. The stale
+ * premise is what let a missing price and a measured zero be read as one state.
+ *
+ * They are two different absences and neither has an honest currency spelling,
+ * so both still render the em dash here. What separates them is the label
+ * below, which the caller hands to the chip as `title` and `aria-label`: one
+ * spelling on screen, two states in the markup.
  *
  * `$0.00` is unreachable by construction, not just for the zero case: a real
  * cost under a cent gets a third decimal, and one under a tenth of a cent gets
@@ -103,6 +114,26 @@ export function formatCost(value: number | null | undefined): string {
   if (magnitude < SMALLEST_SHOWN_COST) return `<$${SMALLEST_SHOWN_COST}`;
   if (magnitude < NEEDS_THREE_DECIMALS) return `$${SMALL_MONEY.format(value)}`;
   return `$${MONEY.format(value)}`;
+}
+
+/**
+ * Why a cost is missing, when it is missing because no rate was found for the
+ * model — and `undefined` when the number is real, including a real zero.
+ *
+ * Cost is `tokens × rate` (`src/shared/pricing.ts:139-146`), so on a priced
+ * model a `0` is reachable only when every token count is zero. Re-spelling
+ * that zero as `$0.00` would swap one absence for a falsehood, which is why the
+ * distinction rides in `title` and `aria-label` instead of in the chip text —
+ * `design-system.md:141`'s treatment for an unknown, verbatim.
+ */
+export function costUnknownLabel(
+  value: number | null | undefined,
+  model: string | null,
+): string | undefined {
+  if (isUsableNumber(value)) return undefined;
+  return model === null
+    ? 'cost unknown — no model recorded'
+    : `cost unknown — no rate for ${model}`;
 }
 
 /** A token count with thousands separators. `0` is a real answer, not a gap. */

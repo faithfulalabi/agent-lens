@@ -15,6 +15,7 @@ import {
   rangeBounds,
   rowLabel,
   selectRows,
+  unpricedNotice,
   volumeBuckets,
   withinRange,
   TIME_RANGES,
@@ -369,9 +370,9 @@ describe('rowLabel refuses a stored label that is harness markup (Test 4)', () =
     expect(rowLabel(makeSessionRow({ title: null, preview: 'a human prompt' }))).toBe(
       'a human prompt',
     );
-    expect(
-      rowLabel(makeSessionRow({ title: null, preview: null, project_path: '/tmp/p' })),
-    ).toBe('/tmp/p');
+    expect(rowLabel(makeSessionRow({ title: null, preview: null, project_path: '/tmp/p' }))).toBe(
+      '/tmp/p',
+    );
   });
 
   it.each([
@@ -416,9 +417,9 @@ describe('foldsUnderAgent is total and false by default (Test 2)', () => {
   );
 
   it('is false for a notification that named no call', () => {
-    expect(
-      foldsUnderAgent(makeTurnRow({ kind: 'task_notification', parent_event_id: null })),
-    ).toBe(false);
+    expect(foldsUnderAgent(makeTurnRow({ kind: 'task_notification', parent_event_id: null }))).toBe(
+      false,
+    );
   });
 });
 
@@ -689,5 +690,101 @@ describe('applyIntent actually navigates (Test 17)', () => {
     const port = fakeHistoryPort('/');
     expect(applyIntent({ kind: 'open', index: 99 }, rows, createRouter(port))).toBeNull();
     expect(port.entries).toEqual(['/']);
+  });
+});
+
+/* ------------------------------------------------------- Task 0.8, AC3 --- */
+
+describe('unpricedNotice states the pricing gap once, over the rows on screen', () => {
+  it('says nothing when every row it was handed has a price', () => {
+    /*
+     * A permanent strip trains the reader straight past it, which is the rule
+     * `truncationNotes` and `driftNotice` both already follow. The gap closes
+     * the moment a rate exists, and then this must fall silent on its own — no
+     * dismissal, no stored flag, nothing to clear.
+     */
+    expect(
+      unpricedNotice(
+        ladder(5, () => ({ est_cost: 1.5 })),
+        false,
+      ),
+    ).toBeNull();
+    expect(unpricedNotice([], false)).toBeNull();
+  });
+
+  it('a measured zero is priced, and does not raise it', () => {
+    // `0` means every token count was zero, not that the rate was missing.
+    // Conflating the two is the defect this whole task exists to remove.
+    expect(
+      unpricedNotice(
+        ladder(3, () => ({ est_cost: 0 })),
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it('★ counts what the screen shows, never the corpus (the denominator trap)', () => {
+    /*
+     * ★ THE MISTAKE THIS ASSERTION EXISTS TO PREVENT. The measured corpus-wide
+     * reading is "283 of 293 sessions unpriced", counted over every projected
+     * session INCLUDING sidecars — and the list selects `parent_session_id IS
+     * NULL` (`src/db/read.ts:291`), where only 21 of those 293 qualify. A strip
+     * reading "283 of 293" above 21 rows is false about the screen carrying it,
+     * in exactly the way the standing ruling on `unprojected_count` warns.
+     *
+     * So: 21 rows in, and both numbers below come from those 21.
+     */
+    const rows = ladder(21, (i) => ({ est_cost: i < 18 ? null : 2.5 }));
+    const notice = unpricedNotice(rows, false);
+
+    expect(notice).toContain('18 of 21 sessions shown');
+    expect(notice, 'the corpus figure has no denominator on this screen').not.toContain('293');
+    expect(notice).not.toContain('283');
+  });
+
+  it('names the models, so the gap has a subject', () => {
+    const rows = [
+      ...ladder(2, () => ({ est_cost: null, model: 'claude-opus-5' })),
+      ...ladder(1, () => ({ est_cost: null, model: '<synthetic>' })),
+      ...ladder(1, () => ({ est_cost: 3, model: 'claude-sonnet-5' })),
+    ];
+    const notice = unpricedNotice(rows, false);
+
+    expect(notice).toContain('claude-opus-5');
+    expect(notice).toContain('<synthetic>');
+    // The priced model is not the reader's problem and does not belong here.
+    expect(notice).not.toContain('claude-sonnet-5');
+  });
+
+  it('keeps the honest shape: the tokens are exact, the multiplication is not', () => {
+    /*
+     * Founder ruling 2. The data is right — `tokens_out` 520,412 on the session
+     * under test — and only the price lookup is missing. A strip that said
+     * "cost data unavailable" would indict the capture instead.
+     */
+    const notice = unpricedNotice(
+      ladder(1, () => ({ est_cost: null })),
+      false,
+    );
+    expect(notice).toContain('Token counts are exact');
+    expect(notice).toContain('multiplication is missing');
+  });
+
+  it('degrades both halves to bounds when the page it counted stopped early', () => {
+    // `formatRowCount`'s own rule: an exact denominator would be a claim the UI
+    // cannot support, so it reads `N+` and the sentence stays true.
+    const rows = ladder(4, () => ({ est_cost: null }));
+    expect(unpricedNotice(rows, true)).toContain('4 of 4+ sessions shown');
+    expect(unpricedNotice(rows, false)).toContain('4 of 4 sessions shown');
+  });
+
+  it('says so when the unpriced rows carry no model at all', () => {
+    // `sessions.model` is nullable, and "no rate for null" would be nonsense.
+    const notice = unpricedNotice(
+      ladder(2, () => ({ est_cost: null, model: null })),
+      false,
+    );
+    expect(notice).toContain('no model recorded');
+    expect(notice).not.toContain('null');
   });
 });

@@ -56,11 +56,16 @@ function markupOf(
   );
 }
 
+/** The text of the unpriced strip alone — never the row hrefs beside it. */
+function unpricedStrip(markup: string): string {
+  return /data-slot="unpriced-notice".*?<span[^>]*>([^<]*)</s.exec(markup)?.[1] ?? '';
+}
+
 /* ------------------------------------------------------- AC1 — 300 rows --- */
 
 describe('SessionListView renders a large page correctly (Test 5)', () => {
   /*
-   * 300 rows, one of which cost nothing.
+   * 300 rows carrying all THREE cost states, because there are three.
    *
    * The zero-cost row is not decoration. `MetricChip` takes a pre-spelled
    * string, so a row written as `String(session.est_cost)` type checks and
@@ -69,6 +74,10 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
    * AC1a names, so it is asserted on the same fixture rather than only on
    * `formatCost` in isolation (which is where Task 5.2a proved it, and which
    * proves nothing about this component's wiring).
+   *
+   * Task 0.8 seeded the third state: row 11 is UNPRICED — no rate was found for
+   * its model — where row 7 measured a real zero. Both spell the em dash, and
+   * that stays true; what separates them is the markup, asserted below.
    */
   const rows = Array.from({ length: 300 }, (_, i) =>
     makeSessionRow({
@@ -76,7 +85,8 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
       project_path: `/tmp/p-${i % 4}`,
       started_at: new Date(NOW - i * 60_000).toISOString(),
       last_activity_at: new Date(NOW - i * 60_000 + 5_000).toISOString(),
-      est_cost: i === 7 ? 0 : 1.5,
+      model: i === 11 ? 'claude-opus-5' : 'claude-sonnet-5',
+      est_cost: i === 7 ? 0 : i === 11 ? null : 1.5,
     }),
   );
   const markup = markupOf(rows);
@@ -97,8 +107,8 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     expect(costs, 'one cost chip per row').toHaveLength(300);
     expect(
       costs.filter((c) => c === '—'),
-      'exactly the one zero-cost session in the fixture renders the em dash',
-    ).toHaveLength(1);
+      'the two absences in the fixture — row 7 measured zero, row 11 unpriced',
+    ).toHaveLength(2);
     expect(
       costs,
       'a row rendering est_cost directly type checks — MetricChip takes a ' +
@@ -106,7 +116,66 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
         'standing between a zero-cost session and a screen that says $0.',
     ).not.toContain('0');
     expect(costs).not.toContain('$0');
-    expect(new Set(costs)).toEqual(new Set(['—', '$1.50']));
+    expect(
+      new Set(costs),
+      'ONE spelling for both absences — design-system.md:153 allows no other',
+    ).toEqual(new Set(['—', '$1.50']));
+  });
+
+  it('★ marks the unpriced row and leaves the zero-cost row alone (Test 3, AC3)', () => {
+    /*
+     * ★ THE WHOLE OF AC3, ON THE SAME PAGE. Both rows read `—`, so the screen
+     * keeps one spelling of an absent number — and the markup still says which
+     * absence each one is. `design-system.md:141`'s unknown treatment, reused
+     * rather than reinvented: faint, plus the word in `title` AND `aria-label`.
+     */
+    const chips = [...markup.matchAll(/<span data-slot="metric-cost"[^>]*>/g)].map((m) => m[0]);
+    expect(chips, 'one cost chip per row').toHaveLength(300);
+
+    const marked = chips.filter((chip) => chip.includes('title='));
+    expect(marked, 'row 11 and no other').toHaveLength(1);
+    expect(marked[0]).toContain('cost unknown — no rate for claude-opus-5');
+    expect(marked[0], 'never colour alone').toContain('aria-label="cost unknown');
+    expect(marked[0]).toContain('text-faint');
+
+    // Row 7 costs a real zero: nothing is unknown about it, so nothing is said.
+    expect(chips[7]).not.toContain('title=');
+    expect(chips[7]).toContain('text-muted');
+    // And 298 priced rows are untouched by any of this.
+    expect(chips.filter((chip) => chip.includes('text-muted'))).toHaveLength(299);
+  });
+
+  it('states the pricing gap once above the rows, over the rows below it', () => {
+    /*
+     * ★ THE DENOMINATOR IS THE SCREEN'S, NOT THE CORPUS'S. 283 of 293 sessions
+     * are unpriced corpus-wide, counted over sidecars the list never draws
+     * (`src/db/read.ts:291` selects top-level only). This page shows 300 rows
+     * and 1 of them is unpriced, so 1 of 300 is what it says.
+     */
+    expect(markup).toContain('data-slot="unpriced-notice"');
+
+    const strip = unpricedStrip(markup);
+    expect(strip).toContain('Cost unknown on 1 of 300 sessions shown');
+    expect(strip).toContain('no rate for claude-opus-5');
+    expect(strip, 'the tokens are exact; only the multiplication is missing').toContain(
+      'Token counts are exact',
+    );
+    expect(strip, 'a denominator the rows on screen contradict').not.toContain('293');
+    expect(strip).not.toContain('283');
+  });
+
+  it('the strip counts exactly the chips it sits above, on the same page', () => {
+    /*
+     * The invariant the split between the two would otherwise let drift: the
+     * strip states a number and the chips below it are the evidence. Both read
+     * `costUnknownLabel`, so they agree by construction — this asserts the
+     * construction actually held.
+     */
+    const stated = Number(/on (\d+) of/.exec(unpricedStrip(markup))?.[1]);
+    const marked = (markup.match(/data-slot="metric-cost" title=/g) ?? []).length;
+
+    expect(stated).toBe(marked);
+    expect(marked, 'row 11, and the fixture says so').toBe(1);
   });
 
   it('marks the cursor row and only the cursor row', () => {
@@ -137,6 +206,36 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
   it('renders a sort chevron on the sorted column only', () => {
     const svgs = markupOf(rows.slice(0, 2)).match(/<svg/g) ?? [];
     expect(svgs).toHaveLength(1);
+  });
+});
+
+/* --------------------------- Task 0.8 — the strip above the list, AC3 ----- */
+
+describe('the unpriced strip raises and clears with the rows themselves', () => {
+  it('draws nothing at all when every row on screen has a price', () => {
+    /*
+     * ★ NO STORED STATE AND NO DISMISSAL — plan 001 built a banner around
+     * stored state twice and twice the raise could not be falsified by the
+     * clear. Here the raise IS the data: price the model and the next response
+     * carries numbers, so this strip goes on its own with nothing to clear.
+     */
+    const markup = markupOf([makeSessionRow({ est_cost: 1.5 })]);
+    expect(markup).not.toContain('unpriced-notice');
+    expect(markup).not.toContain('Cost unknown');
+  });
+
+  it('draws nothing for a session that measured a real zero', () => {
+    // Zero is a priced answer. Only a missing rate is a gap in what agent-lens
+    // can tell the reader.
+    expect(markupOf([makeSessionRow({ est_cost: 0 })])).not.toContain('unpriced-notice');
+  });
+
+  it('is announced as a status, and carries no control to dismiss it', () => {
+    const markup = markupOf([makeSessionRow({ est_cost: null })]);
+    expect(markup).toContain('role="status"');
+    expect(markup.match(/<button/g) ?? [], 'the two sort controls, and nothing new').toHaveLength(
+      SORT_COLUMNS.length,
+    );
   });
 });
 
@@ -576,7 +675,9 @@ describe('RangeControl', () => {
 
 describe('Sessions renders under environment: node with both ports injected (Test 24)', () => {
   it('renders the pending branch without touching the address bar or the bootstrap', () => {
-    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<SessionListRow>([])) });
+    const api = stubApiClient({
+      listSessions: () => Promise.resolve(makePage<SessionListRow>([])),
+    });
     const router = createRouter(fakeHistoryPort('/'));
 
     /*
@@ -597,7 +698,9 @@ describe('Sessions renders under environment: node with both ports injected (Tes
   });
 
   it('keeps the range control on screen while a load is pending', () => {
-    const api = stubApiClient({ listSessions: () => Promise.resolve(makePage<SessionListRow>([])) });
+    const api = stubApiClient({
+      listSessions: () => Promise.resolve(makePage<SessionListRow>([])),
+    });
     const markup = renderToStaticMarkup(
       <Sessions router={createRouter(fakeHistoryPort('/'))} api={api} />,
     );

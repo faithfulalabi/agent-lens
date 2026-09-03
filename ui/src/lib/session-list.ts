@@ -21,6 +21,7 @@
 
 import type { ApiClient, SessionListRow, SessionsQuery, TurnRow } from './api.js';
 import type { Router } from './router.js';
+import { costUnknownLabel } from './format.js';
 
 /* ----------------------------------------------------------- row counts --- */
 
@@ -43,6 +44,54 @@ const COUNT_FORMAT = new Intl.NumberFormat('en-US');
 export function formatRowCount(showing: number, pageTruncated: boolean): string {
   const noun = showing === 1 && !pageTruncated ? 'session' : 'sessions';
   return `${COUNT_FORMAT.format(showing)}${pageTruncated ? '+' : ''} ${noun}`;
+}
+
+/**
+ * What the list cannot say about its own cost column, or `null` when it can
+ * price every row it is showing.
+ *
+ * ===========================================================================
+ * ★ THE DENOMINATOR IS WHAT IS ON SCREEN, AND NOTHING ELSE.
+ * ===========================================================================
+ * The corpus-wide reading — 283 of 293 sessions unpriced — counts every
+ * projected session, sidecars included. This list draws only top-level ones
+ * (`src/db/read.ts:291`; 21 of those 293 qualify), so printing the corpus
+ * figure above it would be a false statement about the screen it sits on. This
+ * counts the rows it was handed, and `formatRowCount` supplies the `N+` when
+ * the page they came from stopped early — then both halves are lower bounds
+ * and the sentence stays true.
+ *
+ * ===========================================================================
+ * ★ NO STORED STATE AND NO DISMISSAL. THE RAISE IS THE DATA.
+ * ===========================================================================
+ * Task 7.3's rule, for the reason plan 001 learned twice: a strip whose raise
+ * depends on stored, monotonic state has a downward path nobody proved. Price
+ * the model and the next response carries numbers, so this returns `null` and
+ * the strip goes on its own. There is nothing to clear, so no clear can be
+ * outlived. A list that can price everything says nothing at all, because a
+ * permanent notice trains the reader straight past it.
+ *
+ * The rows counted are the rows `costUnknownLabel` marks, called rather than
+ * re-implemented: a second copy of the predicate could drift, and then the
+ * strip would state a number the chips under it contradict.
+ */
+export function unpricedNotice(
+  rows: readonly SessionListRow[],
+  pageTruncated: boolean,
+): string | null {
+  const unpriced = rows.filter((row) => costUnknownLabel(row.est_cost, row.model) !== undefined);
+  if (unpriced.length === 0) return null;
+
+  const models = [
+    ...new Set(unpriced.map((row) => row.model).filter((model): model is string => model !== null)),
+  ].sort();
+  const cause = models.length === 0 ? 'no model recorded' : `no rate for ${models.join(', ')}`;
+
+  return (
+    `Cost unknown on ${COUNT_FORMAT.format(unpriced.length)} of ` +
+    `${formatRowCount(rows.length, pageTruncated)} shown — ${cause}. ` +
+    'Token counts are exact; only the price multiplication is missing.'
+  );
 }
 
 /* --------------------------------------------------------------- ranges --- */

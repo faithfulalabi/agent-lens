@@ -972,6 +972,44 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(markup).not.toContain('$0');
   });
 
+  it('★ the header no longer coerces a missing rate into a zero (Task 0.8, Test 4)', () => {
+    /*
+     * ★ THE MUTATION CONTROL IS THE POINT OF THIS TEST. `formatCost(est_cost ??
+     * 0)` stood here and passed the assertion above — both branches spell the em
+     * dash, so the dash proves nothing about which one ran. The `?? 0` destroyed
+     * the honest null one hop BEFORE the formatter could see it, and the only
+     * assertion that can catch that is one over the treatment the null earns.
+     *
+     * Put the `?? 0` back in `SessionHeader.tsx` and this reds; the test above
+     * stays green. That asymmetry is why this exists.
+     */
+    const markup = renderToStaticMarkup(
+      <SessionHeader
+        session={makeSessionRow({ est_cost: null, model: 'claude-opus-5' })}
+        now={NOW}
+      />,
+    );
+    expect(markup).toContain('cost unknown — no rate for claude-opus-5');
+    expect(markup, 'never colour alone — design-system.md:141').toContain(
+      'aria-label="cost unknown',
+    );
+    expect(markup).toContain('text-faint');
+  });
+
+  it('says nothing about a session that measured a real zero (Test 4, other arm)', () => {
+    // Zero is an answer, not a gap: cost is `tokens × rate`, so on a priced
+    // model it is reachable only when every token count is zero.
+    const markup = renderToStaticMarkup(
+      <SessionHeader
+        session={makeSessionRow({ est_cost: 0, model: 'claude-sonnet-5' })}
+        now={NOW}
+      />,
+    );
+    expect(markup).toContain('—');
+    expect(markup).not.toContain('cost unknown');
+    expect(markup).not.toContain('$0');
+  });
+
   it('omits a chip an event has no number for rather than rendering a zero', () => {
     const markup = eventRowMarkup({ tokens_in: null, tokens_out: null, est_cost: null });
     expect(markup).not.toContain('0 tok');
@@ -1147,11 +1185,28 @@ describe('the child’s root row carries the sub-agent’s own numbers (Test 14,
     ).not.toContain('$');
   });
 
+  it('★ names WHY the sidecar has no cost, on the measured majority path (Task 0.8, Test 5)', () => {
+    /*
+     * 262 of 272 sidecars carry a null `est_cost`, so this arm is the common
+     * case rather than the corner — and the em-dash assertion above cannot tell
+     * it from the ten that measured zero. The unknown treatment can.
+     */
+    const markup = subagentMarkup({}, { est_cost: null, model: 'claude-opus-5' });
+    expect(markup).toContain('cost unknown — no rate for claude-opus-5');
+    expect(markup).toContain('aria-label="cost unknown');
+    expect(markup).toContain('text-faint');
+  });
+
   it('spells a zero cost as the em dash too', () => {
     const markup = subagentMarkup({}, { est_cost: 0 });
     expect(markup).toContain('data-slot="metric-cost"');
     expect(markup).toContain('—');
     expect(markup).not.toContain('$');
+  });
+
+  it('and says nothing about why, because a zero needs no explanation', () => {
+    expect(subagentMarkup({}, { est_cost: 0 })).not.toContain('cost unknown');
+    expect(subagentMarkup({}, { est_cost: 0.0077 })).not.toContain('cost unknown');
   });
 
   it('prints a real cost when the sidecar has one — 10 of 272 do', () => {

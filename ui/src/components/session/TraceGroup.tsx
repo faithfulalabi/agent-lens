@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatCost, formatTokens } from '@/lib/format';
+import { costUnknownLabel, formatCost, formatTokens } from '@/lib/format';
 import { turnChips, type TurnRowModel } from '@/lib/turn-tree';
 
 import { MetricChip } from './MetricChip';
@@ -145,6 +145,7 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
             className="shrink-0"
             tokens={`${formatTokens(row.subagent.header.tokens_in + row.subagent.header.tokens_out)} tok`}
             cost={formatCost(row.subagent.header.est_cost)}
+            costUnknown={costUnknownLabel(row.subagent.header.est_cost, row.subagent.header.model)}
           />
         </span>
       )}

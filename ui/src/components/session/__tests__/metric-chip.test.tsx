@@ -130,13 +130,86 @@ describe('MetricChip stays inside the agent-lens vocabulary', () => {
      * `const` and referenced as `className={NAME}` extracts as ZERO tokens.
      * That file then fails its own per-source richness bar (`> 4`) with a
      * message about the extractor rather than about this component.
+     *
+     * BOTH forms are mirrored below, because Task 0.8 moved the chip's own
+     * classes into a `cn( … )` to tone the unpriced case. Reading only the
+     * quoted form here would have reded this test over a spelling the real
+     * extractor accepts — the contract is "extractable", not "quoted".
      */
-    const literals = [...CHIP_SOURCE.matchAll(/className="([^"]*)"/g)].flatMap((hit) =>
-      (hit[1] ?? '').split(/\s+/).filter(Boolean),
+    const quoted = [...CHIP_SOURCE.matchAll(/className\s*=\s*"([^"]*)"/g)].map((hit) => hit[1]);
+    const inCn = [...CHIP_SOURCE.matchAll(/className\s*=\s*\{cn\(([\s\S]*?)\)\}/g)].flatMap(
+      (call) => [...(call[1] ?? '').matchAll(/'([^']*)'/g)].map((hit) => hit[1]),
     );
+    const literals = [...quoted, ...inCn].flatMap((text) =>
+      (text ?? '').split(/\s+/).filter(Boolean),
+    );
+
     expect(literals.length, 'the chip classes are not in an extractable position').toBeGreaterThan(
       4,
     );
     expect(literals).toContain('bg-surface-raised');
+  });
+});
+
+/* ------------------------------------------------------- Task 0.8, AC3 --- */
+
+describe('MetricChip marks an unpriced cost apart from a measured zero (Test 6)', () => {
+  const UNKNOWN = 'cost unknown — no rate for claude-opus-5';
+
+  it('leaves the markup untouched, attribute for attribute, without the prop', () => {
+    /*
+     * The atom's guard: 283 of 293 sessions take the new arm, so the OTHER 10
+     * — and every duration and token chip on every screen — must render what
+     * they always did. Byte equality, not a spot check.
+     */
+    const before = renderToStaticMarkup(FULL_CHIP);
+    const after = renderToStaticMarkup(
+      <MetricChip duration="1.02s" tokens="185 tok" cost="<$0.001" costUnknown={undefined} />,
+    );
+    expect(after).toBe(before);
+    expect(before).not.toContain('title=');
+    expect(before).not.toContain('aria-label=');
+  });
+
+  it('puts the word in title AND aria-label, never in the chip text', () => {
+    /*
+     * `design-system.md:141`: "never colour alone … the word rides in `title`
+     * and `aria-label`". The text stays the em dash, because `:153` allows the
+     * cost chip no other spelling of an absent number.
+     */
+    const markup = renderToStaticMarkup(<MetricChip cost="—" costUnknown={UNKNOWN} />);
+    expect(markup).toContain(`title="${UNKNOWN}"`);
+    expect(markup).toContain(`aria-label="${UNKNOWN}"`);
+    expect(markup).toContain('>—<');
+    expect(markup).not.toContain('$');
+  });
+
+  it('tones the unpriced chip faint and the ordinary chip muted', () => {
+    // `--faint` is the palette's "nobody knows", and span-visuals.ts:137 already
+    // spends it on exactly this meaning. No new token is invented.
+    const unpriced = classesIn(renderToStaticMarkup(<MetricChip cost="—" costUnknown={UNKNOWN} />));
+    expect(unpriced).toContain('text-faint');
+    expect(unpriced).not.toContain('text-muted');
+
+    const zero = classesIn(renderToStaticMarkup(<MetricChip cost="—" />));
+    expect(zero).toContain('text-muted');
+    expect(zero).not.toContain('text-faint');
+  });
+
+  it('marks the cost chip and only the cost chip', () => {
+    const markup = renderToStaticMarkup(
+      <MetricChip duration="1.02s" tokens="185 tok" cost="—" costUnknown={UNKNOWN} />,
+    );
+    expect(markup.match(/title=/g) ?? [], 'one marked chip, not three').toHaveLength(1);
+    const marked = /data-slot="metric-cost" title="[^"]*" aria-label="[^"]*"/.test(markup);
+    expect(marked, 'the marks belong to the cost slot').toBe(true);
+  });
+
+  it('still emits nothing when there is no cost to explain', () => {
+    // An omitted slot stays omitted: a label with no chip would have nothing to
+    // hang on, and `RowChips` relies on the omission.
+    const markup = renderToStaticMarkup(<MetricChip duration="1.02s" costUnknown={UNKNOWN} />);
+    expect(markup).not.toContain('metric-cost');
+    expect(markup).not.toContain(UNKNOWN);
   });
 });
