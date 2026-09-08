@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import {
   PREVIEW_CHARS,
+  costUnknownLabel,
   formatCost,
   formatDuration,
   formatDurationMs,
@@ -25,9 +26,13 @@ const NO_VALUE = '—';
 
 describe('formatCost never spells a priced session as free', () => {
   it.each([
-    // Zero is THE case the acceptance criterion is about. A session's est_cost
-    // is `NOT NULL DEFAULT 0` and src/db/rollups.ts:130 sums it under
-    // COALESCE(…, 0), so "unpriced" reaches the browser as 0 and never as null.
+    // ⚠️ CORRECTED by Task 0.8. This comment used to say est_cost is
+    // `NOT NULL DEFAULT 0`, summed under COALESCE(…, 0) by src/db/rollups.ts,
+    // so that "unpriced" could only ever arrive as 0. The column is nullable
+    // (src/db/schema.ts:97) and that module is gone. BOTH rows below are real
+    // wire states and they are DIFFERENT absences — a missing rate versus a
+    // measured zero. Both spell the em dash here on purpose; `costUnknownLabel`
+    // is what tells them apart, and the test below pins exactly that.
     [0, NO_VALUE],
     [null, NO_VALUE],
     [undefined, NO_VALUE],
@@ -46,6 +51,62 @@ describe('formatCost never spells a priced session as free', () => {
     expect(formatCost(makeSessionRow({ est_cost: 0 }).est_cost)).toBe(NO_VALUE);
     // `est_cost` is nullable on the wire, which is a different absence from 0.
     expect(formatCost(makeSessionRow({ est_cost: null }).est_cost)).toBe(NO_VALUE);
+  });
+});
+
+/* ------------------------------------------------------- Task 0.8, AC3 --- */
+
+describe('costUnknownLabel separates the two absences formatCost cannot', () => {
+  const MODEL = 'claude-opus-5';
+
+  it.each([
+    // No rate was found for the model, so the multiplication never happened.
+    [null, `cost unknown — no rate for ${MODEL}`],
+    [undefined, `cost unknown — no rate for ${MODEL}`],
+    // Not a number is the same ignorance arriving in a worse shape.
+    [Number.NaN, `cost unknown — no rate for ${MODEL}`],
+    // Real answers, including the real zero. Nothing to explain.
+    [0, undefined],
+    [1.25, undefined],
+    [0.0004, undefined],
+  ])('%s labels as %s', (value, expected) => {
+    expect(costUnknownLabel(value, MODEL)).toBe(expected);
+  });
+
+  it('names the model, because a screen reader loses the subject otherwise', () => {
+    /*
+     * Founder ruling, Open Question 5: the long form over the short one. The
+     * word rides in `title` AND `aria-label` per design-system.md:141, where it
+     * is read aloud with no chip beside it to supply the missing noun.
+     */
+    expect(costUnknownLabel(null, MODEL)).toContain(MODEL);
+    expect(costUnknownLabel(null, 'claude-sonnet-5')).toContain('claude-sonnet-5');
+  });
+
+  it('says so when the row carries no model at all', () => {
+    // `sessions.model` is nullable, and "no rate for null" would be nonsense.
+    expect(costUnknownLabel(null, null)).toBe('cost unknown — no model recorded');
+  });
+
+  it('★ "costs zero" and "cost unknown" are one spelling and two states (Test 2)', () => {
+    /*
+     * The whole of AC3 in four assertions. Cost is `tokens × rate`
+     * (src/shared/pricing.ts:139-146), so on a priced model a 0 is reachable
+     * only when every token count is zero — itself an absence, and the reason
+     * re-spelling it `$0.00` would swap one gap for a falsehood. So the screen
+     * keeps ONE spelling and the markup carries the difference.
+     */
+    expect(formatCost(0)).toBe(NO_VALUE);
+    expect(costUnknownLabel(0, MODEL)).toBeUndefined();
+
+    expect(formatCost(null)).toBe(NO_VALUE);
+    expect(costUnknownLabel(null, MODEL)).toContain(MODEL);
+  });
+
+  it('reads the two absences straight off the wire factory', () => {
+    // A wire change lands here as a compile error rather than as a silent pass.
+    expect(costUnknownLabel(makeSessionRow({ est_cost: null }).est_cost, MODEL)).toBeDefined();
+    expect(costUnknownLabel(makeSessionRow({ est_cost: 0 }).est_cost, MODEL)).toBeUndefined();
   });
 });
 

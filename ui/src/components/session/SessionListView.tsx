@@ -1,14 +1,21 @@
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { hrefFor } from '@/lib/route-match';
-import { formatCost, formatDuration, formatStartedAt, formatTokens } from '@/lib/format';
+import {
+  costUnknownLabel,
+  formatCost,
+  formatDuration,
+  formatStartedAt,
+  formatTokens,
+} from '@/lib/format';
 import type { SessionListRow } from '@/lib/api';
 import {
   COLUMN_LABELS,
   SORT_COLUMNS,
   formatRowCount,
   rowLabel,
+  unpricedNotice,
   type SortColumn,
   type SortDirection,
 } from '@/lib/session-list';
@@ -59,6 +66,19 @@ import { SESSION_STATUS_VISUALS } from './session-visuals';
  * row test seeds a zero-cost session into its fixture and asserts the markup
  * carries the em dash and no `$0` anywhere.
  *
+ * ===========================================================================
+ * TWO ABSENCES SHARE THE EM DASH, SO THE MARKUP HAS TO SEPARATE THEM.
+ * ===========================================================================
+ * A `null` cost means no rate was found for the row's model; a `0` means every
+ * token count was zero. Task 0.8 kept one spelling on screen — `design-
+ * system.md:153` allows no other — and marks the first with
+ * `costUnknownLabel`, which reaches the chip as faint plus a word in `title`
+ * and `aria-label`. That is a hover, though, and on the measured corpus the
+ * unpriced case is the MAJORITY rather than the corner, so the strip above the
+ * list states the systemic fact once, in prose nobody has to hover to read.
+ * `unpricedNotice` counts only the rows below it — see its own header on why
+ * the corpus-wide figure would be the wrong number here.
+ *
  * Every value is spelled against an injected `now`, never an ambient clock: a
  * live session's elapsed time is the whole reason that parameter exists.
  */
@@ -87,8 +107,21 @@ export function SessionListView({
   now,
   pageTruncated = false,
 }: SessionListViewProps) {
+  const unpriced = unpricedNotice(rows, pageTruncated);
+
   return (
     <div data-slot="session-list">
+      {unpriced === null ? null : (
+        <div
+          data-slot="unpriced-notice"
+          role="status"
+          className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5 text-2xs text-warning"
+        >
+          <Info size={12} aria-hidden="true" className="shrink-0" />
+          <span className="min-w-0">{unpriced}</span>
+        </div>
+      )}
+
       <div
         data-slot="session-list-header"
         className="flex items-center gap-2 border-b border-border px-3 py-1"
@@ -203,6 +236,7 @@ function SessionRow({
         duration={formatDuration(row.started_at, row.live ? undefined : row.last_activity_at, now)}
         tokens={`${formatTokens(row.tokens_in + row.tokens_out)} tok`}
         cost={formatCost(row.est_cost)}
+        costUnknown={costUnknownLabel(row.est_cost, row.model)}
       />
     </a>
   );

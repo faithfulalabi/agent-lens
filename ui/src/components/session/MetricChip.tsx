@@ -20,14 +20,15 @@ import { cn } from '@/lib/utils';
  * ===========================================================================
  * TWO SPELLING RULES, both of which a future edit will want to break.
  * ===========================================================================
- * 1. The chip classes are written as ONE literal in a `className` position.
- *    `retokenized.test.ts`'s extractor reads a quoted class attribute and the
- *    string literals inside a `cn( … )` call and nothing else, so hoisting them
- *    into a `const` referenced by name would make this component's classes
- *    invisible to the scan that proves they compile — and Task 5.2b adds this
- *    file to that scan. (Spelling the attribute-and-quotes form out verbatim
- *    here would ALSO feed the extractor: it is a regex over raw source, so the
- *    placeholder inside the quotes would be scanned as a class name.)
+ * 1. The chip classes stay in an EXTRACTABLE position — a quoted class
+ *    attribute, or a string literal inside a `cn( … )` call.
+ *    `retokenized.test.ts`'s extractor reads those two forms and nothing else,
+ *    so hoisting them into a `const` referenced by name would make this
+ *    component's classes invisible to the scan that proves they compile — and
+ *    Task 5.2b adds this file to that scan. (Spelling the attribute-and-quotes
+ *    form out verbatim here would ALSO feed the extractor: it is a regex over
+ *    raw source, so the placeholder inside the quotes would be scanned as a
+ *    class name.)
  * 2. NEVER write the neutral background as one word. The same array feeds a
  *    deny-list which — for the reason that deny-list documents — contains the
  *    one-word form even though it is a real agent-lens token. The muted
@@ -42,25 +43,52 @@ export interface MetricChipProps {
   tokens?: string;
   /** Pre-formatted cost, e.g. `<$0.001`. */
   cost?: string;
+  /**
+   * Why the cost is missing, from `costUnknownLabel`. Supplying it tones the
+   * cost chip faint and puts the word in `title` and `aria-label`, so an
+   * unpriced session stops looking like one that cost nothing. Omit it and the
+   * chip is what it has always been, attribute for attribute.
+   */
+  costUnknown?: string;
   className?: string;
 }
 
-export function MetricChip({ duration, tokens, cost, className }: MetricChipProps) {
+export function MetricChip({ duration, tokens, cost, costUnknown, className }: MetricChipProps) {
   return (
     <span data-slot="metric-chips" className={cn('inline-flex items-center gap-1', className)}>
       <Chip slot="metric-duration">{duration}</Chip>
       <Chip slot="metric-tokens">{tokens}</Chip>
-      <Chip slot="metric-cost">{cost}</Chip>
+      <Chip slot="metric-cost" unknown={costUnknown}>
+        {cost}
+      </Chip>
     </span>
   );
 }
 
-function Chip({ slot, children }: { slot: string; children?: ReactNode }) {
+/*
+ * `unknown` is `design-system.md:141`'s treatment, reused rather than restated:
+ * faint plus the word in BOTH `title` and `aria-label`, never colour alone.
+ * React omits an `undefined` attribute, so the ordinary chip emits neither.
+ */
+function Chip({
+  slot,
+  unknown,
+  children,
+}: {
+  slot: string;
+  unknown?: string;
+  children?: ReactNode;
+}) {
   if (children === undefined) return null;
   return (
     <span
       data-slot={slot}
-      className="rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-muted"
+      title={unknown}
+      aria-label={unknown}
+      className={cn(
+        'rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs',
+        unknown === undefined ? 'text-muted' : 'text-faint',
+      )}
     >
       {children}
     </span>

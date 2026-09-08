@@ -5,7 +5,7 @@ import type { SessionListRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { SESSION_VIEW_MODES, type SessionViewMode } from '@/lib/thread';
 import { hrefFor } from '@/lib/route-match';
-import { formatCost, formatDuration, formatTokens } from '@/lib/format';
+import { costUnknownLabel, formatCost, formatDuration, formatTokens } from '@/lib/format';
 
 import { MetricChip } from './MetricChip';
 import { SESSION_STATUS_VISUALS } from './session-visuals';
@@ -47,6 +47,11 @@ import { SPAN_VISUALS } from './span-visuals';
  * The clock is a parameter, so a live session's elapsed time is assertable
  * rather than whatever the machine happened to think when the test ran.
  *
+ * ⚠️ `est_cost` GOES TO `formatCost` UNTOUCHED. A `?? 0` stood here until Task
+ * 0.8 and it destroyed the only signal that says "no rate for this model",
+ * one hop before the formatter that knows what to do with it. Both absences
+ * still spell the em dash; `costUnknownLabel` is what separates them.
+ *
  * ===========================================================================
  * THE WAY BACK IS AN ANCHOR, NOT A HISTORY CALL.
  * ===========================================================================
@@ -79,6 +84,9 @@ export function SessionHeader({ session, now, view, onViewChange }: SessionHeade
   const status = SESSION_STATUS_VISUALS[session.live ? 'live' : 'complete'];
   const totalTokens = session.tokens_in + session.tokens_out;
   const endedAt = session.live ? undefined : session.last_activity_at;
+  // Read ONCE, so the spelling and the reason it is absent cannot disagree —
+  // and so a `?? 0` reinstated here has exactly one place to hide.
+  const cost = session.est_cost;
 
   return (
     <header
@@ -130,7 +138,8 @@ export function SessionHeader({ session, now, view, onViewChange }: SessionHeade
         className="shrink-0"
         duration={formatDuration(session.started_at, endedAt, now)}
         tokens={`${formatTokens(totalTokens)} tok`}
-        cost={formatCost(session.est_cost ?? 0)}
+        cost={formatCost(cost)}
+        costUnknown={costUnknownLabel(cost, session.model)}
       />
     </header>
   );
