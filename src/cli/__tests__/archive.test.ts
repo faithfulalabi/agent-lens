@@ -432,6 +432,16 @@ describe('the ship-phase commands stay inside the same code namespace', () => {
     ],
     ['prune, an option it does not recognise', EXIT_INCOMPLETE, () => ['prune', '--older-than=30']],
     ['doctor', EXIT_OK, (s: Sandbox) => ['doctor', `--dataDir=${s.dataDir}`]],
+    // Task 0.6, at PROCESS level: the rejection has to survive the whole chain
+    // `main -> bin/agent-lens.js -> exit code`, not just return 1 in-process.
+    // No `start` row here on purpose — a stale `dist/` would boot a server and
+    // hang the suite rather than fail it. `args.test.ts` covers it in-process.
+    ['archive, the 2026-08-09 typo', EXIT_INCOMPLETE, () => ['archive', '--data-dir=/nope']],
+    [
+      'rebuild, id after a flag',
+      EXIT_INCOMPLETE,
+      (s: Sandbox) => ['rebuild', `--dataDir=${s.dataDir}`, 'no-such-session'],
+    ],
   ])('%s exits %i, never 2', async (_name, expected, argsOf) => {
     const s = sb();
     mkdirSync(s.dataDir, { recursive: true });
