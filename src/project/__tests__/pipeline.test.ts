@@ -130,6 +130,9 @@ describe('AC4 — event ids, and what `seq` is actually derived from', () => {
     'timestamps-descending.jsonl',
     'one-line-session.jsonl',
     'drift-three-ways.jsonl',
+    'model-last-synthetic.jsonl',
+    'model-all-synthetic.jsonl',
+    'model-trailing-real.jsonl',
   ];
 
   it.each(FIXTURES)('%s emits unique ids in non-decreasing byte order', (name) => {
@@ -562,4 +565,38 @@ describe('AC10 — src_offset and src_len are the emitting LINE’s', () => {
       }
     },
   );
+});
+
+describe('Task 0.13 — which model the whole file folds to', () => {
+  it('names the model that did the work, not the marker on the last line', () => {
+    const result = project('model-last-synthetic.jsonl');
+
+    expect(result.header).toBeDefined();
+    expect(result.header?.model).toBe('claude-opus-5');
+  });
+
+  it('folds to undefined when the marker is the only model string in the file', () => {
+    const result = project('model-all-synthetic.jsonl');
+
+    // Non-vacuity: `runPipeline` omits the header entirely for a file that
+    // projects no event, so this would otherwise pass for the wrong reason.
+    expect(result.header).toBeDefined();
+    expect(result.header?.model).toBeUndefined();
+  });
+
+  it('lets the model named on the most lines beat a real trailing one', () => {
+    const result = project('model-trailing-real.jsonl');
+
+    expect(result.header?.model).toBe('claude-opus-5');
+  });
+
+  it('leaves cwd, branch and harness version on their own last-wins rule', () => {
+    const result = project('model-last-synthetic.jsonl');
+
+    // The excluded line still folds its other three fields, which is what
+    // scopes the exclusion to `model` alone.
+    expect(result.header?.project_path).toBe('/Users/dev/proj/deeper');
+    expect(result.header?.git_branch).toBe('release');
+    expect(result.header?.harness_version).toBe('2.1.213');
+  });
 });

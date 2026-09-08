@@ -5,7 +5,13 @@
 // An absolute count asserted against live data decays into a false failure.
 
 import { describe, expect, it } from 'vitest';
-import { classifyLine, foldControlLines, type ParsedKind, type ParsedLine } from '../line.js';
+import {
+  classifyLine,
+  foldControlLines,
+  foldSessionEnvelope,
+  type ParsedKind,
+  type ParsedLine,
+} from '../line.js';
 import { classifyFixture, ctx, fixtureBytes, offsetLines } from './fixtures.js';
 
 /** The 14 measured top-level types, with their 2026-08-13 archive counts. */
@@ -322,5 +328,91 @@ describe('AC7 — summary has no branch', () => {
     expect(line.kind).toBe('unknown');
     if (line.kind !== 'unknown') throw new Error('unreachable');
     expect(line.raw_type).toBe('summary');
+  });
+});
+
+describe('Task 0.13 — foldSessionEnvelope answers `model` on its own rule', () => {
+  /** One assistant line naming `model`, classified the way production does. */
+  function modelLine(model: string, over: Record<string, unknown> = {}): ParsedLine {
+    return classifyLine(
+      {
+        type: 'assistant',
+        uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+        timestamp: '2026-08-14T09:00:00.000Z',
+        cwd: '/Users/dev/proj',
+        gitBranch: 'main',
+        version: '2.1.212',
+        requestId: 'req_one',
+        ...over,
+        message: { role: 'assistant', model, content: [] },
+      },
+      ctx(),
+    );
+  }
+
+  it('drops `<synthetic>` before the tally, so the marker never folds through', () => {
+    const lines = [modelLine('claude-opus-5'), modelLine('<synthetic>')];
+    expect(foldSessionEnvelope(lines).model).toBe('claude-opus-5');
+  });
+
+  it('answers undefined when `<synthetic>` is the only model named', () => {
+    // The NULL floor. A marker that names no model must not be priced, and
+    // must not be reported as though a model of that name had run.
+    const lines = [modelLine('<synthetic>'), modelLine('<synthetic>')];
+    expect(foldSessionEnvelope(lines).model).toBeUndefined();
+  });
+
+  it('lets the most-named model beat a real model on the last line', () => {
+    const lines = [
+      modelLine('claude-opus-5'),
+      modelLine('claude-opus-5'),
+      modelLine('claude-haiku-4-5-20251001'),
+    ];
+    expect(foldSessionEnvelope(lines).model).toBe('claude-opus-5');
+  });
+
+  it('breaks a tie to the FIRST model seen, which IS first-real-model-wins', () => {
+    // Asserted from both directions because the tie-break is a semantic
+    // choice, not a consequence of `Map` iteration order. On a
+    // one-line-against-one-line tie this rule is candidate (a), which is wrong
+    // on a session that switched deliberately — it is taken because it is
+    // deterministic and because no measured session ties.
+    const forward = [modelLine('claude-opus-5'), modelLine('claude-sonnet-5')];
+    const reversed = [modelLine('claude-sonnet-5'), modelLine('claude-opus-5')];
+
+    expect(foldSessionEnvelope(forward).model).toBe('claude-opus-5');
+    expect(foldSessionEnvelope(reversed).model).toBe('claude-sonnet-5');
+  });
+
+  it('folds the same lines twice into the same envelope', () => {
+    const lines = [
+      modelLine('claude-opus-5'),
+      modelLine('claude-sonnet-5'),
+      modelLine('claude-opus-5'),
+      modelLine('<synthetic>'),
+    ];
+
+    expect(foldSessionEnvelope(lines).model).toBe('claude-opus-5');
+    expect(foldSessionEnvelope(lines)).toEqual(foldSessionEnvelope(lines));
+  });
+
+  it('leaves cwd, branch and version last-wins on the very line it excludes', () => {
+    // The exclusion is scoped to `model`. A `<synthetic>` line carries the
+    // session's real `cwd`, `gitBranch` and `version` — measured, 8 of 8 — so
+    // skipping the whole line would lose three fields to fix one.
+    const lines = [
+      modelLine('claude-opus-5'),
+      modelLine('<synthetic>', {
+        cwd: '/Users/dev/proj/deeper',
+        gitBranch: 'release',
+        version: '2.1.213',
+      }),
+    ];
+    const envelope = foldSessionEnvelope(lines);
+
+    expect(envelope.model).toBe('claude-opus-5');
+    expect(envelope.project_path).toBe('/Users/dev/proj/deeper');
+    expect(envelope.git_branch).toBe('release');
+    expect(envelope.harness_version).toBe('2.1.213');
   });
 });
