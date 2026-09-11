@@ -19,6 +19,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   cleanup,
   makeSandbox,
+  pinSandboxEnv,
+  runMain,
   SLUG,
   snapshotTreeSafe,
   type Sandbox,
@@ -123,6 +125,56 @@ describe('parseSessionId — one positional, first position only', () => {
     [['--verify'], undefined],
   ])('%j -> %s', (args, expected) => {
     expect(parseSessionId(args)).toBe(expected);
+  });
+});
+
+describe('task 0.6 — a misplaced session id is refused, and the cache survives', () => {
+  // ★ `parseSessionId` reads `args[0]` and nothing else, on purpose. Its blind
+  // spot is destructive: `rebuild --dataDir=/x abc` gives `args[0]` a leading
+  // `-`, so the id is dropped, `rebuild.ts:116` takes the WHOLE-CACHE branch and
+  // `rmSync`s cache.db, `-wal` and `-shm`. `positional: 'first'` refuses the
+  // invocation instead — the parser is left exactly as it is (OQ6).
+  it.each([
+    ['id after a flag, = form', (s: Sandbox) => ['rebuild', `--dataDir=${s.dataDir}`, 'abc']],
+    ['id after a flag, space form', (s: Sandbox) => ['rebuild', '--dataDir', s.dataDir, 'abc']],
+  ])('%s exits 1 and leaves the cache on disk', async (_name, argvOf) => {
+    const s = sb();
+    seedArchive(s, IDS[0]!);
+    seedCache(s);
+    expect(existsSync(join(s.dataDir, CACHE_DB_FILE)), 'the fixture builds a cache').toBe(true);
+    const before = snapshotTreeSafe(s.dataDir);
+    const restore = pinSandboxEnv(s);
+
+    try {
+      const { code, err } = await runMain(argvOf(s));
+
+      // Asserted BEFORE the exit code: the damage is the point. Nothing ran,
+      // so the whole tree is untouched — not just cache.db.
+      expect([...snapshotTreeSafe(s.dataDir).keys()].sort()).toEqual([...before.keys()].sort());
+      expect(code).toBe(EXIT_INCOMPLETE);
+      expect(err).toContain('abc');
+    } finally {
+      restore();
+    }
+  });
+
+  it('the id in first position still reaches the command', async () => {
+    const s = sb();
+    seedArchive(s, IDS[0]!);
+    seedCache(s);
+    const restore = pinSandboxEnv(s);
+
+    try {
+      const { code, err } = await runMain(['rebuild', 'abc', `--dataDir=${s.dataDir}`]);
+
+      // Unchanged from today: the validator accepts, and the session lookup
+      // is what refuses. Same code, entirely different reason.
+      expect(code).toBe(EXIT_INCOMPLETE);
+      expect(err).toContain('is not indexed');
+      expect(existsSync(join(s.dataDir, CACHE_DB_FILE))).toBe(true);
+    } finally {
+      restore();
+    }
   });
 });
 

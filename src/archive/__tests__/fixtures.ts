@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
+import { main } from '../../cli/index.js';
 import { serializeSidecar, SIDECAR_VERSION, type SealSidecar } from '../sidecar.js';
 
 export const SLUG = '-Users-dev-proj';
@@ -199,6 +200,45 @@ export function snapshotTree(
  */
 export function snapshotTreeSafe(root: string): Map<string, TreeEntry> {
   return existsSync(root) ? snapshotTree(root) : new Map();
+}
+
+// --- driving the CLI in-process ----------------------------------------------
+
+/**
+ * `main` with BOTH console channels captured. Lives here because the three
+ * existing capture helpers are file-local to the test files that declare them,
+ * and the one closest to this shape (`archive.test.ts`'s `silentMain`) captures
+ * only stdout — a rejection message goes to stderr.
+ */
+export async function runMain(args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = (msg?: unknown) => void out.push(String(msg));
+  console.error = (msg?: unknown) => void err.push(String(msg));
+  try {
+    return { code: await main(args), out: out.join('\n'), err: err.join('\n') };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+}
+
+/** Pins the two resolver env vars at a sandbox, and restores whatever was there. */
+export function pinSandboxEnv(sandbox: Sandbox): () => void {
+  const previous = {
+    AGENT_LENS_DIR: process.env.AGENT_LENS_DIR,
+    AGENT_LENS_TRANSCRIPT_ROOT: process.env.AGENT_LENS_TRANSCRIPT_ROOT,
+  };
+  process.env.AGENT_LENS_DIR = sandbox.dataDir;
+  process.env.AGENT_LENS_TRANSCRIPT_ROOT = sandbox.sourceRoot;
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
 }
 
 // --- sealed frames and their sidecars ---------------------------------------

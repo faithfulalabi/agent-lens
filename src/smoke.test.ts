@@ -25,6 +25,20 @@ describe('scaffold smoke', () => {
     }
   });
 
+  it('registers every command with an argument spec', () => {
+    // The seam task 0.6 added: a seventh command arriving without `flags` would
+    // otherwise be silently exempt from unknown-argument rejection, and a typo
+    // in `positional` would silently read as "no positionals".
+    for (const cmd of COMMANDS) {
+      expect(cmd.flags, cmd.name).toBeDefined();
+      expect(['none', 'first', 'anywhere'], cmd.name).toContain(cmd.positional);
+      for (const [flag, kind] of Object.entries(cmd.flags)) {
+        expect(flag, `${cmd.name} ${flag}`).toMatch(/^--/);
+        expect(['value', 'boolean'], `${cmd.name} ${flag}`).toContain(kind);
+      }
+    }
+  });
+
   it('prints help listing every registered command', () => {
     const lines: string[] = [];
     const original = console.log;
