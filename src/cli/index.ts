@@ -58,7 +58,7 @@ export const COMMANDS: Command[] = [
     name: 'rebuild',
     summary: 'Drop the disposable cache, or one session’s projection',
     flags: { '--dataDir': 'value' },
-    positional: 'first',
+    positional: 'anywhere',
     run: (args) => import('./commands/rebuild.js').then((m) => m.rebuild(args)),
   },
   {

@@ -114,7 +114,7 @@ async function runRebuild(args: string[]): Promise<{ code: number; out: string }
   }
 }
 
-describe('parseSessionId — one positional, first position only', () => {
+describe('parseSessionId — one positional, at any index (task 0.15)', () => {
   it.each([
     [[], undefined],
     [['abc'], 'abc'],
@@ -123,36 +123,43 @@ describe('parseSessionId — one positional, first position only', () => {
     // The value of a leading flag is never mistaken for the id.
     [['--dataDir', '/x'], undefined],
     [['--verify'], undefined],
+    // The id after a flag, both spellings — the parity with `parsePruneArgs`
+    // this task exists for. The space form is the one a naive scan misreads.
+    [['--dataDir=/x', 'abc'], 'abc'],
+    [['--dataDir', '/x', 'abc'], 'abc'],
   ])('%j -> %s', (args, expected) => {
     expect(parseSessionId(args)).toBe(expected);
   });
 });
 
-describe('task 0.6 — a misplaced session id is refused, and the cache survives', () => {
-  // ★ `parseSessionId` reads `args[0]` and nothing else, on purpose. Its blind
-  // spot is destructive: `rebuild --dataDir=/x abc` gives `args[0]` a leading
-  // `-`, so the id is dropped, `rebuild.ts:116` takes the WHOLE-CACHE branch and
-  // `rmSync`s cache.db, `-wal` and `-shm`. `positional: 'first'` refuses the
-  // invocation instead — the parser is left exactly as it is (OQ6).
+describe('task 0.15 — a session id after a flag rebuilds it, and the cache survives', () => {
+  // ★ THE INCIDENT TRAIL, WORTH KEEPING: before task 0.6, `parseSessionId` read
+  // `args[0]` and nothing else, so `rebuild --dataDir=/x abc` dropped the id,
+  // took the WHOLE-CACHE branch and `rmSync`d cache.db — then exited 0. Task
+  // 0.6 made the validator refuse the invocation (`positional: 'first'`, OQ6);
+  // task 0.15 closes the remaining asymmetry with prune: the id is found at
+  // any index, and the cache file must still be standing afterwards.
   it.each([
     ['id after a flag, = form', (s: Sandbox) => ['rebuild', `--dataDir=${s.dataDir}`, 'abc']],
     ['id after a flag, space form', (s: Sandbox) => ['rebuild', '--dataDir', s.dataDir, 'abc']],
-  ])('%s exits 1 and leaves the cache on disk', async (_name, argvOf) => {
+  ])('%s rebuilds session abc and leaves the cache on disk', async (_name, argvOf) => {
     const s = sb();
-    seedArchive(s, IDS[0]!);
+    seedArchive(s, 'abc');
     seedCache(s);
-    expect(existsSync(join(s.dataDir, CACHE_DB_FILE)), 'the fixture builds a cache').toBe(true);
-    const before = snapshotTreeSafe(s.dataDir);
+    const cachePath = join(s.dataDir, CACHE_DB_FILE);
+    expect(existsSync(cachePath), 'the fixture builds a cache').toBe(true);
     const restore = pinSandboxEnv(s);
 
     try {
-      const { code, err } = await runMain(argvOf(s));
+      const { code, out } = await runMain(argvOf(s));
 
-      // Asserted BEFORE the exit code: the damage is the point. Nothing ran,
-      // so the whole tree is untouched — not just cache.db.
-      expect([...snapshotTreeSafe(s.dataDir).keys()].sort()).toEqual([...before.keys()].sort());
-      expect(code).toBe(EXIT_INCOMPLETE);
-      expect(err).toContain('abc');
+      // Asserted BEFORE the exit code: the pre-0.6 bug deleted the cache and
+      // still reported success, so a green code alone proves nothing.
+      expect(existsSync(cachePath)).toBe(true);
+      expect(code).toBe(EXIT_OK);
+      expect(out).toContain('abc');
+      // The success is genuine: the seeded session's rows are really there.
+      expect(withCache(s, (db) => readEventCount(db, 'abc'))).toBeGreaterThan(0);
     } finally {
       restore();
     }
@@ -167,8 +174,8 @@ describe('task 0.6 — a misplaced session id is refused, and the cache survives
     try {
       const { code, err } = await runMain(['rebuild', 'abc', `--dataDir=${s.dataDir}`]);
 
-      // Unchanged from today: the validator accepts, and the session lookup
-      // is what refuses. Same code, entirely different reason.
+      // 'abc' is never seeded here, so the unindexed-session lookup is what
+      // refuses — the id itself parses fine, as it always has in first position.
       expect(code).toBe(EXIT_INCOMPLETE);
       expect(err).toContain('is not indexed');
       expect(existsSync(join(s.dataDir, CACHE_DB_FILE))).toBe(true);

@@ -26,15 +26,12 @@ export interface ArgSpec {
   /** Every flag this command reads. Anything else is refused. */
   flags: Record<string, FlagKind>;
   /**
-   * Where a bare (non-`--`) argument may sit. A POSITION, not a count, because
-   * the two commands that take one disagree about where it may go:
+   * Whether one bare (non-`--`) argument is allowed:
    *   'none'     — no bare argument at all
-   *   'first'    — one, and only at index 0. `parseSessionId`
-   *                (`commands/rebuild.ts:33-36`) reads `args[0]` and nothing
-   *                else, and dropping the id takes the whole-cache branch.
-   *   'anywhere' — one, at any index, as `parsePruneArgs` accepts.
+   *   'anywhere' — one, at any index, as `parseSessionId` and `parsePruneArgs`
+   *                both scan since task 0.15.
    */
-  positional: 'none' | 'first' | 'anywhere';
+  positional: 'none' | 'anywhere';
 }
 
 export type ArgsResult = { ok: true } | { ok: false; message: string };
@@ -87,18 +84,10 @@ export function validateArgs(spec: ArgSpec, args: string[]): ArgsResult {
     if (spec.positional === 'none') {
       return { ok: false, message: `unexpected argument ${arg}` };
     }
-    // "At most one" is checked first so a SECOND bare id gets the count message
-    // rather than the placement one, which would not describe its problem.
     if (seenPositional) {
       return {
         ok: false,
         message: `unexpected argument ${arg} — ${spec.name} takes at most one session id`,
-      };
-    }
-    if (spec.positional === 'first' && i !== 0) {
-      return {
-        ok: false,
-        message: `unexpected argument ${arg} — ${spec.name} takes [session-id] first, before any flag`,
       };
     }
     seenPositional = true;

@@ -31,7 +31,7 @@ describe('scaffold smoke', () => {
     // in `positional` would silently read as "no positionals".
     for (const cmd of COMMANDS) {
       expect(cmd.flags, cmd.name).toBeDefined();
-      expect(['none', 'first', 'anywhere'], cmd.name).toContain(cmd.positional);
+      expect(['none', 'anywhere'], cmd.name).toContain(cmd.positional);
       for (const [flag, kind] of Object.entries(cmd.flags)) {
         expect(flag, `${cmd.name} ${flag}`).toMatch(/^--/);
         expect(['value', 'boolean'], `${cmd.name} ${flag}`).toContain(kind);

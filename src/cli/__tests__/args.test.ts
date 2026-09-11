@@ -261,12 +261,9 @@ describe('7 — bare arguments land where each parser actually reads them (OQ4)'
   });
 
   it.each([[['--dataDir=/x', 'abc']], [['--dataDir', '/x', 'abc']]])(
-    'rebuild refuses %j — the id is first or it is not an id',
+    'rebuild accepts %j — the id lands at any index, as prune already allows (task 0.15)',
     (args) => {
-      expect(validateArgs(specOf('rebuild'), args)).toEqual({
-        ok: false,
-        message: 'unexpected argument abc — rebuild takes [session-id] first, before any flag',
-      });
+      expect(validateArgs(specOf('rebuild'), args)).toEqual({ ok: true });
     },
   );
 
