@@ -101,6 +101,10 @@ it against — its source has already expired, or it is sealed — and there is 
 yet. Those files are never counted as verified. On a machine that has been off for a month, expect
 unverifiable to be the large one. That is the truthful answer, not a failure.
 
+`doctor` also reports the time since the archive job's last successful pass, read from the job's
+own log (`~/.agent-lens/logs/cron.log`) and never from a file mtime — a job that has not run is a
+different, more urgent fact than one that ran and found nothing new to copy.
+
 ## Starting the server
 
 ```bash

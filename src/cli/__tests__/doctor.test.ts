@@ -14,8 +14,10 @@ import {
   doctor,
   DURABILITY_STATEMENT,
   formatDoctorReport,
+  formatLastPassSection,
   readCacheStats,
 } from '../commands/doctor.js';
+import type { LastPassReport } from '../../archive/index.js';
 import {
   archivePath,
   cleanup,
@@ -402,6 +404,126 @@ describe('AC2 — doctor reports the cache beside the archive', () => {
     for (const [rel, entry] of before) {
       if (rel.startsWith('archive/')) expect(after.get(rel), rel).toEqual(entry);
     }
+  });
+});
+
+/* ------------------------------------------------- the archive-job block --- */
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+/** A `found` report with sane defaults, so each case states only what it tests. */
+function foundReport(partial: {
+  lastEntry?: { epochMs: number; status: string; summary: string };
+  lastOk?: { epochMs: number; status: string; summary: string } | undefined;
+}): LastPassReport {
+  const ok = {
+    epochMs: 0,
+    status: 'ok',
+    summary: 'agent-lens archive: 854 files, 0 bytes copied',
+  };
+  return {
+    state: 'found',
+    path: '/data/logs/cron.log',
+    lastEntry: partial.lastEntry ?? partial.lastOk ?? ok,
+    lastOk: 'lastOk' in partial ? partial.lastOk : ok,
+  };
+}
+
+describe('task 0.10 — doctor reports time since the last successful pass', () => {
+  it('a recent all-ok, 0-bytes-copied log renders as healthy — never as a failure', () => {
+    // 36 of 36 passes on 2026-08-29 were `ok … 0 bytes copied`; that is the
+    // healthy steady state, and the section keys on the status token alone.
+    const lines = formatLastPassSection(
+      foundReport({ lastOk: { epochMs: 14 * MINUTE, status: 'ok', summary: 'x, 0 bytes copied' } }),
+      28 * MINUTE,
+    );
+
+    expect(lines).toEqual([
+      '',
+      'archive job: /data/logs/cron.log',
+      '  last successful pass: 14m ago',
+    ]);
+    expect(lines.join('\n')).not.toMatch(/fail|error|stale|never/i);
+  });
+
+  it('a 29-hour gap renders the elapsed time plainly, distinguishable from never-ran', () => {
+    const lines = formatLastPassSection(
+      foundReport({ lastOk: { epochMs: 0, status: 'ok', summary: 'x' } }),
+      29 * HOUR,
+    );
+
+    expect(lines).toContain('  last successful pass: 1d 5h ago');
+    expect(lines.join('\n')).not.toContain('never run');
+  });
+
+  it('a trailing error is named beside the last success, with its own age', () => {
+    const lines = formatLastPassSection(
+      foundReport({
+        lastOk: { epochMs: 0, status: 'ok', summary: 'x' },
+        lastEntry: { epochMs: 55 * MINUTE, status: 'ERR3', summary: 'archive-side errors — y' },
+      }),
+      HOUR,
+    );
+
+    expect(lines).toContain('  last successful pass: 1h 0m ago');
+    expect(lines).toContain('  most recent attempt: ERR3, 5m ago — archive-side errors — y');
+  });
+
+  it('ran-but-never-succeeded is distinct from both never-ran and recently-ok', () => {
+    const lines = formatLastPassSection(
+      foundReport({
+        lastOk: undefined,
+        lastEntry: { epochMs: 0, status: 'ERR127', summary: 'env: node: No such file' },
+      }),
+      2 * HOUR,
+    );
+
+    expect(lines).toContain('  no successful pass on record');
+    expect(lines).toContain('  most recent attempt: ERR127, 2h 0m ago — env: node: No such file');
+    expect(lines.join('\n')).not.toContain('never run');
+  });
+
+  it('absent and empty are two different sentences, and neither implies failure', () => {
+    const absent = formatLastPassSection({ state: 'absent', path: '/data/logs/cron.log' });
+    const empty = formatLastPassSection({ state: 'empty', path: '/data/logs/cron.log' });
+
+    expect(absent.join('\n')).toContain('never run');
+    expect(empty.join('\n')).toContain('records no pass');
+    expect(absent).not.toEqual(empty);
+  });
+
+  it('end to end: text and --json carry the same last-pass facts from a fixture log', async () => {
+    const s = sb();
+    writeSource(s, SESSION, jsonLines(2));
+    // Whole seconds: the wrapper's stamp has no millisecond field to carry.
+    const okEpoch = Math.floor((Date.now() - 5 * MINUTE) / 1000) * 1000;
+    const stamp = `${new Date(okEpoch).toISOString().slice(0, 19)}+0000`;
+    mkdirSync(join(s.dataDir, 'logs'), { recursive: true });
+    writeFileSync(
+      join(s.dataDir, 'logs', 'cron.log'),
+      `${stamp} ok   agent-lens archive: 854 files, 0 bytes copied\n` +
+        '  297 expired at the source — the archive is now the only copy\n',
+    );
+
+    const text = await runDoctor(argsFor(s));
+    const json = JSON.parse(await runDoctor(argsFor(s, ['--json']))) as {
+      lastPass: LastPassReport;
+    };
+
+    expect(text).toMatch(/ {2}last successful pass: \d+m ago/);
+    expect(json.lastPass.state).toBe('found');
+    if (json.lastPass.state !== 'found') return;
+    expect(json.lastPass.lastOk?.epochMs).toBe(okEpoch);
+    expect(json.lastPass.lastEntry.status).toBe('ok');
+
+    // The block sits with the other sections, never after the two closing lines.
+    const lines = text.split('\n');
+    expect(lines.at(-2)).toBe(COVERAGE_GAP_STATEMENT);
+    expect(lines.at(-1)).toBe(DURABILITY_STATEMENT);
+    const sectionAt = lines.findIndex((l) => l.startsWith('archive job: '));
+    expect(sectionAt).toBeGreaterThan(-1);
+    expect(sectionAt).toBeLessThan(lines.length - 2);
   });
 });
 
