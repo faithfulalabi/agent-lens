@@ -417,6 +417,9 @@ export function turnDurationMs(line: ParsedLine): number | undefined {
     : undefined;
 }
 
+/** The harness's placeholder on a line it manufactured. It names no model. */
+const SYNTHETIC_MODEL = '<synthetic>';
+
 /** What a whole file projects to before any turn or event exists. */
 export interface SessionEnvelope {
   /** `cwd`. The session list groups and filters on it. */
@@ -424,7 +427,31 @@ export interface SessionEnvelope {
   git_branch: string | undefined;
   /** The harness's own version string; it groups the drift report. */
   harness_version: string | undefined;
-  /** Most recent model named by any message. */
+  /**
+   * The model named on the most LINES, `<synthetic>` excluded — NOT the most
+   * recent one, which is what the three fields above take.
+   *
+   * The divergence is deliberate. `cwd`, `gitBranch` and `version` describe
+   * where a session ENDED UP, so last-wins answers them. A session runs many
+   * model calls and the last is not authoritative, merely last: one trailing
+   * line used to overwrite the model that did the work, and
+   * `recomputeSessionRollups` then priced the session's WHOLE token total under
+   * it. `<synthetic>` is the harness's own marker for a line it manufactured on
+   * an auth expiry, a connect failure or a 529, so it names no model at all: it
+   * is dropped before the tally, and a file naming nothing else folds to
+   * `undefined` — an honestly unpriced session — rather than to the marker.
+   *
+   * Ties break to the model seen FIRST. That is a semantic choice, not a `Map`
+   * ordering accident: on a one-line-against-one-line tie it IS "first real
+   * model wins", which is wrong on a session that switched deliberately. It is
+   * taken because it is deterministic and because no measured session ties —
+   * 666 transcript files, none running two real models.
+   *
+   * `db/sidecars.ts` folds a head+tail byte window rather than a whole file, so
+   * no whole-file rule can hold there. It reads only `project_path`,
+   * `started_at` and `last_activity_at`, which is why this field is meaningless
+   * in that call rather than wrong.
+   */
   model: string | undefined;
   /** First and last TOP-LEVEL timestamps — never a nested one. */
   started_at: string | undefined;
@@ -450,17 +477,35 @@ export function foldSessionEnvelope(lines: readonly ParsedLine[]): SessionEnvelo
     last_activity_at: undefined,
   };
 
+  // `model` is lifted out of the `str()` block below because it alone is NOT
+  // last-wins — see `SessionEnvelope.model` for why the four fields diverge.
+  const linesPerModel = new Map<string, number>();
+
   for (const line of lines) {
     envelope.project_path = str(line.raw.cwd, envelope.project_path);
     envelope.git_branch = str(line.raw.gitBranch, envelope.git_branch);
     envelope.harness_version = str(line.raw.version, envelope.harness_version);
-    envelope.model = str(obj(line.raw.message, undefined)?.model, envelope.model);
+
+    const model = str(obj(line.raw.message, undefined)?.model, undefined);
+    if (model !== undefined && model !== SYNTHETIC_MODEL) {
+      linesPerModel.set(model, (linesPerModel.get(model) ?? 0) + 1);
+    }
 
     const at = line.timestamp;
     if (at === undefined) continue;
     if (envelope.started_at === undefined || at < envelope.started_at) envelope.started_at = at;
     if (envelope.last_activity_at === undefined || at > envelope.last_activity_at) {
       envelope.last_activity_at = at;
+    }
+  }
+
+  // Strict `>` over an insertion-ordered map keeps the FIRST model seen on a
+  // tie, which the field's own doc comment argues for rather than assumes.
+  let mostLines = 0;
+  for (const [model, count] of linesPerModel) {
+    if (count > mostLines) {
+      envelope.model = model;
+      mostLines = count;
     }
   }
 

@@ -21,6 +21,7 @@ import {
   humanLine,
   jsonl,
   machineryLine,
+  nextUuid,
   openCache,
   parseJsonl,
   seedIndexRow,
@@ -662,6 +663,60 @@ describe('recomputeSessionRollups (AC8)', () => {
 
     project(db, id, path);
     expect(typeof sessionRow(db, id).est_cost).toBe('number');
+  });
+});
+
+describe('the folded model reaches the row (Task 0.13)', () => {
+  /** The line the harness manufactures on an auth expiry. It names no model. */
+  function syntheticLine(ts: string): Record<string, unknown> {
+    return {
+      type: 'assistant',
+      uuid: nextUuid(),
+      timestamp: ts,
+      cwd: CWD,
+      gitBranch: 'main',
+      version: '2.1.212',
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: 'Login expired · Please run /login' }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      error: 'authentication_failed',
+      isApiErrorMessage: true,
+    };
+  }
+
+  it('writes the model that did the work, not the marker on the last line', () => {
+    const db = cache();
+    const { path } = plant('lastsynthetic', [
+      humanLine('go', TS(0)),
+      toolCallLine('toolu_real', 'Grep', TS(1), 'claude-opus-5'),
+      toolResultLine('toolu_real', 'ok', TS(2)),
+      syntheticLine(TS(3)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    // The only end-to-end cover of the header-to-column bind: the pipeline
+    // suite opens no database and can assert a projection, never a row.
+    expect(sessionRow(db, id).model).toBe('claude-opus-5');
+  });
+
+  it('leaves model and est_cost NULL when the marker is all the file names', () => {
+    const db = cache();
+    const { path } = plant('allsynthetic', [humanLine('go', TS(0)), syntheticLine(TS(1))]);
+    const id = seedIndexRow(db, path);
+
+    // `ready` first: NULL is also this column's default, so a session that
+    // never projected would satisfy both assertions below for free.
+    expect(project(db, id, path)).toBe('ready');
+    const row = sessionRow(db, id);
+
+    expect(row.model).toBeNull();
+    // NULL is "nothing priceable ran", and it is never 0 — see the column note.
+    expect(row.est_cost).toBeNull();
   });
 });
 

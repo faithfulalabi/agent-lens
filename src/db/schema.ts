@@ -76,7 +76,7 @@ CREATE TABLE sessions (
 
   project_path          TEXT NOT NULL,      -- cwd; the list groups and filters on it
   git_branch            TEXT,
-  model                 TEXT,               -- most recent message.model
+  model                 TEXT,               -- the model named on the most lines; NOT the last
   harness_version       TEXT,               -- \`version\`; transcript-only, groups the drift report
   title                 TEXT,               -- LAST type:'ai-title' line
   preview               TEXT,               -- first human prompt, 200 chars
