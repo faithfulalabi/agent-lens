@@ -54,6 +54,13 @@ CREATE TABLE sessions (
   source_size           INTEGER,
   source_head_sha256    TEXT,               -- first 4 KB; detects an in-place rewrite
   source_state          TEXT NOT NULL DEFAULT 'present',  -- present | expired | diverged
+                                            -- MEASURED 2026-09-11 (293 sessions): every row
+                                            -- 'present'. 'expired' and 'diverged' are
+                                            -- UNREACHABLE BY CONSTRUCTION at the SQL level:
+                                            -- mirror.ts:363/:463 compute them, but neither
+                                            -- write.ts UPSERT carries this column — the same
+                                            -- shape as task 0.14's est_cost gap. Keep both
+                                            -- arms; see task 0.12.
 
   -- ARCHIVE: ~/.agent-lens/archive. THE SYSTEM OF RECORD. Byte-identical, append-only.
   -- archive_size is ALWAYS derived from statSync at read time, never trusted from here --
@@ -64,6 +71,11 @@ CREATE TABLE sessions (
   archive_size          INTEGER NOT NULL DEFAULT 0,   -- last observed; advisory only
   archive_sha256        TEXT,               -- full-content hash, set at seal time
   archive_state         TEXT NOT NULL DEFAULT 'hot',  -- hot (raw) | sealed (.zst)
+                                            -- MEASURED 2026-09-11 (293 sessions): every row
+                                            -- 'hot'. 'sealed' is UNREACHABLE BY CONSTRUCTION
+                                            -- at the SQL level: mirror.ts:380 computes it,
+                                            -- but neither write.ts UPSERT carries this
+                                            -- column. Keep the arm; see task 0.12.
   archived_at           TEXT,
   sealed_at             TEXT,
 
@@ -124,6 +136,12 @@ CREATE TABLE sessions (
                                             -- 'empty' is the tombstone: the file
                                             -- projected no header, so it has no turns,
                                             -- events or FTS rows and must not be re-read
+                                            -- MEASURED 2026-09-11 (293 sessions): every row
+                                            -- 'ready'. 'none', 'failed' and 'empty' have 0
+                                            -- rows, REACHABLE BUT UNOBSERVED — 'none' is
+                                            -- this DEFAULT itself, its only writer;
+                                            -- 'failed' write.ts:344; 'empty' write.ts:280.
+                                            -- Keep all arms; see task 0.12.
   projection_error      TEXT,
   drift_json            TEXT NOT NULL DEFAULT '{}'
 );
@@ -146,6 +164,13 @@ CREATE TABLE turns (
   seq                INTEGER NOT NULL,
   kind               TEXT NOT NULL,         -- human | task_notification | slash_command
                                             -- | compaction | system | unknown
+                                            -- MEASURED 2026-09-11 (647 turns): 'compaction'
+                                            -- and 'system' have 0 rows, REACHABLE BUT
+                                            -- UNOBSERVED in this corpus — writer
+                                            -- pipeline.ts:329-330, every arm pinned by the
+                                            -- turn-kinds.jsonl fixture
+                                            -- (pipeline.test.ts:227). Keep the arms; see
+                                            -- task 0.12.
   parent_event_id    TEXT,                  -- BLOCKING FIX #3. When kind='task_notification',
                                             -- the Agent tool_call event that spawned it (join on
                                             -- <tool-use-id>), so machinery FOLDS under its Agent
@@ -184,6 +209,11 @@ CREATE TABLE events (
   seq                INTEGER NOT NULL,      -- thread order; deterministic from the file bytes
   kind               TEXT NOT NULL,         -- prompt | text | thinking | tool_call
                                             -- | error | compaction | unknown
+                                            -- MEASURED 2026-09-11 (30,286 events): 'error'
+                                            -- has 0 rows, REACHABLE BUT UNOBSERVED — writer
+                                            -- pipeline.ts:306, gated on the harness line
+                                            -- subtype 'api_error'. Keep the arm; see
+                                            -- task 0.12.
   ts                 TEXT NOT NULL,
   request_id         TEXT,                  -- groups the N lines of ONE assistant response
                                             -- (1:1 with message.id; 13,629/13,630 lines = 1 block)
@@ -195,13 +225,28 @@ CREATE TABLE events (
   duration_source    TEXT,                  -- 'elapsed' | 'sidecar_span' | 'reported'
                                             -- NEVER labelled "execution": a 61 ms Bash reads
                                             -- 8,063 ms elapsed when a human sat on the approval
+                                            -- MEASURED 2026-09-11 (293 sessions, 30,286
+                                            -- events): 'reported' is UNREACHABLE BY
+                                            -- CONSTRUCTION — pipeline.ts:130 types this
+                                            -- field 'elapsed' | 'sidecar_span' | undefined.
+                                            -- Keep the arm; see task 0.12.
 
   input              TEXT,                  -- tool_use.input as JSON text (full, or 8 KB preview)
   input_bytes        INTEGER,               -- TRUE logical size
   input_storage      TEXT,                  -- inline | line_ref | absent
+                                            -- MEASURED 2026-09-11 (30,286 events): 'absent'
+                                            -- has 0 rows, REACHABLE BUT UNOBSERVED — writer
+                                            -- tools.ts:118, unwitnessed by its own comment.
+                                            -- 'line_ref' is live at exactly 1 row. Keep the
+                                            -- arms; see task 0.12.
   text               TEXT,                  -- prose / thinking / prompt / tool output
   text_bytes         INTEGER,
   output_storage     TEXT,                  -- inline | line_ref | spill | missing | absent
+                                            -- MEASURED 2026-09-11 (30,286 events):
+                                            -- 'line_ref' has 0 rows, REACHABLE BUT RARE —
+                                            -- tools.ts:166 fires above INLINE_MAX (64 KiB),
+                                            -- and the input sibling arm has fired once.
+                                            -- Keep the arm; see task 0.12.
   spill_path         TEXT,                  -- resolved <session-dir>/tool-results/*.txt
   spill_bytes        INTEGER,
 
@@ -223,6 +268,11 @@ CREATE TABLE events (
   child_session_id   TEXT,                  -- Agent tool_call -> the sidecar's sessions row
   agent_type         TEXT,
   agent_status       TEXT,                  -- completed | failed | killed | running
+                                            -- MEASURED 2026-09-11 (30,286 events): 'killed'
+                                            -- has 0 rows, REACHABLE BUT UNOBSERVED — writer
+                                            -- tools.ts:203 copies the notification status
+                                            -- verbatim; parser proof agents.test.ts:104.
+                                            -- Keep the arm; see task 0.12.
 
   raw_type           TEXT NOT NULL,         -- the harness's own \`type\`, VERBATIM
   raw_subtype        TEXT,

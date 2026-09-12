@@ -277,6 +277,227 @@ describe('★ the full column set of all four tables, as SET EQUALITY (AC2)', ()
   });
 });
 
+// Hand-transcribed from main @ d5c66d1 BEFORE the task 0.12 comment edits, with
+// every `--` comment removed. Not a snapshot, on purpose: a snapshot captured
+// after the edit records the post-edit DDL and `vitest -u` re-baselines it,
+// while the column sets above compare NAMES only — a TEXT→INTEGER flip or a
+// dropped DEFAULT passes both. Same independent-oracle doctrine as the column
+// lists: written out by hand, checked against the pre-edit bytes.
+const STATEMENTS_AT_D5C66D1 = `
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = OFF;
+PRAGMA user_version = 1;
+
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  source_mtime_ms INTEGER,
+  source_size INTEGER,
+  source_head_sha256 TEXT,
+  source_state TEXT NOT NULL DEFAULT 'present',
+  archive_path TEXT NOT NULL,
+  archive_size INTEGER NOT NULL DEFAULT 0,
+  archive_sha256 TEXT,
+  archive_state TEXT NOT NULL DEFAULT 'hot',
+  archived_at TEXT,
+  sealed_at TEXT,
+  file_mtime_ms INTEGER NOT NULL,
+  file_size INTEGER NOT NULL,
+  project_path TEXT NOT NULL,
+  git_branch TEXT,
+  model TEXT,
+  harness_version TEXT,
+  title TEXT,
+  preview TEXT,
+  started_at TEXT NOT NULL,
+  last_activity_at TEXT NOT NULL,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  tool_call_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  est_cost REAL,
+  agent_count INTEGER NOT NULL DEFAULT 0,
+  sub_tool_call_count INTEGER NOT NULL DEFAULT 0,
+  sub_error_count INTEGER NOT NULL DEFAULT 0,
+  sub_tokens_in INTEGER NOT NULL DEFAULT 0,
+  sub_tokens_out INTEGER NOT NULL DEFAULT 0,
+  sub_tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  sub_tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  sub_est_cost REAL,
+  rollup_state TEXT NOT NULL DEFAULT 'own',
+  parent_session_id TEXT,
+  spawned_by_event_id TEXT,
+  agent_type TEXT,
+  agent_description TEXT,
+  spawn_depth INTEGER,
+  projected_mtime_ms INTEGER,
+  projected_size INTEGER,
+  projector_version INTEGER,
+  projected_at TEXT,
+  projection_state TEXT NOT NULL DEFAULT 'none',
+  projection_error TEXT,
+  drift_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX idx_sessions_recent ON sessions(last_activity_at DESC, id DESC)
+  WHERE parent_session_id IS NULL;
+CREATE INDEX idx_sessions_project ON sessions(project_path, last_activity_at DESC, id DESC)
+  WHERE parent_session_id IS NULL;
+CREATE INDEX idx_sessions_parent ON sessions(parent_session_id)
+  WHERE parent_session_id IS NOT NULL;
+
+CREATE TABLE turns (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  parent_event_id TEXT,
+  title TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  duration_ms INTEGER,
+  duration_source TEXT,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  est_cost REAL,
+  tool_call_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  first_seq INTEGER NOT NULL,
+  last_seq INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_turns_session_seq ON turns(session_id, seq);
+
+CREATE TABLE events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  request_id TEXT,
+  block_index INTEGER,
+  name TEXT,
+  status TEXT,
+  duration_ms INTEGER,
+  duration_source TEXT,
+  input TEXT,
+  input_bytes INTEGER,
+  input_storage TEXT,
+  text TEXT,
+  text_bytes INTEGER,
+  output_storage TEXT,
+  spill_path TEXT,
+  spill_bytes INTEGER,
+  src_offset INTEGER NOT NULL,
+  src_len INTEGER NOT NULL,
+  result_offset INTEGER,
+  result_len INTEGER,
+  result_block INTEGER,
+  model TEXT,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  tokens_cache_read INTEGER,
+  tokens_cache_write INTEGER,
+  est_cost REAL,
+  child_session_id TEXT,
+  agent_type TEXT,
+  agent_status TEXT,
+  raw_type TEXT NOT NULL,
+  raw_subtype TEXT,
+  attrs TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX idx_events_session_seq ON events(session_id, seq);
+CREATE INDEX idx_events_turn ON events(turn_id, seq);
+CREATE INDEX idx_events_slow ON events(session_id, kind, duration_ms DESC);
+CREATE INDEX idx_events_child ON events(child_session_id)
+  WHERE child_session_id IS NOT NULL;
+
+CREATE VIRTUAL TABLE events_fts USING fts5(
+  text,
+  input,
+  content='events',
+  content_rowid='rowid',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`;
+
+/** Drops every `--` comment, collapses whitespace. No `--` exists in a literal. */
+function withoutComments(ddl: string): string {
+  return ddl
+    .split('\n')
+    .map((line) => {
+      const cut = line.indexOf('--');
+      return cut === -1 ? line : line.slice(0, cut);
+    })
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The lines of one CREATE TABLE body, from the opening line to its bare `);`. */
+function tableLines(table: string): string[] {
+  const lines = SCHEMA_DDL.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(`CREATE TABLE ${table} (`));
+  expect(start).toBeGreaterThan(-1);
+  const end = lines.findIndex((line, i) => i > start && line.trim() === ');');
+  return lines.slice(start, end);
+}
+
+/** A column's declaration line plus its trailing comment-only lines. */
+function columnBlock(table: string, column: string): string {
+  const lines = tableLines(table);
+  const start = lines.findIndex((line) => new RegExp(`^\\s+${column}\\s`).test(line));
+  expect(start).toBeGreaterThan(-1);
+  let end = start + 1;
+  while (lines[end]?.trimStart().startsWith('--') === true) end += 1;
+  return lines.slice(start, end).join('\n');
+}
+
+// The nine columns the task 0.12 audit flagged: at least one declared value has
+// zero rows in the dev corpus. Live columns carry no marker by design — that is
+// what keeps the comment-only equality above meaningful.
+const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> = [
+  ['sessions', 'source_state'],
+  ['sessions', 'archive_state'],
+  ['sessions', 'projection_state'],
+  ['turns', 'kind'],
+  ['events', 'kind'],
+  ['events', 'duration_source'],
+  ['events', 'input_storage'],
+  ['events', 'output_storage'],
+  ['events', 'agent_status'],
+];
+
+describe('task 0.12 audited comments only — the statements did not move (AC5)', () => {
+  it('the DDL, stripped of comments, equals main @ d5c66d1 exactly', () => {
+    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(STATEMENTS_AT_D5C66D1));
+  });
+});
+
+describe('task 0.12 measurement markers landed at the declared lines (AC4)', () => {
+  it.each(AUDITED_COLUMNS)('%s.%s carries a dated MEASURED marker', (table, column) => {
+    expect(columnBlock(table, column)).toMatch(/MEASURED 2026-/);
+  });
+
+  it('live columns stay untouched — no marker outside the audited nine', () => {
+    for (const [table, column] of [
+      ['sessions', 'rollup_state'],
+      ['turns', 'duration_source'],
+      ['events', 'status'],
+    ] as const) {
+      expect(columnBlock(table, column)).not.toMatch(/MEASURED 2026-/);
+    }
+  });
+});
+
 describe('events_fts is wired, not merely declared (AC7)', () => {
   it('an external-content insert round-trips through MATCH', () => {
     // The assertion `payloads_fts` never had: migration 001 created it, nothing
