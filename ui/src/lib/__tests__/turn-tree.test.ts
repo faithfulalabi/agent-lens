@@ -435,6 +435,7 @@ describe('turn chips are read off the server rollup, never recomputed', () => {
       durationMs: 123_456,
       tokens: 90_000,
       cost: 9.5,
+      costUnknown: undefined,
       errorCount: 7,
     });
     // Mutation check, verified by hand: summing the page's events answers 0.
@@ -442,12 +443,45 @@ describe('turn chips are read off the server rollup, never recomputed', () => {
   });
 
   it('spells an absent duration or cost as absent, never as zero', () => {
+    // ★ `cost` used to be `est_cost ?? 0` — the same conflation Task 0.8
+    // removed from `SessionHeader`, reintroduced one layer down. A null with
+    // real usage now carries its label; the model is deliberately unnamed,
+    // because a turn can span more than one request group.
     expect(turnChips(makeTurnRow({ duration_ms: null, est_cost: null }))).toEqual({
       durationMs: undefined,
       tokens: 1200,
-      cost: 0,
+      cost: null,
+      costUnknown: 'cost unknown — no model recorded',
       errorCount: 0,
     });
+  });
+
+  it('an unpriced turn that moved no tokens earns no label — nothing ran', () => {
+    const chips = turnChips(
+      makeTurnRow({
+        est_cost: null,
+        tokens_in: 0,
+        tokens_out: 0,
+        tokens_cache_read: 0,
+        tokens_cache_write: 0,
+      }),
+    );
+    expect(chips.cost).toBeNull();
+    expect(chips.costUnknown).toBeUndefined();
+  });
+
+  it('cache-only usage still counts as real spend for the label', () => {
+    // Mirrors the write path's guard, which reads all four token counts.
+    const chips = turnChips(
+      makeTurnRow({
+        est_cost: null,
+        tokens_in: 0,
+        tokens_out: 0,
+        tokens_cache_read: 5_000,
+        tokens_cache_write: 0,
+      }),
+    );
+    expect(chips.costUnknown).toBe('cost unknown — no model recorded');
   });
 });
 
@@ -520,7 +554,22 @@ describe('event chips report the row itself, and refuse to invent a duration', (
       eventChips(
         makeEventRow({ duration_ms: 2_500, tokens_in: 100, tokens_out: 20, est_cost: 0.5 }),
       ),
-    ).toEqual({ durationMs: 2_500, tokens: 120, cost: 0.5, errorCount: 0 });
+    ).toEqual({ durationMs: 2_500, tokens: 120, cost: 0.5, costUnknown: undefined, errorCount: 0 });
+  });
+
+  it('★ an unpriced event with real usage names its model in the label', () => {
+    // Mutation check, verified by hand: reinstate `est_cost ?? 0` and the
+    // label vanishes — cost reads as a silently-omitted $0 chip instead.
+    const chips = eventChips(
+      makeEventRow({ tokens_in: 100, tokens_out: 20, est_cost: null, model: 'claude-opus-5' }),
+    );
+    expect(chips.cost).toBeNull();
+    expect(chips.costUnknown).toBe('cost unknown — no rate for claude-opus-5');
+
+    const anonymous = eventChips(
+      makeEventRow({ tokens_in: 100, tokens_out: 20, est_cost: null, model: null }),
+    );
+    expect(anonymous.costUnknown).toBe('cost unknown — no model recorded');
   });
 
   it('answers undefined for an unmeasured row, and NEVER 0ms', () => {
@@ -540,7 +589,10 @@ describe('event chips report the row itself, and refuse to invent a duration', (
   it('treats an absent token or cost field as nothing, never as NaN', () => {
     const chips = eventChips(makeEventRow({ tokens_in: null, tokens_out: null, est_cost: null }));
     expect(chips.tokens).toBe(0);
-    expect(chips.cost).toBe(0);
+    // Null passes through untouched — and with no usage there is no label:
+    // a row that moved nothing is not "unpriced", it is free by vacuity.
+    expect(chips.cost).toBeNull();
+    expect(chips.costUnknown).toBeUndefined();
   });
 
   it.each([

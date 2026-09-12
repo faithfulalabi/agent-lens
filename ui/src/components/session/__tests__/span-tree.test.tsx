@@ -1030,6 +1030,33 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(markup).not.toContain('0 tok');
     expect(markup).not.toContain('data-slot="metric-cost"');
   });
+
+  it('★ an unpriced row with real usage renders the label, never a missing chip (Task 0.14)', () => {
+    /*
+     * ★ THE MUTATION CONTROL IS THE POINT, exactly Task 0.8's Test 4 one layer
+     * down. `est_cost ?? 0` stood in `turnChips`/`eventChips` and the omitted
+     * chip proved nothing — a free row and an unpriced row omitted it alike.
+     * Reinstate either `?? 0` and this reds; the omission test above stays
+     * green. The row moved real tokens, so the silence would be a lie.
+     */
+    const event = eventRowMarkup({
+      tokens_in: 100,
+      tokens_out: 20,
+      est_cost: null,
+      model: 'claude-opus-5',
+    });
+    expect(event).toContain('data-slot="metric-cost"');
+    expect(event).toContain('cost unknown — no rate for claude-opus-5');
+    expect(event, 'never colour alone — design-system.md:141').toContain(
+      'aria-label="cost unknown',
+    );
+    expect(event).toContain('text-faint');
+    expect(event).not.toContain('$0');
+
+    const turn = turnRowMarkup({ est_cost: null });
+    expect(turn).toContain('cost unknown — no model recorded');
+    expect(turn).not.toContain('$0');
+  });
 });
 
 /* -------------------------- the selection affordance ---------------------- */
@@ -1072,16 +1099,25 @@ describe('the selected row is washed and edged, per the flagship-row spec', () =
  * assigns.
  */
 function subagentRows(event: Partial<EventRow> = {}, header: Partial<SessionListRow> = {}): Row[] {
-  // Both TURNS are unpriced on purpose, so the only currency anywhere in the
-  // rendered tree is the sub-agent header's own. Without that, a turn rollup of
-  // `$0.01` would satisfy — or spoil — every assertion about the child's cost.
+  // Both TURNS are unpriced AND zero-usage on purpose, so the only cost
+  // treatment anywhere in the rendered tree is the sub-agent header's own.
+  // Without that, a turn rollup of `$0.01` — or, since Task 0.14, a null-cost
+  // turn with real tokens rendering its own labelled dash — would satisfy or
+  // spoil every assertion about the child's cost.
+  const freeTurn = {
+    est_cost: null,
+    tokens_in: 0,
+    tokens_out: 0,
+    tokens_cache_read: 0,
+    tokens_cache_write: 0,
+  };
   const parent = makeTurnTree([
-    { id: 'seed-s0:0', seq: 0, est_cost: null, events: [{ name: 'Read' }, makeAgentEvent(event)] },
+    { id: 'seed-s0:0', seq: 0, ...freeTurn, events: [{ name: 'Read' }, makeAgentEvent(event)] },
   ]);
   const model = buildTurnGroups(parent.turns, parent.eventsByTurn);
   const child = makeSidecarDetail(
     'child-0',
-    makeTurnTree([{ id: 'c0', seq: 0, est_cost: null, events: [{ name: 'Grep' }] }]),
+    makeTurnTree([{ id: 'c0', seq: 0, ...freeTurn, events: [{ name: 'Grep' }] }]),
     header,
   );
   const sub = subagentReducer(initialSubagentState, {

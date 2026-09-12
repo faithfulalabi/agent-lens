@@ -40,6 +40,7 @@ import {
   foldRequestGroup,
   type FoldedUsage,
   groupByRequestId,
+  modelOfRequestGroup,
   requestIdOf,
 } from '../transcript/usage.js';
 import {
@@ -148,6 +149,8 @@ export interface ProjectedEvent extends ProjectedInput {
   result_offset: number | undefined;
   result_len: number | undefined;
   result_block: number | undefined;
+  /** Stamped on the FIRST event of each request group only, like the tokens. */
+  model: string | undefined;
   tokens_in: number | undefined;
   tokens_out: number | undefined;
   tokens_cache_read: number | undefined;
@@ -441,9 +444,11 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
   // FIRST unit only. Summing every line's copy runs 1.51x high; reading only the
   // first runs 2.6x low.
   const usageAt = new Map<number, FoldedUsage>();
+  const modelAt = new Map<number, string | undefined>();
   let member = 0;
   for (const group of groupByRequestId(assistantAt.map((index) => lines[index]!.raw))) {
     usageAt.set(assistantAt[member]!, foldRequestGroup(group));
+    modelAt.set(assistantAt[member]!, modelOfRequestGroup(group));
     member += group.length;
   }
 
@@ -467,6 +472,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
       const kind = eventKind(line, block, human);
       const id = block?.kind === 'tool_use' && block.id !== '' ? block.id : `${uuid}:${blockIndex}`;
       const tokens = stamped ? undefined : usage;
+      const model = stamped ? undefined : modelAt.get(index);
       stamped = true;
 
       events.push({
@@ -508,6 +514,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         result_offset: undefined,
         result_len: undefined,
         result_block: undefined,
+        model,
         tokens_in: tokens?.input_tokens,
         tokens_out: tokens?.output_tokens,
         tokens_cache_read: tokens?.cache_read_input_tokens,

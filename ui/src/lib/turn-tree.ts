@@ -43,6 +43,7 @@
  */
 
 import type { EventRow, SessionDetailHeaderRow, TurnRow } from './api.js';
+import { costUnknownLabel } from './format.js';
 import { foldsUnderAgent } from './session-list.js';
 
 /** Depth of a top-level turn's own row. Its events sit one below it. */
@@ -551,11 +552,20 @@ export function flatten(
 
 /* -------------------------------------------------------------- chips --- */
 
-/** The four numbers a chip row shows. `undefined` duration means unknown. */
+/**
+ * The four numbers a chip row shows. `undefined` duration means unknown.
+ *
+ * `cost` is `null` exactly when the wire said so — a `?? 0` stood here until
+ * Task 0.14 and it destroyed the only signal that says "no rate for this
+ * model", the same bug Task 0.8 removed from `SessionHeader`. `costUnknown` is
+ * that signal's label, set only when the row recorded real token usage: an
+ * unpriced row that moved no tokens keeps its chip omitted, same as a zero.
+ */
 export interface ChipValues {
   readonly durationMs: number | undefined;
   readonly tokens: number;
-  readonly cost: number;
+  readonly cost: number | null;
+  readonly costUnknown: string | undefined;
   readonly errorCount: number;
 }
 
@@ -569,14 +579,19 @@ export interface ChipValues {
  * it the moment the page is capped, and the number the user sees would then
  * depend on how far they had scrolled.
  *
- * Three coalesces, none of them cosmetic: `TurnRow` carries no `total_tokens`,
- * and `est_cost` and `duration_ms` are both nullable on the wire.
+ * `est_cost` passes through UNTOUCHED — see `ChipValues`. The label names no
+ * model on purpose: a turn can legitimately span more than one request group,
+ * so any single model string here could be the wrong one. The usage gate reads
+ * all four token counts, mirroring the write path's "zero spend never blocks"
+ * guard in `src/db/write.ts`.
  */
 export function turnChips(turn: TurnRow): ChipValues {
+  const usage = turn.tokens_in + turn.tokens_out + turn.tokens_cache_read + turn.tokens_cache_write;
   return {
     durationMs: turn.duration_ms ?? undefined,
     tokens: turn.tokens_in + turn.tokens_out,
-    cost: turn.est_cost ?? 0,
+    cost: turn.est_cost,
+    costUnknown: usage > 0 ? costUnknownLabel(turn.est_cost, null) : undefined,
     errorCount: turn.error_count,
   };
 }
@@ -620,10 +635,13 @@ export function turnTitle(turn: Pick<TurnRow, 'kind' | 'title'>): string {
  */
 export function eventChips(event: EventRow): ChipValues {
   const status = eventStatusOf(event.status);
+  const tokens = (event.tokens_in ?? 0) + (event.tokens_out ?? 0);
   return {
     durationMs: event.duration_ms ?? undefined,
-    tokens: (event.tokens_in ?? 0) + (event.tokens_out ?? 0),
-    cost: event.est_cost ?? 0,
+    tokens,
+    cost: event.est_cost,
+    // The wire carries the event's own model, so the label can name it.
+    costUnknown: tokens > 0 ? costUnknownLabel(event.est_cost, event.model) : undefined,
     errorCount: status === 'error' || status === 'denied' ? 1 : 0,
   };
 }

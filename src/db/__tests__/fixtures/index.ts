@@ -85,12 +85,13 @@ export function machineryLine(text: string, ts: string): Record<string, unknown>
   });
 }
 
-/** An assistant line carrying one `tool_use` block. */
+/** An assistant line carrying one `tool_use` block, and its usage if given. */
 export function toolCallLine(
   callId: string,
   name: string,
   ts: string,
   model = 'claude-sonnet-5',
+  usage?: Record<string, number>,
 ): Record<string, unknown> {
   return envelope({
     type: 'assistant',
@@ -100,6 +101,7 @@ export function toolCallLine(
       role: 'assistant',
       model,
       content: [{ type: 'tool_use', id: callId, name, input: { pattern: 'x' } }],
+      ...(usage && { usage }),
     },
   });
 }
