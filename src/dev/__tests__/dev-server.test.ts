@@ -4,31 +4,20 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readToken, TOKEN_HEADER } from '../../shared/index.js';
 import { clearConfig, readConfig, writeConfig } from '../../server/config.js';
-import {
-  bootstrapFromHtml,
-  rawRequest,
-  urlLiterals,
-} from '../../server/__tests__/helpers.js';
+import { bootstrapFromHtml, rawRequest, urlLiterals } from '../../server/__tests__/helpers.js';
 import { devBootstrapPlugin } from '../bootstrap-plugin.js';
-import {
-  defaultTranscriptRoot,
-  slugFor,
-  startDevServer,
-  type DevServerHandle,
-} from '../server.js';
+import { defaultTranscriptRoot, slugFor, startDevServer, type DevServerHandle } from '../server.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..');
 const DEV_SERVER_SOURCE = readFileSync(join(REPO_ROOT, 'src', 'dev', 'server.ts'), 'utf8');
-const PLUGIN_SOURCE = readFileSync(
-  join(REPO_ROOT, 'src', 'dev', 'bootstrap-plugin.ts'),
-  'utf8',
-);
+const PLUGIN_SOURCE = readFileSync(join(REPO_ROOT, 'src', 'dev', 'bootstrap-plugin.ts'), 'utf8');
 
 const SLUG = '-Users-dev-proj';
 
@@ -86,6 +75,41 @@ function seedArchive(dataDir: string, slug = SLUG): void {
 afterAll(() => {
   while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
+
+/** The five token-placement limbs: in the page, frozen, and nowhere else. */
+async function expectTokenOnlyInPage(vitePort: number, token: string): Promise<void> {
+  const page = await rawRequest(vitePort, '/', { host: `localhost:${vitePort}` });
+  expect(page.status).toBe(200);
+  const html = page.body;
+
+  const bootstrap = bootstrapFromHtml(html);
+  expect(bootstrap).toBeDefined();
+  expect(bootstrap!.token).toBe(token);
+  expect(bootstrap!.tokenHeader).toBe(TOKEN_HEADER);
+  expect(Object.isFrozen(bootstrap)).toBe(true);
+
+  // Never dereferenceable, never a cookie, never localStorage.
+  for (const literal of urlLiterals(html)) {
+    expect(literal, `token leaked into a URL literal: ${literal}`).not.toContain(token);
+  }
+  expect(page.headers['set-cookie']).toBeUndefined();
+  expect(html).not.toContain('document.cookie');
+  expect(html).not.toContain('localStorage.setItem');
+
+  // Vite inlines every `VITE_`-prefixed env var into module text — which is
+  // why the token never touches process.env.
+  //
+  // rawRequest, not fetch: this exact call twice reported `TypeError: fetch
+  // failed` under full-suite load — the only request here resolving
+  // `localhost` through DNS + undici. Prospective mitigation, one variable at
+  // a time: the /api/sessions fetches stay on undici as the control group;
+  // failures migrating there would point at load, not DNS/undici.
+  const moduleText = (
+    await rawRequest(vitePort, '/src/lib/bootstrap.ts', { host: `localhost:${vitePort}` })
+  ).body;
+  expect(moduleText).not.toContain(token);
+  expect(moduleText).not.toContain('import.meta.env.VITE_');
+}
 
 // --- One boot, driven over real HTTP ---------------------------------------
 
@@ -159,29 +183,27 @@ describe('startDevServer — the real stack', { timeout: 15_000 }, () => {
   });
 
   it('puts the token in the page and nowhere else', async () => {
+    await expectTokenOnlyInPage(vitePort, token);
+  });
+
+  // Positive control, in the style of `source-readonly.test.ts`: break each
+  // guarded property and show the detector reds — otherwise "no leak found"
+  // could mean the detectors see nothing at all.
+  it('the leak detectors really would red on a leaky page', async () => {
     const page = await rawRequest(vitePort, '/', { host: `localhost:${vitePort}` });
-    expect(page.status).toBe(200);
     const html = page.body;
 
-    const bootstrap = bootstrapFromHtml(html);
-    expect(bootstrap).toBeDefined();
-    expect(bootstrap!.token).toBe(token);
-    expect(bootstrap!.tokenHeader).toBe(TOKEN_HEADER);
-    expect(Object.isFrozen(bootstrap)).toBe(true);
+    // A page whose injector never ran yields no bootstrap object.
+    expect(
+      bootstrapFromHtml(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')),
+    ).toBeUndefined();
 
-    // Never dereferenceable, never a cookie, never localStorage.
-    for (const literal of urlLiterals(html)) {
-      expect(literal, `token leaked into a URL literal: ${literal}`).not.toContain(token);
-    }
-    expect(page.headers['set-cookie']).toBeUndefined();
-    expect(html).not.toContain('document.cookie');
-    expect(html).not.toContain('localStorage.setItem');
+    // An unfrozen copy of the real bootstrap fails the freeze limb.
+    expect(Object.isFrozen({ ...bootstrapFromHtml(html)! })).toBe(false);
 
-    // Vite inlines every `VITE_`-prefixed env var into module text — which is
-    // why the token never touches process.env.
-    const moduleText = await (await fetch(`${dev.viteUrl}/src/lib/bootstrap.ts`)).text();
-    expect(moduleText).not.toContain(token);
-    expect(moduleText).not.toContain('import.meta.env.VITE_');
+    // A token that does leak into a URL literal is caught by the scanner.
+    const leaky = `<img src="/x?auth=${token}">${html}`;
+    expect(urlLiterals(leaky).some((l) => l.includes(token))).toBe(true);
   });
 });
 
@@ -278,9 +300,9 @@ describe('startDevServer — refuses rather than boots wrong', { timeout: 15_000
       started_at: new Date().toISOString(),
     });
 
-    await expect(
-      startDevServer({ dataDir, transcriptRoot, projects: [SLUG] }),
-    ).rejects.toThrow(new RegExp(String(process.pid)));
+    await expect(startDevServer({ dataDir, transcriptRoot, projects: [SLUG] })).rejects.toThrow(
+      new RegExp(String(process.pid)),
+    );
 
     clearConfig(dataDir);
     booted = await startDevServer({
@@ -310,4 +332,56 @@ describe('startDevServer — refuses rather than boots wrong', { timeout: 15_000
     // Without the try/catch, the socket, DB and sweep interval leak into this worker.
     expect(readConfig(dataDir)).toBeNull();
   }, 60_000);
+});
+
+// --- Prospective: 5173 already occupied ------------------------------------
+// Green on day one (measured 2026-08-10 at cb817c8: port free, plain squatter,
+// real Vite — 15/15 each). Not evidence of a fixed bug: it exists so a future
+// change that pins Vite to a fixed port cannot start depending on a free 5173.
+
+describe('startDevServer — prospective: boots with 5173 already taken', { timeout: 15_000 }, () => {
+  let squatter: Server | undefined;
+  let dev: DevServerHandle | undefined;
+  let dataDir: string;
+  let token: string;
+
+  beforeAll(async () => {
+    squatter = await new Promise<Server | undefined>((resolvePlant, rejectPlant) => {
+      const srv = createServer();
+      srv.once('error', (err: NodeJS.ErrnoException) => {
+        if (err.code !== 'EADDRINUSE') return rejectPlant(err);
+        // Something else holds 5173 — the arrangement this test wants already
+        // holds ambiently. Planting would red the file exactly when the
+        // property matters most, so proceed against the ambient holder.
+        console.warn('[dev-server.test] 5173 already occupied; using the ambient holder');
+        resolvePlant(undefined);
+      });
+      srv.listen(5173, '127.0.0.1', () => resolvePlant(srv));
+    });
+
+    dataDir = tempDir('agent-lens-dev-data-');
+    seedArchive(dataDir);
+    dev = await startDevServer({
+      dataDir,
+      transcriptRoot: makeCorpus(),
+      projects: [SLUG],
+      sweepIntervalMs: 60_000,
+    });
+    token = readToken(dataDir)!;
+  }, 60_000);
+
+  afterAll(async () => {
+    await dev?.close();
+    if (squatter !== undefined) {
+      await new Promise<void>((res, rej) => squatter!.close((e) => (e ? rej(e) : res())));
+      expect(squatter.listening).toBe(false);
+    }
+  });
+
+  it('boots off 5173 and still puts the token in the page and nowhere else', async () => {
+    const vitePort = Number(new URL(dev!.viteUrl).port);
+    expect(vitePort).toBeGreaterThan(0);
+    expect(vitePort).not.toBe(5173);
+    await expectTokenOnlyInPage(vitePort, token);
+  });
 });
