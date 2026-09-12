@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { costUnknownLabel, formatCost, formatTokens } from '@/lib/format';
-import { turnChips, type TurnRowModel } from '@/lib/turn-tree';
+import { turnChips, turnTitle, type TurnRowModel } from '@/lib/turn-tree';
 
 import { MetricChip } from './MetricChip';
 import { INDENT_PX, RowChips } from './SpanRow';
@@ -75,6 +75,9 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
   const { turn } = row;
   const { Icon, tint, label } = SPAN_VISUALS.trace;
   const Glyph = row.expanded ? ChevronDown : ChevronRight;
+  // Task 0.11: a slash_command turn stores its raw envelope; the on-screen
+  // span and the aria-label both read the cleaned title, or neither is readable.
+  const title = turnTitle(turn);
 
   return (
     <div
@@ -91,7 +94,7 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
       aria-posinset={row.posInSet}
       aria-selected={selected}
       {...(row.hasChildren ? { 'aria-expanded': row.expanded } : {})}
-      aria-label={`${label} ${turn.seq}: ${turn.title}`}
+      aria-label={`${label} ${turn.seq}: ${title}`}
       tabIndex={focused ? 0 : -1}
       onClick={() => onSelect?.(row.id)}
       className={cn(
@@ -123,7 +126,7 @@ export function TraceGroup({ row, selected, focused, onSelect, onToggle }: Trace
       </span>
 
       <span data-slot="trace-preview" className="min-w-0 flex-1 truncate font-medium">
-        {turn.title}
+        {title}
       </span>
 
       {/*

@@ -581,6 +581,32 @@ export function turnChips(turn: TurnRow): ChipValues {
   };
 }
 
+/** The text between `<tag>` and `</tag>`, or null when either bracket is absent. */
+function tagContent(title: string, tag: string): string | null {
+  const open = `<${tag}>`;
+  const start = title.indexOf(open);
+  if (start === -1) return null;
+  const from = start + open.length;
+  const end = title.indexOf(`</${tag}>`, from);
+  return end === -1 ? null : title.slice(from, end);
+}
+
+/**
+ * What a turn's header row reads as. A `slash_command` title stores the raw
+ * envelope the projector kept (`src/project/pipeline.ts` caps it at 200 chars),
+ * so the command name is extracted, with the command message as fallback.
+ * Anything unrecognised falls through verbatim — shown as raw markup, never
+ * blank — and every other kind passes through untouched.
+ */
+export function turnTitle(turn: Pick<TurnRow, 'kind' | 'title'>): string {
+  if (turn.kind !== 'slash_command') return turn.title;
+  for (const tag of ['command-name', 'command-message']) {
+    const content = tagContent(turn.title, tag)?.trim();
+    if (content !== undefined && content !== '') return content;
+  }
+  return turn.title;
+}
+
 /**
  * One event's own numbers. There is no subtree to roll up: the fold already
  * collapsed a tool call and its result into this single row.
