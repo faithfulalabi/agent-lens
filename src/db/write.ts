@@ -153,10 +153,10 @@ const INSERT_EVENT_SQL = `INSERT INTO events
     (id, session_id, turn_id, seq, kind, ts, request_id, block_index, name, status,
      duration_ms, duration_source, input, input_bytes, input_storage, text, text_bytes,
      output_storage, spill_path, spill_bytes, src_offset, src_len, result_offset,
-     result_len, result_block, tokens_in, tokens_out, tokens_cache_read,
-     tokens_cache_write, child_session_id, agent_type, agent_status, raw_type,
+     result_len, result_block, model, tokens_in, tokens_out, tokens_cache_read,
+     tokens_cache_write, est_cost, child_session_id, agent_type, agent_status, raw_type,
      raw_subtype, attrs)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 // FTS population costs 8-14x the `events` INSERT (5.6 -> 43.8 ms measured, and
 // re-measured 10.6x / 15.3x / 11.2x on the three largest transcripts). READ THE
@@ -307,6 +307,7 @@ function writeProjection(
 
   insertTurns(db, projection.turns);
   insertEvents(db, projection.events, spills.byOffset);
+  db.prepare(ROLLUP_TURN_COST_SQL).run({ id });
   db.prepare(POPULATE_FTS_SQL).run(id);
   recomputeSessionRollups(db, id);
   stamp(db, id, fold, 'ready', drift);
@@ -382,6 +383,15 @@ function insertEvents(
   const insert = db.prepare(INSERT_EVENT_SQL);
   for (const event of events) {
     const output = spillColumns(event, spills);
+    // Priced HERE, per event, where the model is actually known — the session
+    // number is a SUM of these, never total_tokens x one folded model. Pricing
+    // stays outside the hashed projector tree on purpose (Task 0.8 OQ4).
+    const est_cost = estimateCost(event.model, {
+      tokens_in: event.tokens_in,
+      tokens_out: event.tokens_out,
+      cache_read: event.tokens_cache_read,
+      cache_write: event.tokens_cache_write,
+    });
     insert.run(
       event.id,
       event.session_id,
@@ -412,10 +422,12 @@ function insertEvents(
       event.result_offset ?? null,
       event.result_len ?? null,
       event.result_block ?? null,
+      event.model ?? null,
       event.tokens_in ?? null,
       event.tokens_out ?? null,
       event.tokens_cache_read ?? null,
       event.tokens_cache_write ?? null,
+      est_cost,
       event.child_session_id ?? null,
       event.agent_type ?? null,
       event.agent_status ?? null,
@@ -498,6 +510,25 @@ function withUnresolvedSpills(drift: string, unresolved: number): string {
   return JSON.stringify(counted);
 }
 
+// The roll-up rule, both levels: REAL SPEND BLOCKS, ZERO SPEND NEVER BLOCKS.
+// An unpriced part with real token usage makes the sum NULL — summing around it
+// would invent a confidently-low number the UI presents as complete. A part
+// with zero tokens (a human turn, the harness's `<synthetic>` placeholder)
+// never blocks, whatever model string rides with it. The SUM is deliberately
+// bare, never COALESCEd: SQL SUM skips NULLs and answers NULL over an all-NULL
+// set, which is exactly `est_cost`'s contract — NULL = unpriceable, NEVER 0. A
+// real 0 is reachable only through `estimateCost` on a priced model.
+const ROLLUP_TURN_COST_SQL = `UPDATE turns SET est_cost = (
+    CASE WHEN EXISTS (
+      SELECT 1 FROM events e WHERE e.turn_id = turns.id
+        AND e.est_cost IS NULL
+        AND (COALESCE(e.tokens_in, 0) + COALESCE(e.tokens_out, 0)
+             + COALESCE(e.tokens_cache_read, 0) + COALESCE(e.tokens_cache_write, 0)) > 0
+    ) THEN NULL
+    ELSE (SELECT sum(e2.est_cost) FROM events e2 WHERE e2.turn_id = turns.id)
+    END
+  ) WHERE session_id = :id`;
+
 const ROLLUP_SQL = `UPDATE sessions SET
     turn_count         = COALESCE((SELECT count(*)                FROM turns WHERE session_id = :id AND kind = 'human'), 0),
     tool_call_count    = COALESCE((SELECT sum(tool_call_count)    FROM turns WHERE session_id = :id), 0),
@@ -505,22 +536,26 @@ const ROLLUP_SQL = `UPDATE sessions SET
     tokens_in          = COALESCE((SELECT sum(tokens_in)          FROM turns WHERE session_id = :id), 0),
     tokens_out         = COALESCE((SELECT sum(tokens_out)         FROM turns WHERE session_id = :id), 0),
     tokens_cache_read  = COALESCE((SELECT sum(tokens_cache_read)  FROM turns WHERE session_id = :id), 0),
-    tokens_cache_write = COALESCE((SELECT sum(tokens_cache_write) FROM turns WHERE session_id = :id), 0)
+    tokens_cache_write = COALESCE((SELECT sum(tokens_cache_write) FROM turns WHERE session_id = :id), 0),
+    est_cost           = CASE WHEN EXISTS (
+                           SELECT 1 FROM turns t WHERE t.session_id = :id
+                             AND t.est_cost IS NULL
+                             AND (t.tokens_in + t.tokens_out
+                                  + t.tokens_cache_read + t.tokens_cache_write) > 0
+                         ) THEN NULL
+                         ELSE (SELECT sum(t2.est_cost) FROM turns t2 WHERE t2.session_id = :id)
+                         END
   WHERE id = :id`;
-
-interface RollupRow {
-  model: string | null;
-  tokens_in: number;
-  tokens_out: number;
-  tokens_cache_read: number;
-  tokens_cache_write: number;
-}
 
 /**
  * Recompute the own-file aggregates from `turns`, never delta arithmetic: a
- * recompute is idempotent, and every reprojection re-runs it. Every aggregate is
- * COALESCEd because `SUM`/`COUNT` over zero children returns NULL into a NOT
- * NULL column.
+ * recompute is idempotent, and every reprojection re-runs it. Every NOT NULL
+ * aggregate is COALESCEd because `SUM`/`COUNT` over zero children returns NULL.
+ *
+ * `est_cost` is a bare guarded SUM of the turns' own costs — see
+ * `ROLLUP_TURN_COST_SQL`'s rule. `sessions.model` is not read for pricing at
+ * all any more: it is informational, and the cost no longer depends on which
+ * single model the envelope fold happens to pick.
  *
  * The `sub_*` columns and `rollup_state` stay at their DDL defaults here.
  * `recomputeSubagentRollups` below owns them, and the corpus sweep's second wave
@@ -531,24 +566,6 @@ export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
   // HUMAN turns only. The plain count is ~19x high: 101 human prompts against
   // 1,934 user lines in the measured session.
   db.prepare(ROLLUP_SQL).run({ id });
-
-  const row = db
-    .prepare(
-      `SELECT model, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write
-       FROM sessions WHERE id = ?`,
-    )
-    .get(id) as RollupRow | undefined;
-  if (row === undefined) return;
-
-  // NULL for an unpriceable model, never 0: a zero silently under-reports every
-  // total instead of showing the UI it has no price.
-  const cost = estimateCost(row.model ?? undefined, {
-    tokens_in: row.tokens_in,
-    tokens_out: row.tokens_out,
-    cache_read: row.tokens_cache_read,
-    cache_write: row.tokens_cache_write,
-  });
-  db.prepare('UPDATE sessions SET est_cost = ? WHERE id = ?').run(cost, id);
 }
 
 // TRANSITIVE: every aggregate sums each child's OWN column plus that child's own
@@ -556,11 +573,15 @@ export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
 // sum silently drops them, and the UI shows one number per top-level session.
 // This is why the sweep must project children before parents.
 //
-// `sub_est_cost` is deliberately NOT `COALESCE`d to 0. It mirrors `est_cost`,
-// whose DDL says "NULL = unpriceable model, NEVER 0"; the WHERE limb is what
-// keeps a tree of entirely unpriceable children NULL instead of a confident
-// zero. It sums the children's own costs rather than re-pricing summed tokens,
-// because children routinely run a different model from their parent.
+// `sub_est_cost` follows `ROLLUP_TURN_COST_SQL`'s rule one level up: a child
+// whose OWN spend, or whose sub-tree's spend, is real-but-unpriced makes the
+// parent NULL — the old plain sum COALESCEd that child to a confident 0 and
+// under-reported the tree. A child that is NULL with zero tokens never blocks.
+// The WHERE limb keeps a tree of entirely unpriceable children NULL instead of
+// a 0, and the ELSE's COALESCEs are then safe: the EXISTS guard already ruled
+// every NULL they zero a nothing-priceable-ran NULL, not a missing price. It
+// sums the children's own costs rather than re-pricing summed tokens, because
+// children routinely run a different model from their parent.
 const SUBAGENT_ROLLUP_SQL = `UPDATE sessions SET
     agent_count            = COALESCE((SELECT sum(1 + c.agent_count)                                FROM sessions c WHERE c.parent_session_id = :id), 0),
     sub_tool_call_count    = COALESCE((SELECT sum(c.tool_call_count    + c.sub_tool_call_count)     FROM sessions c WHERE c.parent_session_id = :id), 0),
@@ -569,10 +590,18 @@ const SUBAGENT_ROLLUP_SQL = `UPDATE sessions SET
     sub_tokens_out         = COALESCE((SELECT sum(c.tokens_out         + c.sub_tokens_out)          FROM sessions c WHERE c.parent_session_id = :id), 0),
     sub_tokens_cache_read  = COALESCE((SELECT sum(c.tokens_cache_read  + c.sub_tokens_cache_read)   FROM sessions c WHERE c.parent_session_id = :id), 0),
     sub_tokens_cache_write = COALESCE((SELECT sum(c.tokens_cache_write + c.sub_tokens_cache_write)  FROM sessions c WHERE c.parent_session_id = :id), 0),
-    sub_est_cost           =          (SELECT sum(COALESCE(c.est_cost, 0) + COALESCE(c.sub_est_cost, 0))
-                                         FROM sessions c
-                                        WHERE c.parent_session_id = :id
-                                          AND (c.est_cost IS NOT NULL OR c.sub_est_cost IS NOT NULL))
+    sub_est_cost           = CASE WHEN EXISTS (
+                               SELECT 1 FROM sessions c WHERE c.parent_session_id = :id AND (
+                                 (c.est_cost IS NULL AND (c.tokens_in + c.tokens_out
+                                    + c.tokens_cache_read + c.tokens_cache_write) > 0)
+                                 OR (c.sub_est_cost IS NULL AND (c.sub_tokens_in + c.sub_tokens_out
+                                    + c.sub_tokens_cache_read + c.sub_tokens_cache_write) > 0))
+                             ) THEN NULL
+                             ELSE (SELECT sum(COALESCE(c.est_cost, 0) + COALESCE(c.sub_est_cost, 0))
+                                     FROM sessions c
+                                    WHERE c.parent_session_id = :id
+                                      AND (c.est_cost IS NOT NULL OR c.sub_est_cost IS NOT NULL))
+                             END
   WHERE id = :id`;
 
 /**

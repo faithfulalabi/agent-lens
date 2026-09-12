@@ -297,6 +297,17 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
     expect(turnAt(result, 1).tokens_out).toBe(22);
   });
 
+  it('stamps the group model on the same first event, and nowhere else', () => {
+    // The identical stamp the tokens ride (Task 0.14): pricing per event needs
+    // the model on the row that carries the tokens it would price.
+    const result = project('turn-kinds.jsonl');
+    const stamped = result.events.filter((event) => event.model !== undefined);
+
+    expect(stamped).toHaveLength(1);
+    expect(stamped[0]!.model).toBe('claude-opus-5');
+    expect(stamped[0]!.tokens_in).toBe(11);
+  });
+
   it('folds a tool call and its result into one row', () => {
     // ★ REWRITTEN BY TASK 3.2, not repaired. This assertion pinned the seam 3.1
     // deliberately left open — `status: 'running'`, `output_storage: 'absent'`,

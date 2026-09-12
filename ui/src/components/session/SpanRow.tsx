@@ -315,6 +315,12 @@ function ExpandToggle({
  * A zero omits its chip rather than rendering `0`: a leaf tool call has no
  * tokens of its own, and a column of zeroes down a 5,000-row tree is noise that
  * makes the rows carrying real numbers harder to find.
+ *
+ * An UNPRICED row is not a zero. When `costUnknown` is set — a null `est_cost`
+ * on a row that recorded real usage — the chip renders the em dash toned faint
+ * with the label in `title` and `aria-label`, exactly `SessionHeader`'s
+ * treatment one level down. Omitting it here would make an unpriced call
+ * indistinguishable from a free one, the bug Task 0.8 removed at the header.
  */
 export function RowChips({ values, showErrors }: { values: ChipValues; showErrors: boolean }) {
   return (
@@ -328,7 +334,11 @@ export function RowChips({ values, showErrors }: { values: ChipValues; showError
         className="shrink-0"
         duration={formatDurationMs(values.durationMs)}
         {...(values.tokens > 0 ? { tokens: `${formatTokens(values.tokens)} tok` } : {})}
-        {...(values.cost > 0 ? { cost: formatCost(values.cost) } : {})}
+        {...(values.costUnknown !== undefined
+          ? { cost: formatCost(values.cost), costUnknown: values.costUnknown }
+          : values.cost !== null && values.cost > 0
+            ? { cost: formatCost(values.cost) }
+            : {})}
       />
     </>
   );

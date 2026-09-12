@@ -25,6 +25,8 @@ import {
   openCache,
   parseJsonl,
   seedIndexRow,
+  seedSessionRow,
+  seedSidecarRow,
   sessionRow,
   spillMarker,
   subagentsDirOf,
@@ -39,8 +41,10 @@ import {
   deleteSessionProjection,
   projectSession,
   recomputeSessionRollups,
+  recomputeSubagentRollups,
   upsertSessionIndex,
 } from '../write.js';
+import { estimateCost } from '../../shared/pricing.js';
 import { foldArchive } from '../freshness.js';
 import { searchEvents } from '../read.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../../project/tools.js';
@@ -717,6 +721,230 @@ describe('the folded model reaches the row (Task 0.13)', () => {
     expect(row.model).toBeNull();
     // NULL is "nothing priceable ran", and it is never 0 — see the column note.
     expect(row.est_cost).toBeNull();
+  });
+});
+
+describe('mixed-model pricing: the session is the sum of its parts (Task 0.14)', () => {
+  /** An assistant tool call CARRYING USAGE, under an explicit model. */
+  function pricedCallLine(
+    callId: string,
+    model: string,
+    usage: Record<string, number>,
+    ts: string,
+  ): Record<string, unknown> {
+    return toolCallLine(callId, 'Grep', ts, model, usage);
+  }
+
+  /** Haiku spends 1M input, Sonnet 1M output: every one-rate answer is wrong. */
+  function mixedSession(): readonly unknown[] {
+    return [
+      humanLine('one', TS(0)),
+      pricedCallLine(
+        'toolu_h',
+        'claude-haiku-4-5',
+        { input_tokens: 1_000_000, output_tokens: 0 },
+        TS(1),
+      ),
+      toolResultLine('toolu_h', 'ok', TS(2)),
+      humanLine('two', TS(3)),
+      pricedCallLine(
+        'toolu_s',
+        'claude-sonnet-5',
+        { input_tokens: 0, output_tokens: 1_000_000 },
+        TS(4),
+      ),
+      toolResultLine('toolu_s', 'ok', TS(5)),
+    ];
+  }
+
+  it('★ prices each model at its own rate, never total_tokens × one rate (AC1)', () => {
+    const db = cache();
+    const { path } = plant('mixed', mixedSession());
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    // Haiku: 1M input × $1/1M = $1. Sonnet: 1M output × $15/1M = $15.
+    expect(sessionRow(db, id).est_cost).toBe(16);
+    // The fixture is chosen so BOTH single-model answers provably differ:
+    // haiku over the whole total is $6 (1M×1 + 1M×5), sonnet is $18 (1M×3 +
+    // 1M×15). A single-model fixture passes under either implementation.
+    expect(sessionRow(db, id).est_cost).not.toBe(6);
+    expect(sessionRow(db, id).est_cost).not.toBe(18);
+    // Task 0.13's folded model is untouched — informational, no longer priced.
+    expect(sessionRow(db, id).model).not.toBeNull();
+  });
+
+  it('writes model and est_cost onto the event, and est_cost onto its turn (AC2)', () => {
+    const db = cache();
+    const { path } = plant('percall', mixedSession());
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    const events = db
+      .prepare(
+        `SELECT model, est_cost FROM events
+         WHERE session_id = ? AND model IS NOT NULL ORDER BY seq`,
+      )
+      .all(id) as { model: string; est_cost: number }[];
+    expect(events).toEqual([
+      { model: 'claude-haiku-4-5', est_cost: 1 },
+      { model: 'claude-sonnet-5', est_cost: 15 },
+    ]);
+    // …and on no other row: the stamp is the token stamp, first of group only.
+    const priced = db
+      .prepare('SELECT count(*) AS n FROM events WHERE session_id = ? AND est_cost IS NOT NULL')
+      .get(id) as { n: number };
+    expect(priced.n).toBe(2);
+
+    const turns = db
+      .prepare('SELECT est_cost FROM turns WHERE session_id = ? ORDER BY seq')
+      .all(id) as { est_cost: number | null }[];
+    expect(turns).toEqual([{ est_cost: 1 }, { est_cost: 15 }]);
+  });
+
+  it('★ a real-but-unpriceable part makes the roll-up NULL, never a low number (AC3)', () => {
+    const db = cache();
+    const { path } = plant('partial', [
+      humanLine('go', TS(0)),
+      pricedCallLine(
+        'toolu_p',
+        'claude-sonnet-5',
+        { input_tokens: 1000, output_tokens: 2000 },
+        TS(1),
+      ),
+      toolResultLine('toolu_p', 'ok', TS(2)),
+      humanLine('again', TS(3)),
+      // Real, non-zero spend under a model with no rate: the exact case a
+      // naive SUM would silently drop, presenting $0.033 as the whole truth.
+      pricedCallLine(
+        'toolu_u',
+        'a-model-nobody-has-priced',
+        { input_tokens: 500, output_tokens: 100 },
+        TS(4),
+      ),
+      toolResultLine('toolu_u', 'ok', TS(5)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    const turns = db
+      .prepare('SELECT est_cost FROM turns WHERE session_id = ? ORDER BY seq')
+      .all(id) as { est_cost: number | null }[];
+    // The priced turn keeps its own real number; only the sums go NULL.
+    expect(turns[0]!.est_cost).toBe(
+      estimateCost('claude-sonnet-5', { tokens_in: 1000, tokens_out: 2000 }),
+    );
+    expect(turns[1]!.est_cost).toBeNull();
+    expect(sessionRow(db, id).est_cost).toBeNull();
+  });
+
+  it('a zero-token part never blocks the sum, and an all-zero turn stays NULL (AC3)', () => {
+    const db = cache();
+    const { path } = plant('zeropart', [
+      humanLine('go', TS(0)),
+      pricedCallLine(
+        'toolu_p',
+        'claude-sonnet-5',
+        { input_tokens: 1000, output_tokens: 2000 },
+        TS(1),
+      ),
+      toolResultLine('toolu_p', 'ok', TS(2)),
+      // The harness's zero-usage placeholder rides inside the priced turn…
+      {
+        type: 'assistant',
+        uuid: nextUuid(),
+        timestamp: TS(3),
+        cwd: CWD,
+        message: {
+          role: 'assistant',
+          model: '<synthetic>',
+          content: [{ type: 'text', text: 'Login expired' }],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      },
+      // …and a human-only turn follows: NULL cost, zero tokens, never a 0.
+      humanLine('still there?', TS(4)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    // Blocking on ANY null est_cost — the naive spelling — would answer NULL
+    // here; the zero-token guard is what keeps the priced turn's number.
+    expect(sessionRow(db, id).est_cost).toBe(
+      estimateCost('claude-sonnet-5', { tokens_in: 1000, tokens_out: 2000 }),
+    );
+    const trailing = db
+      .prepare('SELECT est_cost FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(id) as { est_cost: number | null };
+    expect(trailing.est_cost).toBeNull();
+  });
+});
+
+describe('sub_est_cost follows the same rule: real spend blocks, zero spend never does', () => {
+  it('★ an unpriced child with real tokens makes the parent NULL, not a low sum', () => {
+    const db = cache();
+    const parent = seedSessionRow(db, { id: 'parent-1' });
+    seedSidecarRow(db, parent, { id: 'kid-priced', est_cost: 1.5 });
+    // Defaults carry real token counts; est_cost null is a missing price.
+    seedSidecarRow(db, parent, { id: 'kid-unpriced', est_cost: null });
+
+    recomputeSubagentRollups(db, parent);
+
+    // The pre-0.14 SQL COALESCEd the unpriced child to a confident $0 and
+    // answered 1.5 — the exact silent under-report AC3 forbids.
+    expect(sessionRow(db, parent).sub_est_cost).toBeNull();
+  });
+
+  it('a zero-token unpriced child never blocks, and an all-null tree stays NULL', () => {
+    const db = cache();
+    const parent = seedSessionRow(db, { id: 'parent-2' });
+    seedSidecarRow(db, parent, { id: 'kid-real', est_cost: 1.5 });
+    seedSidecarRow(db, parent, {
+      id: 'kid-empty',
+      est_cost: null,
+      tokens_in: 0,
+      tokens_out: 0,
+      tokens_cache_read: 0,
+      tokens_cache_write: 0,
+    });
+
+    recomputeSubagentRollups(db, parent);
+    expect(sessionRow(db, parent).sub_est_cost).toBe(1.5);
+
+    const bare = seedSessionRow(db, { id: 'parent-3' });
+    seedSidecarRow(db, bare, {
+      id: 'kid-only-empty',
+      est_cost: null,
+      tokens_in: 0,
+      tokens_out: 0,
+      tokens_cache_read: 0,
+      tokens_cache_write: 0,
+    });
+    recomputeSubagentRollups(db, bare);
+    expect(sessionRow(db, bare).sub_est_cost).toBeNull();
+  });
+
+  it('a grandchild the child could not price blocks the parent too', () => {
+    const db = cache();
+    const parent = seedSessionRow(db, { id: 'parent-4' });
+    seedSidecarRow(db, parent, {
+      id: 'kid-blocked',
+      est_cost: 2.0,
+      tokens_in: 10,
+      tokens_out: 10,
+      tokens_cache_read: 0,
+      tokens_cache_write: 0,
+    });
+    // The child's own sub-tree moved real tokens it could not price: its
+    // sub_est_cost NULL is a missing price, not an absence of descendants.
+    db.prepare('UPDATE sessions SET sub_tokens_in = 500 WHERE id = ?').run('kid-blocked');
+
+    recomputeSubagentRollups(db, parent);
+    expect(sessionRow(db, parent).sub_est_cost).toBeNull();
   });
 });
 

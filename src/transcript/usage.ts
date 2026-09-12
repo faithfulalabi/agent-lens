@@ -83,6 +83,22 @@ export function foldRequestGroup(lines: readonly unknown[]): FoldedUsage {
 }
 
 /**
+ * The model the group's lines name, from the first line that names one — or
+ * `undefined` for a group naming none. Measured constant per group: zero
+ * diverging `requestId` groups across 408 archived transcript files, so "first
+ * non-undefined wins" is a read, not a tiebreak. `<synthetic>` rides through
+ * verbatim; pricing already answers `null` for it, so excluding it here would
+ * duplicate a rule that lives one layer down.
+ */
+export function modelOfRequestGroup(lines: readonly unknown[]): string | undefined {
+  for (const line of lines) {
+    const model = str(obj(obj(line, undefined)?.message, undefined)?.model, undefined);
+    if (model !== undefined) return model;
+  }
+  return undefined;
+}
+
+/**
  * Split lines into CONTIGUOUS runs sharing a `requestId`. Every input line comes
  * back in exactly one group, so the output line count always equals the input
  * line count.

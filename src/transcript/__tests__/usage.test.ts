@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { foldRequestGroup, groupByRequestId } from '../usage.js';
+import { foldRequestGroup, groupByRequestId, modelOfRequestGroup } from '../usage.js';
 
 /** One assistant line carrying `message.usage`, shaped as the harness sends it. */
 function assistantLine(
@@ -182,6 +182,39 @@ describe('AC1 — the fold is total: zeros, never a throw, never a coercion', ()
       cache_read_input_tokens: 60,
     });
     expect(Number.isFinite(folded.output_tokens)).toBe(true);
+  });
+});
+
+describe('modelOfRequestGroup — first named model wins, and the read is total', () => {
+  it('reads the model off the first line that names one', () => {
+    expect(modelOfRequestGroup(GOLDEN)).toBe('claude-opus-5');
+  });
+
+  it('skips lines naming no model rather than answering undefined early', () => {
+    // Measured constant per group — 0 diverging groups across 408 archived
+    // files — so "first non-undefined" is a read of the group's one value,
+    // not a tiebreak between rivals.
+    const group = [
+      { type: 'assistant', message: { role: 'assistant' } },
+      { type: 'assistant', message: { role: 'assistant', model: 'claude-haiku-4-5' } },
+    ];
+    expect(modelOfRequestGroup(group)).toBe('claude-haiku-4-5');
+  });
+
+  it('passes `<synthetic>` through verbatim — exclusion is pricing’s job', () => {
+    expect(modelOfRequestGroup([{ message: { model: '<synthetic>' } }])).toBe('<synthetic>');
+  });
+
+  it.each([
+    ['empty group', []],
+    ['no message', [{ type: 'assistant' }]],
+    ['message is a string', [{ message: 'hello' }]],
+    ['model is a number', [{ message: { model: 42 } }]],
+    ['model is null', [{ message: { model: null } }]],
+    ['line is null', [null]],
+  ])('%s answers undefined without throwing', (_label, lines) => {
+    expect(() => modelOfRequestGroup(lines as readonly unknown[])).not.toThrow();
+    expect(modelOfRequestGroup(lines as readonly unknown[])).toBeUndefined();
   });
 });
 
