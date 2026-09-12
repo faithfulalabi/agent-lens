@@ -89,6 +89,15 @@ export function resolveLockPath(dataDir?: string): string {
   return join(resolveDataDir(dataDir), 'archive.lock');
 }
 
+/**
+ * Where the launchd wrapper appends its per-pass line. The wrapper hardcodes
+ * `$HOME/.agent-lens/logs/cron.log` in shell, outside the repo — the two are
+ * manually synced, the same accepted duplication as the exit-code contract.
+ */
+export function resolveCronLogPath(dataDir?: string): string {
+  return join(resolveDataDir(dataDir), LOGS_DIR, 'cron.log');
+}
+
 /** Pure lexical comparison over two ALREADY-resolved paths. */
 function isUnder(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);

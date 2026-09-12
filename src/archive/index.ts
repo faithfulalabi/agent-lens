@@ -46,9 +46,12 @@ export { acquireLock, releaseLock, MAX_LOCK_AGE_MS } from './lock.js';
 export type { Lock, LockIdentity, LockState, ReclaimReason } from './lock.js';
 export { appendArchiveLog, isQuiet } from './log.js';
 export type { ArchiveLogRecord, DivergedLogEntry } from './log.js';
+export { parseCronLog, readCronLogStatus } from './cron-log.js';
+export type { CronLogEntry, LastPassReport } from './cron-log.js';
 export {
   resolveArchiveLogPath,
   resolveArchiveRoot,
+  resolveCronLogPath,
   resolveDataDir,
   resolveLockPath,
   resolveTranscriptRoot,

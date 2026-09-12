@@ -11,8 +11,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import {
   buildDoctorReport,
+  readCronLogStatus,
   resolveDataDir,
   type DoctorReport,
+  type LastPassReport,
   type RetentionSetting,
 } from '../../archive/index.js';
 import { CACHE_DB_FILE, openReadOnlyDb } from '../../db/open.js';
@@ -156,6 +158,48 @@ export function formatCacheSection(cache: CacheReport): string[] {
   return lines;
 }
 
+/**
+ * `Nm ago` / `Nh Nm ago` / `Nd Nh ago`. Written here rather than imported from
+ * `ui/src/lib/format.ts` — same wording convention, but that file belongs to
+ * the Vite/React package and this is the Node CLI.
+ */
+function formatAgo(elapsedMs: number): string {
+  const minutes = Math.max(0, Math.floor(elapsedMs / 60_000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m ago`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h ago`;
+}
+
+/**
+ * The archive-job block, read from the launchd wrapper's cron.log — the only
+ * artifact that answers "did it run"; an archive mtime only says the source was
+ * quiet. Keyed on the status token, never on bytes copied: a pass that ran and
+ * copied nothing is the healthy steady state. `now` is a parameter because an
+ * ambient clock makes the output untestable.
+ */
+export function formatLastPassSection(report: LastPassReport, now: number = Date.now()): string[] {
+  if (report.state === 'absent') {
+    return ['', `archive job: ${report.path} — no cron.log; the job has never run here`];
+  }
+  if (report.state === 'empty') {
+    return ['', `archive job: ${report.path} — cron.log exists but records no pass`];
+  }
+  const lines = ['', `archive job: ${report.path}`];
+  lines.push(
+    report.lastOk === undefined
+      ? '  no successful pass on record'
+      : `  last successful pass: ${formatAgo(now - report.lastOk.epochMs)}`,
+  );
+  if (report.lastEntry.status !== 'ok') {
+    lines.push(
+      `  most recent attempt: ${report.lastEntry.status}, ` +
+        `${formatAgo(now - report.lastEntry.epochMs)} — ${report.lastEntry.summary}`,
+    );
+  }
+  return lines;
+}
+
 export function formatRetention(retention: RetentionSetting): string {
   switch (retention.state) {
     case 'set':
@@ -174,7 +218,11 @@ export function formatRetention(retention: RetentionSetting): string {
  * one argument — `--json` round-trips through this, and the pure-formatter tests
  * pass a report alone.
  */
-export function formatDoctorReport(report: DoctorReport, cache?: CacheReport): string {
+export function formatDoctorReport(
+  report: DoctorReport,
+  cache?: CacheReport,
+  lastPass?: LastPassReport,
+): string {
   const { coverage, bytes, integrity, retention } = report;
   const lines = [
     'agent-lens doctor',
@@ -258,6 +306,7 @@ export function formatDoctorReport(report: DoctorReport, cache?: CacheReport): s
   // are the last thing on screen by design, and a section appended below would
   // quietly demote them.
   if (cache !== undefined) lines.push(...formatCacheSection(cache));
+  if (lastPass !== undefined) lines.push(...formatLastPassSection(lastPass));
 
   lines.push('', COVERAGE_GAP_STATEMENT, DURABILITY_STATEMENT);
 
@@ -273,10 +322,11 @@ export async function doctor(args: string[] = []): Promise<void> {
     verify: args.includes('--verify'),
   });
   const cache = readCacheStats(dataDir);
+  const lastPass = readCronLogStatus(dataDir);
 
   if (args.includes('--json')) {
-    console.log(JSON.stringify({ ...report, cache }));
+    console.log(JSON.stringify({ ...report, cache, lastPass }));
   } else {
-    console.log(formatDoctorReport(report, cache));
+    console.log(formatDoctorReport(report, cache, lastPass));
   }
 }
