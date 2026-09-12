@@ -1,235 +1,392 @@
+import { useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUpRight, Bot, ChevronRight, List, Terminal, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatEventTime } from '@/lib/format';
 import { eventChips } from '@/lib/turn-tree';
-import type {
-  ThreadMessageRow,
-  ThreadRow,
-  ThreadThinkingRow,
-  ThreadToolRow,
-  ThreadUnknownRow,
-} from '@/lib/thread';
-
+import { activitySummary, groupThread, type ThreadRow, type ThreadMessageRow } from '@/lib/thread';
+import type { ApiClient, ContentField, EventContentBody, EventRow } from '@/lib/api';
+import { contentStateOf } from '@/lib/event-content';
+import { hrefFor } from '@/lib/route-match';
 import { RowChips } from './SpanRow';
-import { SPAN_VISUALS, VISUAL_OF_KIND } from './span-visuals';
-
-/*
- * The reading surface (Task 5.4), props-in — the session top to bottom in `seq`
- * order, against the tree's scanning surface.
- *
- * ===========================================================================
- * IT DECIDES NOTHING. `lib/thread.ts` DOES.
- * ===========================================================================
- * Which of the four row shapes an event becomes, what the reasoning marker says,
- * how an unrecognized record is labelled and how far a payload is clamped are
- * all settled before this file sees a row. The `ui` project runs under
- * `environment: 'node'`, so a decision made here would have nowhere to be
- * asserted — the same rule `EventDetail.tsx` and `lib/session-data.ts` state.
- *
- * ===========================================================================
- * NATIVE LIST ELEMENTS, AND NO VIRTUALIZER.
- * ===========================================================================
- * An `<ol>` of `<li>` needs no `role`: `role="list"` only counts when every
- * child sets `role="listitem"`, which would bind all four row renderers for
- * nothing a browser does not already do. And windowing would make the gate's
- * rendered-row count vacuous — fewer markers on screen than events would prove
- * the window, not the model. The largest measured session is 624 events
- * carrying roughly 220 KB of text once payloads are clamped, so every row is in
- * the document.
- *
- * ===========================================================================
- * TWO ATTRIBUTES PER ROW ARE PRODUCTION REQUIREMENTS.
- * ===========================================================================
- * `data-thread-kind` and `data-event-id` are how the render gate reads a THREAD
- * row. The pre-existing payload cross-check selects `data-event-kind`, which
- * `SpanRow` renders and nothing here does — so without these, AC-R1 would pass
- * with no thread row ever read.
- *
- * The type step is the spec's 14px reading step at line-height 1.45; chrome and
- * chips stay at 13px and 11px, and the quiet gray on the reasoning marker is the
- * span-thinking token the manifest already ships. No token is invented here.
- */
+import { SPAN_VISUALS } from './span-visuals';
+import { MessageContent } from './MessageContent';
 
 export interface ThreadViewProps {
   rows: readonly ThreadRow[];
-  /**
-   * The session's first timestamp. A row whose day differs from it is qualified
-   * with that day: 11 of 293 sessions cross a calendar day, and on those a bare
-   * wall clock reads as though the session ran backwards.
-   */
   startedAt: string;
+  api?: ApiClient;
 }
 
-export function ThreadView({ rows, startedAt }: ThreadViewProps) {
+/** A lossless transcript with a quiet default and explicit disclosure of activity. */
+export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
+  const sections = useMemo(() => groupThread(rows), [rows]);
+  const prompts = rows.filter((row) => row.kind === 'message' && row.eventKind === 'prompt');
+  const scroller = useRef<HTMLDivElement>(null);
+  const [activePrompt, setActivePrompt] = useState<string | null>(null);
+
+  function jump(id: string) {
+    const target = document.getElementById(`thread-${id}`);
+    target?.scrollIntoView({ block: 'start' });
+    target?.focus({ preventScroll: true });
+    setActivePrompt(id);
+  }
+
   return (
-    <ol
-      data-slot="thread-view"
-      className="min-h-0 flex-1 overflow-y-auto px-4 py-2 text-base text-foreground"
-    >
-      {rows.map((row) => (
-        <li
-          key={row.event.id}
-          data-thread-kind={row.kind}
-          data-event-id={row.event.id}
-          className="border-b border-border py-3 last:border-b-0"
+    <div className="flex min-h-0 min-w-0 flex-1">
+      <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-5 pb-16 pt-8 sm:px-8">
+          <div className="mb-7 flex items-center justify-between gap-4 text-xs text-muted">
+            <span>
+              Conversation <span className="px-2 text-faint">/</span> {prompts.length} prompts
+            </span>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 hover:text-foreground"
+              onClick={() => {
+                if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+              }}
+            >
+              <ArrowDown size={13} aria-hidden="true" /> Latest
+            </button>
+          </div>
+          {rows.length === 0 ? (
+            <p className="py-12 text-center text-muted">No messages recorded yet.</p>
+          ) : null}
+          <ol data-slot="thread-view" className="space-y-5 text-base text-foreground">
+            {sections.map((section) =>
+              section.kind === 'message' ? (
+                <li
+                  key={section.id}
+                  id={`thread-${section.id}`}
+                  tabIndex={-1}
+                  data-thread-kind="message"
+                  data-event-id={section.id}
+                  className="scroll-mt-6"
+                >
+                  <MessageRow row={section.row} startedAt={startedAt} />
+                </li>
+              ) : (
+                <li key={section.id}>
+                  <details
+                    data-slot="thread-activity"
+                    className="rounded-md border border-dashed border-border bg-background"
+                  >
+                    <summary className="flex cursor-pointer items-center gap-2.5 px-4 py-3 text-xs text-muted transition-colors hover:text-foreground">
+                      <ChevronRight
+                        size={14}
+                        className="disclosure-chevron shrink-0"
+                        aria-hidden="true"
+                      />
+                      <Terminal size={14} className="shrink-0 text-span-tool" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-medium">Activity</span>
+                        <span className="mt-1 block text-2xs text-muted">
+                          {activitySummary(section.rows)}
+                        </span>
+                      </span>
+                      {section.rows.some((row) => row.kind === 'tool' && row.status === 'error') ? (
+                        <span className="shrink-0 text-error">Errors</span>
+                      ) : null}
+                      <span className="text-2xs text-faint">View activity</span>
+                    </summary>
+                    <ol className="border-t border-border px-4">
+                      {section.rows.map((row) => (
+                        <li
+                          key={row.event.id}
+                          data-thread-kind={row.kind}
+                          data-event-id={row.event.id}
+                          className="border-b border-border py-3 last:border-b-0"
+                        >
+                          <ActivityRow row={row} startedAt={startedAt} api={api} />
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                </li>
+              ),
+            )}
+          </ol>
+        </div>
+      </div>
+      {prompts.length > 1 ? (
+        <nav
+          aria-label="Conversation outline"
+          className="hidden w-60 shrink-0 overflow-y-auto border-l border-border px-4 py-8 lg:block"
         >
-          <Row row={row} startedAt={startedAt} />
-        </li>
-      ))}
-    </ol>
+          <p className="mb-5 flex items-center gap-2 text-xs font-medium text-muted">
+            <List size={14} aria-hidden="true" /> In this session
+          </p>
+          <ol className="space-y-1">
+            {prompts.map((row, index) => (
+              <li key={row.event.id}>
+                <button
+                  type="button"
+                  onClick={() => jump(row.event.id)}
+                  aria-current={activePrompt === row.event.id ? 'location' : undefined}
+                  className={cn(
+                    'flex w-full items-start gap-3 rounded-md px-2 py-3 text-left text-xs transition-colors hover:bg-surface-raised hover:text-foreground',
+                    activePrompt === row.event.id
+                      ? 'bg-span-turn/10 text-foreground'
+                      : 'text-muted',
+                  )}
+                >
+                  <span className="font-mono text-2xs text-span-turn">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span className="line-clamp-3 break-words">
+                    {row.kind === 'message' ? row.text || 'Empty prompt' : ''}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-6 border-t border-border pt-4 text-2xs leading-relaxed text-muted">
+            Tool calls and reasoning are tucked into activity groups. Open any group to inspect the
+            details.
+          </p>
+        </nav>
+      ) : null}
+    </div>
   );
 }
 
-function Row({ row, startedAt }: { row: ThreadRow; startedAt: string }) {
-  switch (row.kind) {
-    case 'tool':
-      return <ToolRow row={row} startedAt={startedAt} />;
-    case 'thinking':
-      return <ThinkingRow row={row} startedAt={startedAt} />;
-    case 'unknown':
-      return <UnknownRow row={row} startedAt={startedAt} />;
-    default:
-      return <MessageRow row={row} startedAt={startedAt} />;
-  }
-}
-
-/**
- * When the event happened, as a real `<time>`.
- *
- * `formatStartedAt` cannot serve here: it answers `Nm ago` for anything inside
- * 24 hours, so every row of a same-day session would carry the identical string.
- */
 function RowTime({ ts, startedAt }: { ts: string; startedAt: string }) {
   return (
-    <time dateTime={ts} className="shrink-0 font-mono text-2xs text-faint">
+    <time dateTime={ts} className="shrink-0 font-mono text-2xs text-muted">
       {formatEventTime(ts, startedAt)}
     </time>
   );
 }
 
-/** The prose arm: a prompt, a reply, an error or a compaction, unclamped. */
 function MessageRow({ row, startedAt }: { row: ThreadMessageRow; startedAt: string }) {
-  const visual = VISUAL_OF_KIND[row.eventKind];
+  const prompt = row.eventKind === 'prompt';
+  const isError = row.eventKind === 'error';
+  const reply = row.eventKind === 'text';
+  const label = prompt
+    ? 'You'
+    : row.eventKind === 'text'
+      ? 'Claude'
+      : row.eventKind === 'error'
+        ? 'Session error'
+        : 'Context compacted';
+  const Icon = prompt ? User : Bot;
   return (
-    <>
-      <div className="flex items-center gap-2">
-        <span className={cn('shrink-0', visual.tint)}>
-          <visual.Icon size={12} aria-hidden="true" />
+    <article
+      className={cn(
+        'rounded-md border px-5 py-4',
+        prompt
+          ? 'border-span-turn/30 bg-span-turn/10'
+          : reply
+            ? 'border-accent/30 bg-accent-muted'
+            : 'border-border bg-surface',
+        isError && 'border-error',
+      )}
+    >
+      <div className="mb-3 flex items-center gap-2.5">
+        <span
+          className={cn(
+            'flex size-7 items-center justify-center rounded-md',
+            prompt ? 'bg-span-turn/15 text-span-turn' : 'bg-accent-muted text-accent',
+          )}
+        >
+          <Icon size={15} aria-hidden="true" />
         </span>
-        {/* The wire's own word for the record, not a friendlier synonym. */}
-        <span className="min-w-0 flex-1 truncate text-2xs tracking-widest text-muted">
-          {row.eventKind}
+        <span
+          className={cn(
+            'flex-1 text-sm font-semibold',
+            prompt ? 'text-span-turn' : reply ? 'text-accent' : 'text-foreground',
+          )}
+        >
+          {label}
         </span>
+        {prompt || reply ? (
+          <span className="text-2xs text-muted">{prompt ? 'Prompt' : 'Message'}</span>
+        ) : null}
         <RowTime ts={row.event.ts} startedAt={startedAt} />
       </div>
-      {row.text === null ? null : (
-        <p data-slot="thread-message" className="mt-1 whitespace-pre-wrap break-words">
-          {row.text}
-        </p>
+      {row.text === null ? (
+        <p className="text-sm text-muted">No message text recorded.</p>
+      ) : (
+        <div data-slot="thread-message" className="text-base leading-relaxed">
+          {prompt ? (
+            <p className="whitespace-pre-wrap break-words">{row.text}</p>
+          ) : (
+            <MessageContent text={row.text} />
+          )}
+        </div>
       )}
-    </>
+    </article>
   );
 }
 
-/**
- * AC2's row: what was called, when it was called, what went in, what came out.
- *
- * The status word rides beside its tint because `design-system.md`'s baseline
- * forbids conveying status by colour alone, and the chips are `RowChips` — the
- * same atom the tree row and the turn header use, so one event cannot spell its
- * numbers two ways on two screens.
- */
-function ToolRow({ row, startedAt }: { row: ThreadToolRow; startedAt: string }) {
-  const type = SPAN_VISUALS.type.tool_call;
+function ActivityRow({
+  row,
+  startedAt,
+  api,
+}: {
+  row: ThreadRow;
+  startedAt: string;
+  api?: ApiClient;
+}) {
+  if (row.kind === 'message') return <MessageRow row={row} startedAt={startedAt} />;
+  if (row.kind === 'unknown')
+    return (
+      <div>
+        <div className="flex items-center gap-3">
+          <span
+            data-slot="thread-unknown"
+            className="min-w-0 flex-1 break-words text-xs text-muted"
+          >
+            {row.label}
+          </span>
+          <RowTime ts={row.event.ts} startedAt={startedAt} />
+        </div>
+        <details data-slot="thread-raw" className="mt-2 text-xs text-muted">
+          <summary className="cursor-pointer">Raw record</summary>
+          <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-2xs">
+            {row.record}
+          </pre>
+        </details>
+      </div>
+    );
+  if (row.kind === 'thinking')
+    return row.recorded ? (
+      <details data-slot="thread-reasoning" className="text-xs text-muted">
+        <summary className="flex cursor-pointer items-center gap-2">
+          <ChevronRight size={13} className="disclosure-chevron" aria-hidden="true" />
+          <span className="flex-1">Reasoning</span>
+          <RowTime ts={row.event.ts} startedAt={startedAt} />
+        </summary>
+        <p
+          data-slot="thread-thinking"
+          className="mt-3 whitespace-pre-wrap break-words text-sm text-foreground"
+        >
+          {row.event.text}
+        </p>
+        <FullPayload event={row.event} field="text" api={api} />
+      </details>
+    ) : (
+      <div className="flex items-center gap-2">
+        <p data-slot="thread-thinking" className="flex-1 text-xs text-span-thinking">
+          {row.text}
+        </p>
+        <RowTime ts={row.event.ts} startedAt={startedAt} />
+      </div>
+    );
   const status = SPAN_VISUALS.status[row.status];
   return (
-    <>
-      <div className="flex items-center gap-2">
-        <span className={cn('shrink-0', type.tint)}>
-          <type.Icon size={12} aria-hidden="true" />
-        </span>
-        <span data-slot="thread-tool" className="min-w-0 flex-1 truncate font-mono text-sm">
-          {row.name}
-        </span>
-        <span className={cn('shrink-0 text-2xs', status.tint)}>{status.label}</span>
-        <RowTime ts={row.event.ts} startedAt={startedAt} />
-        <span className="shrink-0">
+    <div>
+      <details data-slot="thread-tool-detail" className="text-sm">
+        <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-muted hover:text-foreground">
+          <ChevronRight size={13} className="disclosure-chevron shrink-0" aria-hidden="true" />
+          <span
+            data-slot="thread-tool"
+            className="min-w-0 flex-1 break-words font-mono text-foreground"
+          >
+            {row.name}
+          </span>
+          {row.event.child_session_id ? (
+            <span className="text-2xs text-span-subagent">
+              {row.event.agent_type || 'Subagent'}
+            </span>
+          ) : null}
+          <span className={cn('text-2xs', status.tint)}>{status.label}</span>
+          <RowTime ts={row.event.ts} startedAt={startedAt} />
           <RowChips values={eventChips(row.event)} showErrors={false} />
-        </span>
-      </div>
-      <Payload slot="thread-input" title="INPUT" body={row.input} />
-      <Payload slot="thread-output" title="OUTPUT" body={row.output} />
-    </>
+          {row.input ? (
+            <span className="w-full truncate pl-5 font-mono text-2xs text-muted" title={row.input}>
+              {row.input}
+            </span>
+          ) : null}
+        </summary>
+        <Payload slot="thread-input" title="Input" body={row.input} />
+        <FullPayload event={row.event} field="input" api={api} />
+        <Payload slot="thread-output" title="Output" body={row.output} />
+        <FullPayload event={row.event} field="text" api={api} />
+      </details>
+      {row.event.child_session_id ? (
+        <a
+          href={hrefFor({ name: 'session', sessionId: row.event.child_session_id })}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-2 text-xs text-accent hover:text-accent-hover"
+        >
+          <Bot size={14} aria-hidden="true" /> Open subagent thread{' '}
+          <ArrowUpRight size={13} aria-hidden="true" />
+        </a>
+      ) : null}
+    </div>
   );
 }
 
 function Payload({ slot, title, body }: { slot: string; title: string; body: string | null }) {
   if (body === null) return null;
   return (
-    <div data-slot={slot} className="mt-2">
-      <span className="text-2xs tracking-widest text-muted">{title}</span>
-      <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs text-muted">
+    <div data-slot={slot} className="mt-3">
+      <span className="text-2xs font-medium uppercase tracking-widest text-muted">{title}</span>
+      <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted">
         {body}
       </pre>
     </div>
   );
 }
 
-/**
- * One `thinking` event, and the marker is terminal.
- *
- * There is nothing to open: the harness kept only an opaque signature, and no
- * column on the wire carries it. A disclosure here would promise a reader
- * something this build cannot produce.
- */
-function ThinkingRow({ row, startedAt }: { row: ThreadThinkingRow; startedAt: string }) {
-  const type = SPAN_VISUALS.type.thinking;
+/** Full bodies reuse the content resolver, including explicit missing/error states. */
+function FullPayload({
+  event,
+  field,
+  api,
+}: {
+  event: EventRow;
+  field: ContentField;
+  api?: ApiClient;
+}) {
+  const [fetched, setFetched] = useState<EventContentBody | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  const content = contentStateOf(event, field, fetched);
+  const original = field === 'input' ? event.input : event.text;
+  const hasLongBody = (original?.length ?? 0) > 480;
+  if (!content.canRefetch && !hasLongBody && content.note === null) return null;
+  if (content.kind === 'empty') return null;
   return (
-    <div className="flex items-center gap-2">
-      <span className={cn('shrink-0', type.tint)}>
-        <type.Icon size={12} aria-hidden="true" />
-      </span>
-      <p
-        data-slot="thread-thinking"
-        className={cn(
-          'min-w-0 flex-1 break-words text-sm',
-          row.recorded ? 'text-foreground' : 'text-span-thinking',
-        )}
-      >
-        {row.text}
-      </p>
-      <RowTime ts={row.event.ts} startedAt={startedAt} />
+    <div className="mt-2 text-xs text-muted">
+      {content.note ? <p>{content.note}</p> : null}
+      {content.canRefetch && api ? (
+        <button
+          type="button"
+          disabled={pending}
+          className="mt-2 text-accent disabled:opacity-50"
+          onClick={() => {
+            setPending(true);
+            setError(false);
+            void api
+              .getEventContent(event.id, field)
+              .then(setFetched)
+              .catch(() => setError(true))
+              .finally(() => setPending(false));
+          }}
+        >
+          {pending
+            ? 'Loading…'
+            : error
+              ? 'Retry loading full content'
+              : `Load full ${field === 'input' ? 'input' : 'output'}`}
+        </button>
+      ) : null}
+      {error ? (
+        <p role="alert" className="mt-1 text-error">
+          Could not load content. Try again.
+        </p>
+      ) : null}
+      {(hasLongBody || fetched !== null) && content.body !== null ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-accent">
+            {content.truncated ? 'Stored preview' : 'Full content'}
+          </summary>
+          <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background p-3 font-mono text-xs">
+            {content.body}
+          </pre>
+        </details>
+      ) : null}
     </div>
-  );
-}
-
-/**
- * The drift alarm.
- *
- * A record this build does not recognise draws a labelled row naming its
- * `raw_type` and `raw_subtype`, so a transcript format change shows up in the
- * product on the first session opened after a harness update. The disclosure is
- * the wire row's own scalars: MEASURED, all 1,577 such rows carry no text, no
- * name and no input, so there is no payload to offer and no refetch to make.
- */
-function UnknownRow({ row, startedAt }: { row: ThreadUnknownRow; startedAt: string }) {
-  const type = SPAN_VISUALS.type.generic;
-  return (
-    <>
-      <div className="flex items-center gap-2">
-        <span className={cn('shrink-0', type.tint)}>
-          <type.Icon size={12} aria-hidden="true" />
-        </span>
-        <span data-slot="thread-unknown" className="min-w-0 flex-1 truncate text-sm text-muted">
-          {row.label}
-        </span>
-        <RowTime ts={row.event.ts} startedAt={startedAt} />
-      </div>
-      <details data-slot="thread-raw" className="mt-1">
-        <summary className="cursor-pointer text-2xs text-muted">Raw record</summary>
-        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-2xs text-muted">
-          {row.record}
-        </pre>
-      </details>
-    </>
   );
 }

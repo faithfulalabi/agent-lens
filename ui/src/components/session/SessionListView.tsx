@@ -110,7 +110,7 @@ export function SessionListView({
   const unpriced = unpricedNotice(rows, pageTruncated);
 
   return (
-    <div data-slot="session-list">
+    <div data-slot="session-list" className="overflow-hidden rounded-md border border-border">
       {unpriced === null ? null : (
         <div
           data-slot="unpriced-notice"
@@ -189,13 +189,20 @@ function SessionRow({
         `active ${active}${pending ? ', sub-agent totals still being summed' : ''}`
       }
       className={cn(
-        'flex h-9 items-center gap-3 border-b border-border px-3 text-xs text-foreground',
+        'flex min-h-20 flex-wrap items-center gap-3 border-b border-border px-4 py-4 text-xs text-foreground transition-colors hover:bg-surface last:border-b-0',
         isCursor && 'bg-surface-raised',
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="w-40 shrink-0 truncate text-muted">{row.project_path}</span>
-      <span className="w-24 shrink-0 text-muted">{active}</span>
+      <span className="min-w-0 flex-1 basis-60">
+        <span className="block truncate text-sm font-medium">{label}</span>
+        <span
+          className="mt-1.5 block truncate font-mono text-2xs text-muted"
+          title={row.project_path}
+        >
+          {row.project_path}
+        </span>
+      </span>
+      <span className="w-20 shrink-0 text-muted">{active}</span>
 
       <span className={cn('flex w-20 shrink-0 items-center gap-1', status.badge)}>
         <span aria-hidden="true" className={cn('size-1.5 rounded-md', status.dot)} />

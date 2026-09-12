@@ -69,7 +69,10 @@ describe('`seq` is the total order (Test 2, AC1)', () => {
   it('leaves the caller’s array alone', () => {
     const events = [makeEventRow({ id: 'b', seq: 9 }), makeEventRow({ id: 'a', seq: 1 })];
     buildThread(events);
-    expect(events.map((event) => event.id), 'the input was sorted in place').toEqual(['b', 'a']);
+    expect(
+      events.map((event) => event.id),
+      'the input was sorted in place',
+    ).toEqual(['b', 'a']);
   });
 
   it('answers an empty thread for an empty page', () => {
@@ -305,6 +308,6 @@ describe('the unknown row discloses the wire fields it has (Test 11, AC3)', () =
 
 describe('the two surfaces are one closed list', () => {
   it('names both, in the order their controls render', () => {
-    expect(SESSION_VIEW_MODES).toEqual(['tree', 'thread']);
+    expect(SESSION_VIEW_MODES).toEqual(['thread', 'tree']);
   });
 });

@@ -169,6 +169,13 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
    */
   return (
     <Pane>
+      <div className="mb-2">
+        <p className="mb-2 text-xs font-medium text-accent">YOUR WORK, REVISITED</p>
+        <h1 className="text-xl font-semibold">Sessions</h1>
+        <p className="mt-2 text-base text-muted">
+          Pick up the thread. Explore what you asked, what Claude answered, and how it got there.
+        </p>
+      </div>
       <VolumeHistogram
         buckets={volumeBuckets(data?.sessions ?? [], { range, now, bucketCount: BUCKET_COUNT })}
       />
@@ -202,5 +209,7 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
 }
 
 function Pane({ children }: { children: ReactNode }) {
-  return <main className="mx-auto flex max-w-5xl flex-col gap-4 px-8 py-6">{children}</main>;
+  return (
+    <main className="mx-auto flex max-w-5xl flex-col gap-4 px-5 py-8 sm:px-8">{children}</main>
+  );
 }

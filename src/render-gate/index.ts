@@ -1103,7 +1103,15 @@ async function probeThreadInline(
   const row = wire === null ? undefined : rows.find((candidate) => candidate.id === wire.id);
   if (wire === null || row === undefined) return null;
 
-  const shown = oneLine(row.text);
+  const toolRow = page.locator(
+    `[data-thread-kind="tool"][data-event-id="${cssAttrValue(wire.id)}"]`,
+  );
+  const activity = toolRow.locator('xpath=ancestor::details[@data-slot="thread-activity"]');
+  if ((await activity.getAttribute('open')) !== null)
+    throw new Error('Activity must start collapsed');
+  await activity.locator(':scope > summary').click();
+  await toolRow.locator('details[data-slot="thread-tool-detail"] > summary').click();
+  const shown = oneLine(await toolRow.innerText());
   const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
   const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
   const marked = thinkingTexts.map(oneLine);
@@ -1164,6 +1172,15 @@ async function openFirstSession(page: Page): Promise<string> {
   const row = page.locator(slot(SELECTORS.sessionRow)).first();
   const href = (await row.getAttribute('href')) ?? '';
   await row.click();
+  await page.getByRole('button', { name: 'Thread', exact: true }).waitFor();
+  if (
+    (await page
+      .getByRole('button', { name: 'Thread', exact: true })
+      .getAttribute('aria-pressed')) !== 'true'
+  ) {
+    throw new Error('A session must open in Thread view');
+  }
+  await page.getByRole('button', { name: 'Tree', exact: true }).click();
   await page.waitForSelector(slot(SELECTORS.traceRow));
   return (
     href
