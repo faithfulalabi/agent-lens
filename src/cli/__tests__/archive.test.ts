@@ -438,6 +438,8 @@ describe('the ship-phase commands stay inside the same code namespace', () => {
     // hang the suite rather than fail it. `args.test.ts` covers it in-process.
     ['archive, the 2026-08-09 typo', EXIT_INCOMPLETE, () => ['archive', '--data-dir=/nope']],
     [
+      // Since task 0.15 the id parses at any index; the unindexed-session
+      // lookup is what refuses here — same bucket, different cause.
       'rebuild, id after a flag',
       EXIT_INCOMPLETE,
       (s: Sandbox) => ['rebuild', `--dataDir=${s.dataDir}`, 'no-such-session'],

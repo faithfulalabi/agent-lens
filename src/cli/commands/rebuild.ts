@@ -27,12 +27,23 @@ import { deleteSessionProjection, projectSession } from '../../db/write.js';
 import { EXIT_INCOMPLETE, EXIT_OK, parseStringFlag } from './archive.js';
 
 /**
- * The one positional argument, and only in first position. Anything starting
- * with `-` is a flag, and a flag's VALUE is never in first position.
+ * The one positional argument, at any index — the contract `parsePruneArgs`
+ * (`prune.ts:90-118`) honours. `--dataDir value` is consumed by position and
+ * never inspected, so a `-`-prefixed value is not misread as a flag or an id.
  */
 export function parseSessionId(args: string[]): string | undefined {
-  const first = args[0];
-  return first === undefined || first.startsWith('-') ? undefined : first;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg.startsWith('-')) {
+      // ponytail: rebuild's one value flag, spelled here as well as in the
+      // COMMANDS table on purpose (no shared parser near a destructive
+      // command's walk) — a second value flag must be added in both places.
+      if (arg === '--dataDir') i += 1;
+      continue;
+    }
+    return arg;
+  }
+  return undefined;
 }
 
 /** Removes cache.db and its two siblings, under the cache lock. */
