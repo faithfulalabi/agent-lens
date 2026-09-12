@@ -145,6 +145,7 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       { index: 0, text: 'turn 1: hello' },
       { index: 1, text: 'tool Read, ok' },
     ],
+    slashCommandTitles: ['/run-phase'],
     windowFirstIndex: 0,
     windowLastIndex: 1,
     renderedRows: 2,
@@ -517,6 +518,52 @@ describe('buildReport (AC5)', () => {
     expect(report.assertions.map((a) => a.name)).not.toContain('detail-event-payload');
     expect(report.warnings.join(' ')).toContain('tool-call-inline: none in window');
     expect(report.ok, 'an absent row is not a product failure').toBe(true);
+  });
+
+  it('reports an empty slash_command window as an observation, never as a pass', () => {
+    // Task 0.11, on the tool-call probe's terms: whether a slash_command turn
+    // is in the rendered window is a fact about the corpus, not the screen.
+    const report = buildReport({
+      task: '0.11',
+      startedAt: '2026-09-11T00:00:00.000Z',
+      result: passingResult({ slashCommandTitles: [] }),
+      error: null,
+    });
+
+    expect(report.assertions.map((a) => a.name)).not.toContain('slash-command-titles');
+    expect(report.warnings.join(' ')).toContain('slash-command-titles: none in window');
+    expect(report.ok, 'an absent row is not a product failure').toBe(true);
+  });
+
+  it('passes slash-command-titles when every rendered title is clean (AC-R1)', () => {
+    const report = buildReport({
+      task: '0.11',
+      startedAt: '2026-09-11T00:00:00.000Z',
+      result: passingResult({ slashCommandTitles: ['/run-phase', '/approach'] }),
+      error: null,
+    });
+    const probe = report.assertions.find((a) => a.name === 'slash-command-titles');
+
+    expect(probe?.ok).toBe(true);
+    expect(probe?.actual).toContain('2 rendered');
+    expect(report.warnings.join(' ')).not.toContain('slash-command-titles');
+  });
+
+  it('reds slash-command-titles on a raw envelope, and counts the offenders', () => {
+    const report = buildReport({
+      task: '0.11',
+      startedAt: '2026-09-11T00:00:00.000Z',
+      result: passingResult({
+        slashCommandTitles: ['/run-phase', '<command-message>run-phase is…</command-message>'],
+      }),
+      error: null,
+    });
+    const probe = report.assertions.find((a) => a.name === 'slash-command-titles');
+
+    expect(report.ok).toBe(false);
+    expect(probe?.ok).toBe(false);
+    expect(probe?.actual).toContain('1 of 2');
+    expect(probe?.actual).toContain('<command-message>');
   });
 
   it('asserts the pane reading, and names all three of its clauses (AC-R1)', () => {

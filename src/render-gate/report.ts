@@ -291,6 +291,13 @@ export interface Observations {
   searchScreen: SearchProbe | null;
   /** The full window capture; `buildReport` is what caps it at `MAX_LABELS`. */
   labels: readonly RowLabel[];
+  /**
+   * `[data-slot="trace-preview"]` text of every rendered `slash_command` turn
+   * row (task 0.11). Its own collection, NOT a reading of `labels`: those
+   * prefer `aria-label`, which composes `turn N: ` in front of the title — so
+   * a "starts with `<`" check against them is vacuously green on raw XML.
+   */
+  slashCommandTitles: readonly string[];
   windowFirstIndex: number | null;
   windowLastIndex: number | null;
   renderedRows: number;
@@ -470,6 +477,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'exactly one GET /api/sessions/:id response before any expansion',
     },
     ...toolCallAssertions(result.toolCallInline),
+    ...slashCommandTitleAssertions(result.slashCommandTitles),
     ...eventDetailAssertions(result.eventDetail),
     ...subagentAssertions(
       result.subagentExpansion,
@@ -544,6 +552,32 @@ function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
         `(${quote(probe.inputPrefix)}), output ${probe.outputMatched ? 'found' : 'MISSING'} ` +
         `(${quote(probe.outputPrefix)})`,
       expected: 'the rendered row text contains a prefix of both its input and its output',
+    },
+  ];
+}
+
+/**
+ * Task 0.11's AC-R1: no rendered `slash_command` turn shows its raw envelope.
+ *
+ * Asserted only when the window held a `slash_command` row, on the tool-call
+ * probe's terms: whether one is on screen is a fact about the corpus, so an
+ * empty collection contributes a warning instead of a pass. When the row IS
+ * there and the title still opens with `<`, this hard-fails — including the
+ * designed case where a future title's cap-truncated envelope defeats the
+ * extractor and falls through verbatim.
+ */
+function slashCommandTitleAssertions(titles: readonly string[]): AssertionRecord[] {
+  if (titles.length === 0) return [];
+  const raw = titles.filter((title) => title.startsWith('<'));
+  return [
+    {
+      name: 'slash-command-titles',
+      ok: raw.length === 0,
+      actual:
+        raw.length === 0
+          ? `${titles.length} rendered slash_command title(s), none starting with "<"`
+          : `${raw.length} of ${titles.length} start with "<", e.g. ${quote(raw[0] ?? '')}`,
+      expected: 'no rendered slash_command turn title starts with "<"',
     },
   ];
 }
@@ -835,6 +869,13 @@ function driveWarnings(result: DriveResult): string[] {
       'tool-call-inline: none in window — OBSERVED, NOT ASSERTED. No rendered ' +
         'tool_call row carried both an input and an output, so the payload ' +
         'cross-check had nothing to look at on this session.',
+    );
+  }
+  if (result.slashCommandTitles.length === 0) {
+    warnings.push(
+      'slash-command-titles: none in window — OBSERVED, NOT ASSERTED. No ' +
+        'rendered turn row carried data-turn-kind="slash_command", so the ' +
+        'title check had nothing to look at on this session.',
     );
   }
   if (result.subagentExpansion === null) {

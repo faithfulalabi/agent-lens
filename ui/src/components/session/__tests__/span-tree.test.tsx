@@ -695,6 +695,21 @@ describe('a turn that no human started says so (AC2)', () => {
     expect(markup).toContain('rename the widget');
     expect(markup).toContain('data-slot="trace-preview"');
   });
+
+  it('renders a slash_command title as the command name, in the span AND the aria-label', () => {
+    // Task 0.11: the stored title is the raw envelope; the row must not be.
+    const markup = turnRowMarkup({
+      kind: 'slash_command',
+      title:
+        '<command-message>run-phase is running…</command-message>\n' +
+        '<command-name>/run-phase</command-name>\n' +
+        '<command-args>@plan.md</command-args>',
+    });
+    expect(markup).toContain('>/run-phase</span>');
+    expect(markup).toContain('aria-label="turn 1: /run-phase"');
+    expect(markup).not.toContain('command-message');
+    expect(markup).not.toContain('command-args');
+  });
 });
 
 /* --------------------- Test 13 — the manifest is exhaustive ---------------- */

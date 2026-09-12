@@ -10,6 +10,7 @@ import {
   eventStatusOf,
   flatten,
   turnChips,
+  turnTitle,
   type TreeModel,
 } from '../turn-tree';
 import { makeEventRow, makeTurnRow, makeTurnTree } from './fixtures';
@@ -448,6 +449,69 @@ describe('turn chips are read off the server rollup, never recomputed', () => {
       errorCount: 0,
     });
   });
+});
+
+describe('turnTitle reads the command name out of the slash_command envelope', () => {
+  /*
+   * Task 0.11. Everything here is pure and DOM-free, like the rest of this
+   * file — that is AC2. The stored shape, verbatim from the corpus: message,
+   * then name, then args, capped at 200 characters by MAX_TITLE_CHARS.
+   */
+  const ENVELOPE =
+    '<command-message>run-phase is running…</command-message>\n' +
+    '<command-name>/run-phase</command-name>\n' +
+    '<command-args>@internal_docs/agent-lens/plans/agent-lens-v2.md</command-args>';
+
+  it('extracts the command name from a well-formed envelope (AC1)', () => {
+    expect(turnTitle(makeTurnRow({ kind: 'slash_command', title: ENVELOPE }))).toBe('/run-phase');
+  });
+
+  it('falls back to the command message when the name tag is absent', () => {
+    const title = '<command-message>run the phase</command-message>';
+    expect(turnTitle(makeTurnRow({ kind: 'slash_command', title }))).toBe('run the phase');
+  });
+
+  it.each([
+    ['no recognised tag at all', '<local-command-stdout>done</local-command-stdout>'],
+    ['an unterminated name tag and no message', '<command-name>/run-phase'],
+    [
+      'both sources present but empty',
+      '<command-message></command-message><command-name> </command-name>',
+    ],
+    ['plain text', 'run it'],
+  ])('falls through verbatim on %s — visible, never blank (AC4)', (_label, title) => {
+    expect(turnTitle(makeTurnRow({ kind: 'slash_command', title }))).toBe(title);
+  });
+
+  it('survives the 200-character cap landing inside the trailing args tag', () => {
+    // Today's corpus shape: MAX(length(title)) is exactly 200 and the chop
+    // lands after </command-name>, so extraction still succeeds.
+    const capped = (
+      '<command-message>run-phase is running…</command-message>\n' +
+      '<command-name>/run-phase</command-name>\n' +
+      `<command-args>${'@x'.repeat(120)}</command-args>`
+    ).slice(0, 200);
+    expect(capped).toHaveLength(200);
+    expect(turnTitle(makeTurnRow({ kind: 'slash_command', title: capped }))).toBe('/run-phase');
+  });
+
+  it('falls through verbatim when the cap chops the name tag away (AC4)', () => {
+    // A future long <command-message> can push </command-name> past the cap.
+    // The render gate hard-fails on the raw envelope by design; this function
+    // must still never answer blank.
+    const chopped = `<command-message>${'x'.repeat(200)}`.slice(0, 200);
+    expect(turnTitle(makeTurnRow({ kind: 'slash_command', title: chopped }))).toBe(chopped);
+  });
+
+  it.each(['human', 'task_notification', 'unknown', 'compaction', 'system'])(
+    'leaves a %s turn untouched, even when its stored title is raw markup',
+    (kind) => {
+      // The corpus holds task_notification and unknown titles starting `<`.
+      // Cleaning them is explicitly out of this task's scope.
+      const title = '<task-notification>agent finished</task-notification>';
+      expect(turnTitle(makeTurnRow({ kind, title }))).toBe(title);
+    },
+  );
 });
 
 describe('event chips report the row itself, and refuse to invent a duration', () => {

@@ -1263,13 +1263,21 @@ async function readTree(
 ): Promise<
   Pick<
     Observations,
-    'labels' | 'windowFirstIndex' | 'windowLastIndex' | 'renderedRows' | 'totalRows'
+    | 'labels'
+    | 'slashCommandTitles'
+    | 'windowFirstIndex'
+    | 'windowLastIndex'
+    | 'renderedRows'
+    | 'totalRows'
   >
 > {
   return page.evaluate(
     ([traceSlot, spanSlot, estimate, canvas]) => {
       const wrappers = Array.from(document.querySelectorAll('[data-index]'));
       const labels: { index: number; text: string }[] = [];
+      // Task 0.11 reads the INNER preview text, never the composed aria-label:
+      // that one always opens `turn N: `, so it can never start with `<`.
+      const slashCommandTitles: string[] = [];
       let firstIndex: number | null = null;
       let lastIndex: number | null = null;
       let measured = 0;
@@ -1286,6 +1294,10 @@ async function readTree(
           index,
           text: (row.getAttribute('aria-label') ?? row.textContent ?? '').trim(),
         });
+        if (row.getAttribute('data-turn-kind') === 'slash_command') {
+          const preview = row.querySelector('[data-slot="trace-preview"]');
+          slashCommandTitles.push((preview?.textContent ?? '').trim());
+        }
       }
       labels.sort((a, b) => a.index - b.index);
 
@@ -1312,6 +1324,7 @@ async function readTree(
 
       return {
         labels,
+        slashCommandTitles,
         windowFirstIndex: firstIndex,
         windowLastIndex: lastIndex,
         renderedRows: wrappers.length,
