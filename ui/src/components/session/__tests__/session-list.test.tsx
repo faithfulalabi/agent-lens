@@ -199,8 +199,18 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     for (const column of SORT_COLUMNS) expect(markup).toContain(COLUMN_LABELS[column]);
     expect(markup.match(/<button/g) ?? []).toHaveLength(SORT_COLUMNS.length);
 
-    // And the two that went are really gone, not merely unlabelled.
-    for (const gone of ['Started', 'Tokens', 'Cost']) expect(markup).not.toContain(`>${gone}`);
+    // Other metric headings explain their columns without implying sorting.
+    for (const label of [
+      'Status',
+      'Turns',
+      'Subagents',
+      'Errors',
+      'Elapsed',
+      'Tokens',
+      'Est. cost',
+    ]) {
+      expect(markup).toContain(`>${label}</span>`);
+    }
   });
 
   it('renders a sort chevron on the sorted column only', () => {
@@ -338,13 +348,13 @@ describe('status, degradation and errors are visible, not just coloured', () => 
     expect(markupOf([makeSessionRow({ has_drift: true })])).not.toContain('transcript only');
   });
 
-  it('error_count > 0 renders the count; 0 renders nothing (Test 15)', () => {
+  it('reserves the errors column for both nonzero and zero values', () => {
     const failing = markupOf([makeSessionRow({ error_count: 3 })]);
     expect(failing).toContain('data-slot="session-errors"');
     expect(failing).toContain('3 err');
 
-    expect(markupOf([makeSessionRow({ error_count: 0 })])).not.toContain(
-      'data-slot="session-errors"',
+    expect(markupOf([makeSessionRow({ error_count: 0 })])).toMatch(
+      /data-slot="session-errors"[^>]*>0<\/span>/,
     );
   });
 
@@ -385,12 +395,45 @@ describe('status, degradation and errors are visible, not just coloured', () => 
     expect(settled, 'the exact stored total, thousands-separated').toContain('15,400');
   });
 
-  it('draws no sub-agent cell at all for a session that launched none', () => {
-    // A `+0` on nineteen rows of twenty makes the one that matters harder to
-    // find — the same rule the capture chip was written against.
+  it('reserves the subagent column with zero when none were launched', () => {
+    // The column remains present; only the additional token detail is omitted.
     const markup = markupOf([makeSessionRow({ agent_count: 0 })]);
+    expect(markup).toMatch(/data-column="subagents"[^>]*><span[^>]*>0<\/span>/);
     expect(markup).not.toContain('data-slot="session-subs"');
     expect(markup).not.toContain('data-slot="session-subs-pending"');
+  });
+
+  it('keeps identical metric columns for missing, pending, and populated rows', () => {
+    const rows = [
+      makeSessionRow({ id: 'zero', agent_count: 0, error_count: 0, est_cost: 0 }),
+      makeSessionRow({ id: 'pending', agent_count: 2, rollup_state: 'own', est_cost: null }),
+      makeSessionRow({ id: 'full', agent_count: 3, rollup_state: 'complete', error_count: 7 }),
+    ];
+    const links = markupOf(rows).match(/<a\b[^>]*>.*?<\/a>/g) ?? [];
+    expect(links).toHaveLength(3);
+    for (const link of links) {
+      expect([...link.matchAll(/data-column="([^"]+)"/g)].map((match) => match[1])).toEqual([
+        'session',
+        'active',
+        'status',
+        'turns',
+        'subagents',
+        'errors',
+        'elapsed',
+        'tokens',
+        'cost',
+      ]);
+    }
+  });
+
+  it('explains the dates and separates main-session metrics from subagents', () => {
+    const row = makeSessionRow();
+    const markup = markupOf([row]);
+    expect(markup).toContain('Last active');
+    expect(markup).toContain(`dateTime="${row.last_activity_at}"`);
+    expect(markup).toContain('including idle time');
+    expect(markup).toContain('These tokens are separate from the main session totals');
+    expect(markup).toContain('The day filters use this date');
   });
 
   it('never puts an ARIA row role on an anchor', () => {
@@ -552,7 +595,7 @@ describe('a populated list states its own size', () => {
       />,
     );
     expect(markup).toContain('1 session');
-    expect(markup).not.toContain('+');
+    expect(markup).not.toContain('1+ session');
   });
 });
 

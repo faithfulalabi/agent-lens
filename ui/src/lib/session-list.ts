@@ -300,7 +300,7 @@ export type SortDirection = 'asc' | 'desc';
  */
 export const COLUMN_LABELS: Record<SortColumn, string> = {
   project_path: 'Project',
-  last_activity_at: 'Active',
+  last_activity_at: 'Last active',
 };
 
 export interface SelectOptions {

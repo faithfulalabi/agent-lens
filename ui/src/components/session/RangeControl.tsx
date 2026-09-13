@@ -41,17 +41,24 @@ export function RangeControl({
   onProjectChange,
 }: RangeControlProps) {
   return (
-    <div data-slot="range-control" className="flex items-center justify-between gap-4">
+    <div data-slot="range-control" className="flex flex-wrap items-center justify-between gap-4">
       <div
         role="group"
         aria-label="Time range"
+        title="Show sessions last active within this period"
         className="inline-flex items-center gap-0.5 rounded-md bg-surface p-0.5"
       >
+        <span className="px-2 text-xs text-muted">Last active</span>
         {TIME_RANGES.map((option) => (
           <button
             key={option}
             type="button"
             aria-pressed={option === range}
+            title={
+              option === 'all'
+                ? 'Active at any time'
+                : `Active in the last ${option.slice(0, -1)} days`
+            }
             onClick={() => {
               onRangeChange(option);
             }}

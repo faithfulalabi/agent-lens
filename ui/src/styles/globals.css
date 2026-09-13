@@ -153,3 +153,12 @@ summary:has(.disclosure-chevron)::-webkit-details-marker {
 details[open] > summary > .disclosure-chevron {
   transform: rotate(90deg);
 }
+
+/* Every row reserves the same nine columns, including zero and pending values. */
+.session-list-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 100px 80px 44px 110px 44px 70px 80px 70px;
+  gap: 16px;
+  align-items: center;
+  min-width: 980px;
+}

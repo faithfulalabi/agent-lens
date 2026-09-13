@@ -210,6 +210,6 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
 
 function Pane({ children }: { children: ReactNode }) {
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-4 px-5 py-8 sm:px-8">{children}</main>
+    <main className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-8 sm:px-8">{children}</main>
   );
 }
