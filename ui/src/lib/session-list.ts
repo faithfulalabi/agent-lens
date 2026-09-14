@@ -62,14 +62,11 @@ export function formatRowCount(showing: number, pageTruncated: boolean): string 
  * and the sentence stays true.
  *
  * ===========================================================================
- * ★ NO STORED STATE AND NO DISMISSAL. THE RAISE IS THE DATA.
+ * NOTICE ELIGIBILITY FOLLOWS THE DATA.
  * ===========================================================================
- * Task 7.3's rule, for the reason plan 001 learned twice: a strip whose raise
- * depends on stored, monotonic state has a downward path nobody proved. Price
- * the model and the next response carries numbers, so this returns `null` and
- * the strip goes on its own. There is nothing to clear, so no clear can be
- * outlived. A list that can price everything says nothing at all, because a
- * permanent notice trains the reader straight past it.
+ * Pricing every model shown clears the notice automatically. The UI also
+ * allows dismissal for the current app run without changing these facts or
+ * hiding the individual unknown-cost labels.
  *
  * The rows counted are the rows `costUnknownLabel` marks, called rather than
  * re-implemented: a second copy of the predicate could drift, and then the

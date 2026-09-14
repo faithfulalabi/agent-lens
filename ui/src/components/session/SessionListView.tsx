@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info, X } from 'lucide-react';
 
+import { useNoticeDismissal } from '@/lib/use-notice-dismissal';
 import { cn } from '@/lib/utils';
 import { hrefFor } from '@/lib/route-match';
 import {
@@ -55,10 +56,11 @@ export function SessionListView({
   pageTruncated = false,
 }: SessionListViewProps) {
   const unpriced = unpricedNotice(rows, pageTruncated);
+  const { dismissed, dismiss } = useNoticeDismissal('cost-unknown');
 
   return (
     <div data-slot="session-list" className="overflow-hidden rounded-md border border-border">
-      {unpriced === null ? null : (
+      {unpriced === null || dismissed ? null : (
         <div
           data-slot="unpriced-notice"
           role="status"
@@ -66,6 +68,15 @@ export function SessionListView({
         >
           <Info size={12} aria-hidden="true" className="shrink-0" />
           <span className="min-w-0">{unpriced}</span>
+          <button
+            type="button"
+            aria-label="Dismiss cost notice"
+            title="Dismiss until reload"
+            onClick={dismiss}
+            className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-raised hover:text-foreground"
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
         </div>
       )}
 

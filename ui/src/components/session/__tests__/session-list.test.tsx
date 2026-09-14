@@ -224,7 +224,7 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
 describe('the unpriced strip raises and clears with the rows themselves', () => {
   it('draws nothing at all when every row on screen has a price', () => {
     /*
-     * ★ NO STORED STATE AND NO DISMISSAL — plan 001 built a banner around
+     * ★ PRICING ELIGIBILITY FOLLOWS THE DATA — plan 001 built a banner around
      * stored state twice and twice the raise could not be falsified by the
      * clear. Here the raise IS the data: price the model and the next response
      * carries numbers, so this strip goes on its own with nothing to clear.
@@ -240,12 +240,11 @@ describe('the unpriced strip raises and clears with the rows themselves', () => 
     expect(markupOf([makeSessionRow({ est_cost: 0 })])).not.toContain('unpriced-notice');
   });
 
-  it('is announced as a status, and carries no control to dismiss it', () => {
+  it('is announced as a status and offers an accessible dismissal button', () => {
     const markup = markupOf([makeSessionRow({ est_cost: null })]);
     expect(markup).toContain('role="status"');
-    expect(markup.match(/<button/g) ?? [], 'the two sort controls, and nothing new').toHaveLength(
-      SORT_COLUMNS.length,
-    );
+    expect(markup).toContain('aria-label="Dismiss cost notice"');
+    expect(markup.match(/<button/g) ?? []).toHaveLength(SORT_COLUMNS.length + 1);
   });
 });
 

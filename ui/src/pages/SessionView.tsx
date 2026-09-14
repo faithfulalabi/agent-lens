@@ -491,6 +491,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
       )}
       {data === null ? null : (
         <DriftBanner
+          sessionId={sessionId}
           hasDrift={data.session.has_drift}
           harnessVersion={data.session.harness_version}
         />
