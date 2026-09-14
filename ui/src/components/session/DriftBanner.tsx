@@ -1,5 +1,6 @@
-import { TriangleAlert } from 'lucide-react';
+import { TriangleAlert, X } from 'lucide-react';
 
+import { useNoticeDismissal } from '@/lib/use-notice-dismissal';
 import { driftNotice, type DriftFacts } from '@/lib/session-data';
 
 /*
@@ -25,11 +26,12 @@ import { driftNotice, type DriftFacts } from '@/lib/session-data';
  * same rule: copy in a pure function is copy a test can pin.
  */
 
-export type DriftBannerProps = DriftFacts;
+export type DriftBannerProps = DriftFacts & { sessionId: string };
 
 export function DriftBanner(facts: DriftBannerProps) {
   const notice = driftNotice(facts);
-  if (notice === null) return null;
+  const { dismissed, dismiss } = useNoticeDismissal(`drift:${facts.sessionId}`);
+  if (notice === null || dismissed) return null;
 
   return (
     <div
@@ -45,6 +47,15 @@ export function DriftBanner(facts: DriftBannerProps) {
       >
         Drift report
       </a>
+      <button
+        type="button"
+        aria-label="Dismiss unrecognized records notice"
+        title="Dismiss until reload"
+        onClick={dismiss}
+        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-raised hover:text-foreground"
+      >
+        <X size={14} aria-hidden="true" />
+      </button>
     </div>
   );
 }

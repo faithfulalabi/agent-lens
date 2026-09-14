@@ -1,7 +1,8 @@
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, GitBranch, MessageSquare, Search } from 'lucide-react';
 
 import type { SessionListRow } from '@/lib/api';
 
+import { rowLabel } from '@/lib/session-list';
 import { cn } from '@/lib/utils';
 import { SESSION_VIEW_MODES, type SessionViewMode } from '@/lib/thread';
 import { hrefFor } from '@/lib/route-match';
@@ -73,14 +74,22 @@ import { SPAN_VISUALS } from './span-visuals';
  */
 
 export interface SessionHeaderProps {
-  session: SessionListRow;
+  session: SessionListRow & { agent_description?: string };
+  parentSessionId?: string;
   now: number | Date;
   /** Omit both this and `onViewChange` and no toggle renders at all. */
   view?: SessionViewMode;
   onViewChange?: (view: SessionViewMode) => void;
 }
 
-export function SessionHeader({ session, now, view, onViewChange }: SessionHeaderProps) {
+export function SessionHeader({
+  session,
+  now,
+  view,
+  onViewChange,
+  parentSessionId,
+}: SessionHeaderProps) {
+  const title = session.agent_description?.trim() || rowLabel(session);
   const status = SESSION_STATUS_VISUALS[session.live ? 'live' : 'complete'];
   const totalTokens = session.tokens_in + session.tokens_out;
   const endedAt = session.live ? undefined : session.last_activity_at;
@@ -91,28 +100,41 @@ export function SessionHeader({ session, now, view, onViewChange }: SessionHeade
   return (
     <header
       data-slot="session-header"
-      className="flex h-12 items-center gap-3 border-b border-border px-3 text-sm text-foreground"
+      className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-3 border-b border-border bg-surface/50 px-5 py-4 text-sm text-foreground"
     >
       <a
-        href={hrefFor({ name: 'sessions' })}
+        href={
+          parentSessionId
+            ? hrefFor({ name: 'session', sessionId: parentSessionId })
+            : hrefFor({ name: 'sessions' })
+        }
         data-slot="back-to-sessions"
-        aria-label="Back to sessions"
+        aria-label={parentSessionId ? 'Back to parent session' : 'Back to sessions'}
         className="flex shrink-0 items-center gap-1 text-2xs uppercase tracking-widest text-muted transition-colors hover:text-foreground"
       >
         <ChevronLeft size={12} aria-hidden="true" />
-        Sessions
+        {parentSessionId ? 'Parent session' : 'Sessions'}
       </a>
 
-      <h1 data-slot="session-project" className="min-w-0 flex-1 truncate font-medium">
-        {session.project_path}
-      </h1>
+      <div className="min-w-0 flex-1 basis-60">
+        <h1 className="truncate text-lg font-semibold" title={title}>
+          {title}
+        </h1>
+        <p
+          data-slot="session-project"
+          className="mt-1 truncate font-mono text-2xs text-muted"
+          title={session.project_path}
+        >
+          {session.project_path}
+        </p>
+      </div>
 
       <a
         href={hrefFor({ name: 'search', sessionId: session.id })}
         data-slot="in-session-search"
         className="shrink-0 text-2xs uppercase tracking-widest text-muted transition-colors hover:text-foreground"
       >
-        Search
+        <Search size={14} className="mr-1 inline-block" aria-hidden="true" /> Search
       </a>
 
       {view === undefined || onViewChange === undefined ? null : (
@@ -177,11 +199,16 @@ function ViewToggle({
             onViewChange(mode);
           }}
           className={cn(
-            'rounded-md px-2 py-1 text-2xs transition-colors',
+            'flex items-center gap-1.5 rounded-md px-3 py-2 text-xs transition-colors',
             mode === view ? 'bg-surface-raised text-foreground' : 'text-muted',
           )}
         >
-          {mode}
+          {mode === 'thread' ? (
+            <MessageSquare size={13} aria-hidden="true" />
+          ) : (
+            <GitBranch size={13} aria-hidden="true" />
+          )}
+          {mode === 'thread' ? 'Thread' : 'Tree'}
         </button>
       ))}
     </div>

@@ -35,9 +35,10 @@ function occurrences(markup: string, pattern: RegExp): number {
 describe('the thread is a native ordered list the gate can read (AC-R1)', () => {
   const markup = threadMarkup([{ kind: 'tool_call' }, { kind: 'prompt', text: 'hello' }]);
 
-  it('renders one <li> per row inside one <ol>', () => {
-    expect(occurrences(markup, /<ol\b/g)).toBe(1);
-    expect(occurrences(markup, /<li\b/g)).toBe(2);
+  it('keeps every event in a list, with activity in a nested disclosure', () => {
+    expect(occurrences(markup, /<ol\b/g)).toBe(2);
+    expect(occurrences(markup, /data-thread-kind=/g)).toBe(2);
+    expect(markup).toContain('data-slot="thread-activity"');
   });
 
   it('adds no ARIA the elements do not already carry', () => {
@@ -73,7 +74,7 @@ describe('the thread is a native ordered list the gate can read (AC-R1)', () => 
 
 /* -------------------------------------------- Test 4 — the tool row --- */
 
-describe('every tool call renders inline (Test 4, AC2)', () => {
+describe('every tool call is available inside its disclosure (Test 4, AC2)', () => {
   const markup = threadMarkup([
     {
       kind: 'tool_call',
@@ -172,7 +173,9 @@ describe('thinking rows carry the marker, and none is empty (Test 8, AC3)', () =
     // The signature is in no column the wire sends, so the marker is terminal.
     // A disclosure here would offer a reader something that does not exist.
     const markup = threadMarkup([{ kind: 'thinking', text: REASONING_NOT_RECORDED }]);
-    expect(markup).not.toContain('<details');
+    expect(markup).toContain('data-slot="thread-activity"');
+    expect(markup).not.toContain('data-slot="thread-reasoning"');
+    expect(markup).not.toMatch(/<details[^>]*\bopen(?:=|>)/);
   });
 
   it('renders recorded reasoning as prose in the ordinary colour (Test 9, AC3)', () => {
@@ -253,8 +256,17 @@ describe('the view toggle is props-in and reachable (Test 12, AC-R1)', () => {
     );
 
     expect(markup).toContain('data-slot="thread-toggle"');
-    expect(markup).toMatch(new RegExp(`aria-pressed="true"[^>]*>${pressed}<`));
-    expect(markup).toMatch(new RegExp(`aria-pressed="false"[^>]*>${other}<`));
+    const buttons = [...markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)];
+    const attributesFor = (name: string) =>
+      buttons.find(
+        (button) =>
+          button[2]
+            ?.replace(/<[^>]*>/g, '')
+            .trim()
+            .toLowerCase() === name,
+      )?.[1];
+    expect(attributesFor(pressed)).toContain('aria-pressed="true"');
+    expect(attributesFor(other)).toContain('aria-pressed="false"');
     expect(markup).toContain('aria-label="Session view"');
   });
 

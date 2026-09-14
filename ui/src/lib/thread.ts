@@ -44,7 +44,7 @@ import { eventKindOf, eventStatusOf, type EventKind, type EventStatus } from './
 export type SessionViewMode = 'tree' | 'thread';
 
 /** Both surfaces, in the order their controls render. */
-export const SESSION_VIEW_MODES: readonly SessionViewMode[] = ['tree', 'thread'];
+export const SESSION_VIEW_MODES: readonly SessionViewMode[] = ['thread', 'tree'];
 
 /**
  * What `src/transcript/blocks.ts` writes in place of reasoning the harness kept
@@ -191,4 +191,38 @@ function scalarsOf(event: EventRow): Record<string, string | number | null> {
 function proseOf(text: string | null): string | null {
   if (text === null) return null;
   return text.trim() === '' ? null : text;
+}
+
+/** Consecutive background events form a disclosure; messages remain in sequence. */
+export type ThreadSection =
+  | { kind: 'message'; id: string; row: ThreadMessageRow }
+  | { kind: 'activity'; id: string; rows: ThreadRow[] };
+
+export function groupThread(rows: readonly ThreadRow[]): ThreadSection[] {
+  const sections: ThreadSection[] = [];
+  for (const row of rows) {
+    if (row.kind === 'message') {
+      sections.push({ kind: 'message', id: row.event.id, row });
+    } else {
+      const last = sections.at(-1);
+      if (last?.kind === 'activity') last.rows.push(row);
+      else sections.push({ kind: 'activity', id: row.event.id, rows: [row] });
+    }
+  }
+  return sections;
+}
+
+export function activitySummary(rows: readonly ThreadRow[]): string {
+  const tools = rows.filter((row) => row.kind === 'tool');
+  const agents = tools.filter((row) => row.event.child_session_id !== null).length;
+  const thinking = rows.filter((row) => row.kind === 'thinking').length;
+  const records = rows.filter((row) => row.kind === 'unknown').length;
+  return [
+    tools.length > 0 ? `${tools.length} tool ${tools.length === 1 ? 'call' : 'calls'}` : '',
+    agents > 0 ? `${agents} ${agents === 1 ? 'subagent' : 'subagents'}` : '',
+    thinking > 0 ? 'reasoning' : '',
+    records > 0 ? `${records} ${records === 1 ? 'record' : 'records'}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

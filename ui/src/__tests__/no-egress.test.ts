@@ -28,6 +28,14 @@ const FONTS_DIR = fileURLToPath(new URL('../assets/fonts', import.meta.url));
  * exemption reds rather than quietly widening the net.
  */
 const KNOWN_INERT_URLS: readonly { url: string; why: string }[] = [
+  {
+    url: 'https://github.com/remarkjs/react-markdown/blob/main/changelog.md',
+    why: 'react-markdown uses this only in thrown configuration-error messages; never fetched',
+  },
+  {
+    url: 'https://github.com/syntax-tree/hast-util-to-jsx-runtime',
+    why: 'hast-util-to-jsx-runtime attaches this documentation URL to conversion errors; never fetched',
+  },
   { url: 'http://www.w3.org/1999/xhtml', why: 'XML namespace identifier; never dereferenced' },
   { url: 'http://www.w3.org/2000/svg', why: 'SVG namespace identifier; never dereferenced' },
   { url: 'http://www.w3.org/1999/xlink', why: 'XLink namespace identifier; never dereferenced' },

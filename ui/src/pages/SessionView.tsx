@@ -273,7 +273,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
    * Local state rather than a route: a route needs `route-match.ts`, which is
    * under a standing do-not-touch rule and reserves query state for Task 7.2.
    */
-  const [view, setView] = useState<SessionViewMode>('tree');
+  const [view, setView] = useState<SessionViewMode>(revealSeq === undefined ? 'thread' : 'tree');
   const thread = useMemo(() => buildThread(data?.events ?? []), [data]);
 
   /*
@@ -452,6 +452,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
   }, [rows, nav.selectedId]);
 
   const onToggle = useCallback((id: string) => {
+    dispatchFollow({ type: 'selected' });
     setNav((current) => {
       const expandedIds = new Set(current.expandedIds);
       if (!expandedIds.delete(id)) expandedIds.add(id);
@@ -470,7 +471,16 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
   return (
     <main data-slot="session-view" className="flex h-full min-h-0 flex-col">
       {data === null ? null : (
-        <SessionHeader session={data.session} now={now} view={view} onViewChange={setView} />
+        <SessionHeader
+          session={data.session}
+          parentSessionId={data.session.parent_session_id}
+          now={now}
+          view={view}
+          onViewChange={(nextView) => {
+            dispatchFollow({ type: 'selected' });
+            setView(nextView);
+          }}
+        />
       )}
       {data === null ? null : (
         <TruncationNotice
@@ -481,6 +491,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
       )}
       {data === null ? null : (
         <DriftBanner
+          sessionId={sessionId}
           hasDrift={data.session.has_drift}
           harnessVersion={data.session.harness_version}
         />
@@ -488,7 +499,12 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
 
       <div className="flex min-h-0 flex-1">
         {view === 'thread' && data !== null ? (
-          <ThreadView rows={thread} startedAt={data.session.started_at} />
+          <ThreadView
+            key={sessionId}
+            rows={thread}
+            startedAt={data.session.started_at}
+            api={client}
+          />
         ) : (
           <>
             {/*

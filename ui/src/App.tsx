@@ -78,6 +78,7 @@ export function App({ router, api }: AppProps = {}) {
         />
       ) : route.name === 'session' || route.name === 'trace' || route.name === 'event' ? (
         <SessionView
+          key={`${route.sessionId}:${route.name === 'event' ? route.seq : 'session'}`}
           sessionId={route.sessionId}
           bus={bus}
           {...(route.name === 'event' ? { revealSeq: route.seq } : {})}

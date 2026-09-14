@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info, X } from 'lucide-react';
 
+import { useNoticeDismissal } from '@/lib/use-notice-dismissal';
 import { cn } from '@/lib/utils';
 import { hrefFor } from '@/lib/route-match';
 import {
@@ -20,67 +21,14 @@ import {
   type SortDirection,
 } from '@/lib/session-list';
 
-import { MetricChip } from './MetricChip';
 import { SESSION_STATUS_VISUALS } from './session-visuals';
 
 /*
- * The session list itself (Task 5.2b, rebuilt on the v2 wire by Task 5.1) —
- * Flow 3's entry screen.
- *
- * ===========================================================================
- * ONE ANCHOR PER ROW. NO ARIA GRID ROLES.
- * ===========================================================================
- * The obvious markup for something called a session table is `role="row"` on
- * each row, and it is wrong twice over. `row` is only valid when owned by a
- * `table`/`grid`/`treegrid`/`rowgroup` AND owning `cell`-family children, and
- * putting it on an anchor OVERRIDES the anchor's implicit `link` role — so the
- * row stops being announced as a link, against the accessibility baseline's own
- * rule. `design-system.md` asks for a "full-row click target", which needs no
- * row semantics whatsoever.
- *
- * So each row is one real anchor at the href the router already knows how to
- * make. That gives every row a deep link for Task 5.5, gives `enter` something
- * honest to navigate to, and lets the header strip be real sort buttons rather
- * than fake column headers. The tests assert on `href`.
- *
- * ===========================================================================
- * THE ROW READS THE WIRE. IT ADAPTS NOTHING AND RECOMPUTES NOTHING.
- * ===========================================================================
- * Task 4.5 shipped an adapter that dressed a v2 row up as a plan-001 `Session`,
- * inventing a capture mode and a status the wire does not carry. Task 5.1
- * deleted it, so every value below is a stored column: `turn_count` is the
- * projector's human-prompt count, and the label goes through `rowLabel`, which
- * refuses a stored title that is harness markup rather than prose.
- *
- * `rollup_state === 'own'` means the sub-agent sweep has not folded the
- * sidecars in yet. Those totals then run 2–6x low, so the row shows a skeleton
- * instead of a number that is wrong — `design-system.md` Loading states, with
- * the reduced-motion fallback its Motion section requires.
- *
- * ===========================================================================
- * COST GOES THROUGH `formatCost`. ALWAYS.
- * ===========================================================================
- * `MetricChip` takes pre-spelled strings, so `String(row.est_cost)` type
- * checks and renders `0` — a session that cost nothing measurable reading as a
- * priced one, which is the mapping `design-system.md` calls out by name. The
- * row test seeds a zero-cost session into its fixture and asserts the markup
- * carries the em dash and no `$0` anywhere.
- *
- * ===========================================================================
- * TWO ABSENCES SHARE THE EM DASH, SO THE MARKUP HAS TO SEPARATE THEM.
- * ===========================================================================
- * A `null` cost means no rate was found for the row's model; a `0` means every
- * token count was zero. Task 0.8 kept one spelling on screen — `design-
- * system.md:153` allows no other — and marks the first with
- * `costUnknownLabel`, which reaches the chip as faint plus a word in `title`
- * and `aria-label`. That is a hover, though, and on the measured corpus the
- * unpriced case is the MAJORITY rather than the corner, so the strip above the
- * list states the systemic fact once, in prose nobody has to hover to read.
- * `unpricedNotice` counts only the rows below it — see its own header on why
- * the corpus-wide figure would be the wrong number here.
- *
- * Every value is spelled against an injected `now`, never an ambient clock: a
- * live session's elapsed time is the whole reason that parameter exists.
+ * Whole-row anchors retain native link semantics. Header and rows share one
+ * nine-column layout, reserving every metric even when its value is zero.
+ * Values come from normalized API columns; subagent totals remain separate
+ * and are withheld until the sidecar sweep finishes. Cost keeps the shared
+ * formatCost / costUnknownLabel distinction between zero and unpriced values.
  */
 
 export interface SessionListViewProps {
@@ -108,10 +56,11 @@ export function SessionListView({
   pageTruncated = false,
 }: SessionListViewProps) {
   const unpriced = unpricedNotice(rows, pageTruncated);
+  const { dismissed, dismiss } = useNoticeDismissal('cost-unknown');
 
   return (
-    <div data-slot="session-list">
-      {unpriced === null ? null : (
+    <div data-slot="session-list" className="overflow-hidden rounded-md border border-border">
+      {unpriced === null || dismissed ? null : (
         <div
           data-slot="unpriced-notice"
           role="status"
@@ -119,44 +68,82 @@ export function SessionListView({
         >
           <Info size={12} aria-hidden="true" className="shrink-0" />
           <span className="min-w-0">{unpriced}</span>
+          <button
+            type="button"
+            aria-label="Dismiss cost notice"
+            title="Dismiss until reload"
+            onClick={dismiss}
+            className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-raised hover:text-foreground"
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
         </div>
       )}
 
-      <div
-        data-slot="session-list-header"
-        className="flex items-center gap-2 border-b border-border px-3 py-1"
-      >
-        {SORT_COLUMNS.map((column) => (
-          <button
-            key={column}
-            type="button"
-            aria-pressed={column === sort}
-            onClick={() => {
-              onSortChange(column);
-            }}
-            className={cn(
-              'text-2xs uppercase tracking-widest transition-colors',
-              column === sort ? 'text-foreground' : 'text-faint',
-            )}
-          >
-            {COLUMN_LABELS[column]}
-            {/* One chevron, per the design system's sort-indicator rule. */}
-            {column === sort ? <SortChevron direction={direction} /> : null}
-          </button>
-        ))}
-
-        {/*
-         * The list states its own size. Pushed to the far end of the strip so
-         * it reads as a summary of the rows rather than a third sort control.
-         */}
-        <span data-slot="session-list-count" className="ml-auto text-2xs text-muted">
+      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer text-foreground">What do these numbers mean?</summary>
+          <div className="mt-2 max-w-2xl space-y-1 leading-relaxed">
+            <p>
+              Last active is the most recent event, in your local time. The day filters use this
+              date.
+            </p>
+            <p>
+              Elapsed runs from the first to the last event (or now for live sessions), including
+              idle time.
+            </p>
+            <p>
+              Turns counts your prompts. Errors, tokens, and estimated cost cover the main session.
+              Tokens are input + output; cache counts are separate and not shown here.
+            </p>
+            <p>
+              Subagents shows the number of agents and their additional input + output tokens. These
+              tokens are separate from the main session totals. A dash means no measured cost or an
+              unavailable estimate; unavailable estimates include an explanation.
+            </p>
+          </div>
+        </details>
+        <span data-slot="session-list-count" className="shrink-0 text-2xs text-muted">
           {formatRowCount(rows.length, pageTruncated)}
         </span>
       </div>
 
-      {rows.map((row, index) => (
-        <SessionRow key={row.id} row={row} now={now} isCursor={index === cursor} />
-      ))}
+      <p className="px-4 py-2 text-2xs text-muted lg:hidden">Scroll sideways to see all metrics.</p>
+      <div className="overflow-x-auto" role="region" aria-label="Session list columns" tabIndex={0}>
+        <div
+          data-slot="session-list-header"
+          className="session-list-grid border-b border-border bg-surface px-4 py-3 text-2xs text-muted"
+        >
+          {SORT_COLUMNS.map((column) => (
+            <button
+              key={column}
+              type="button"
+              aria-pressed={column === sort}
+              title={`Sort by ${COLUMN_LABELS[column].toLowerCase()}`}
+              onClick={() => {
+                onSortChange(column);
+              }}
+              className={cn(
+                'text-left transition-colors',
+                column === sort ? 'text-foreground' : 'text-muted',
+              )}
+            >
+              {column === 'project_path' ? 'Session / Project' : COLUMN_LABELS[column]}
+              {column === sort ? <SortChevron direction={direction} /> : null}
+            </button>
+          ))}
+          <span>Status</span>
+          <span className="text-right">Turns</span>
+          <span className="text-right">Subagents</span>
+          <span className="text-right">Errors</span>
+          <span className="text-right">Elapsed</span>
+          <span className="text-right">Tokens</span>
+          <span className="text-right">Est. cost</span>
+        </div>
+        {rows.map((row, index) => (
+          <SessionRow key={row.id} row={row} now={now} isCursor={index === cursor} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -179,6 +166,8 @@ function SessionRow({
   const label = rowLabel(row);
   const active = formatStartedAt(row.last_activity_at, now);
   const pending = row.rollup_state === 'own';
+  const unknownCost = costUnknownLabel(row.est_cost, row.model);
+  const hasErrors = row.error_count > 0;
 
   return (
     <a
@@ -189,55 +178,89 @@ function SessionRow({
         `active ${active}${pending ? ', sub-agent totals still being summed' : ''}`
       }
       className={cn(
-        'flex h-9 items-center gap-3 border-b border-border px-3 text-xs text-foreground',
+        'session-list-grid min-h-20 border-b border-border px-4 py-4 text-xs text-foreground transition-colors hover:bg-surface last:border-b-0',
         isCursor && 'bg-surface-raised',
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="w-40 shrink-0 truncate text-muted">{row.project_path}</span>
-      <span className="w-24 shrink-0 text-muted">{active}</span>
+      <span data-column="session" className="min-w-0">
+        <span className="block truncate text-sm font-medium">{label}</span>
+        <span
+          className="mt-1.5 block truncate font-mono text-2xs text-muted"
+          title={row.project_path}
+        >
+          {row.project_path}
+        </span>
+      </span>
+      <time
+        data-column="active"
+        dateTime={row.last_activity_at}
+        title={new Date(row.last_activity_at).toLocaleString()}
+        className="text-muted"
+      >
+        {active}
+      </time>
 
-      <span className={cn('flex w-20 shrink-0 items-center gap-1', status.badge)}>
+      <span data-column="status" className={cn('flex items-center gap-1', status.badge)}>
         <span aria-hidden="true" className={cn('size-1.5 rounded-md', status.dot)} />
         {status.label}
       </span>
 
-      {/* Right-aligned mono numerics, per the design system's table rules. */}
       <span
+        data-column="turns"
         data-slot="session-turns"
-        className="w-16 shrink-0 text-right font-mono text-2xs text-muted"
+        className="text-right font-mono text-2xs text-muted"
       >
-        {formatTokens(row.turn_count)} turns
+        {formatTokens(row.turn_count)}
       </span>
-
-      {row.agent_count === 0 ? null : pending ? (
-        <span
-          data-slot="session-subs-pending"
-          aria-hidden="true"
-          className="h-3 w-16 shrink-0 animate-pulse rounded-md bg-surface-raised motion-reduce:animate-none"
-        />
-      ) : (
-        <span
-          data-slot="session-subs"
-          className="w-16 shrink-0 text-right font-mono text-2xs text-muted"
-        >
-          +{formatTokens(row.sub_tokens_in + row.sub_tokens_out)}
-        </span>
-      )}
-
-      {row.error_count > 0 ? (
-        <span data-slot="session-errors" className="font-mono text-2xs text-error">
-          {row.error_count} err
-        </span>
-      ) : null}
-
-      <MetricChip
-        className="shrink-0"
-        duration={formatDuration(row.started_at, row.live ? undefined : row.last_activity_at, now)}
-        tokens={`${formatTokens(row.tokens_in + row.tokens_out)} tok`}
-        cost={formatCost(row.est_cost)}
-        costUnknown={costUnknownLabel(row.est_cost, row.model)}
-      />
+      <span data-column="subagents" className="text-right text-2xs text-muted">
+        <span className="font-mono">{formatTokens(row.agent_count)}</span>
+        {row.agent_count === 0 ? null : pending ? (
+          <span
+            data-slot="session-subs-pending"
+            className="mt-1 block animate-pulse rounded-md bg-surface-raised motion-reduce:animate-none"
+          >
+            Counting tokens…
+          </span>
+        ) : (
+          <span data-slot="session-subs" className="mt-1 block font-mono">
+            {formatTokens(row.sub_tokens_in + row.sub_tokens_out)} tok
+          </span>
+        )}
+      </span>
+      <span
+        data-column="errors"
+        data-slot="session-errors"
+        aria-label={`${row.error_count} errors`}
+        className={cn('text-right font-mono text-2xs', hasErrors ? 'text-error' : 'text-muted')}
+      >
+        {formatTokens(row.error_count)}
+      </span>
+      <span
+        data-column="elapsed"
+        data-slot="metric-duration"
+        className="text-right font-mono text-2xs text-muted"
+      >
+        {formatDuration(row.started_at, row.live ? undefined : row.last_activity_at, now)}
+      </span>
+      <span
+        data-column="tokens"
+        data-slot="metric-tokens"
+        className="text-right font-mono text-2xs text-muted"
+      >
+        {formatTokens(row.tokens_in + row.tokens_out)}
+      </span>
+      <span
+        data-slot="metric-cost"
+        title={unknownCost}
+        aria-label={unknownCost}
+        data-column="cost"
+        className={cn(
+          'text-right font-mono text-2xs',
+          unknownCost === undefined ? 'text-muted' : 'text-faint',
+        )}
+      >
+        {formatCost(row.est_cost)}
+      </span>
     </a>
   );
 }

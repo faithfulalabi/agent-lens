@@ -1,3 +1,4 @@
+import { Aperture, Search } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -32,17 +33,36 @@ export function AppShell({ banner, children, className }: AppShellProps) {
   return (
     <div
       data-slot="app-shell"
-      className={cn('flex min-h-screen flex-col bg-background', className)}
+      className={cn('flex h-dvh min-h-0 flex-col overflow-hidden bg-background', className)}
     >
       {banner ? (
         <div data-slot="banner" className="w-full">
           {banner}
         </div>
       ) : null}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <span className="text-sm font-semibold text-foreground">agent-lens</span>
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-5">
+        <a
+          href="/"
+          className="flex shrink-0 items-center gap-2.5 whitespace-nowrap text-sm font-semibold text-foreground"
+        >
+          <Aperture size={20} className="text-accent" aria-hidden="true" />
+          agent-lens
+        </a>
+        <span className="hidden border-l border-border pl-3 text-xs text-muted sm:block">
+          Session explorer
+        </span>
+        <a
+          href="/search"
+          className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-muted hover:bg-surface hover:text-foreground"
+        >
+          <Search size={14} aria-hidden="true" /> Search sessions
+        </a>
+        <span className="hidden items-center gap-1.5 text-2xs text-muted sm:flex">
+          <span className="size-1.5 rounded-md bg-success" />
+          Local
+        </span>
       </header>
-      <div data-slot="content" className="flex-1">
+      <div data-slot="content" className="min-h-0 flex-1 overflow-auto">
         {children}
       </div>
     </div>

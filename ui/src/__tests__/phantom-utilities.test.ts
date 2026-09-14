@@ -34,10 +34,6 @@ const CANARY_UTILITY = 'underline';
  */
 export const KNOWN_UNREFERENCED_UTILITIES: readonly { utility: string; why: string }[] = [
   {
-    utility: 'block',
-    why: 'a loop variable at `src/lib/sse.ts:136`, not prose — renaming it for CSS would be worse.',
-  },
-  {
     utility: 'invisible',
     why: 'plain English in component headers (`session/MetricChip.tsx:27` and two others).',
   },
