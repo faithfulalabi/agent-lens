@@ -24,6 +24,7 @@ interface Manifest {
   bin: Record<string, string>;
   scripts: Record<string, string>;
   devDependencies: Record<string, string>;
+  license: string;
 }
 
 const MANIFEST = JSON.parse(read('package.json')) as Manifest;
@@ -186,6 +187,23 @@ describe('one Playwright driver, two entry points (AC3)', () => {
       version: string;
     };
     expect(onDisk.version).toBe(installs[0]![1].version);
+  });
+});
+
+describe('the MIT license is on record and consistent (task 1.1)', () => {
+  it('ships the standard MIT text at the repo root', () => {
+    const license = read('LICENSE');
+    expect(license).toContain('MIT License');
+    expect(license).toContain('Permission is hereby granted, free of charge');
+    expect(license).toContain('THE SOFTWARE IS PROVIDED "AS IS"');
+  });
+
+  it('names the founder as copyright holder, year 2026', () => {
+    expect(read('LICENSE')).toContain('Copyright (c) 2026 Faithful Alabi');
+  });
+
+  it('keeps the declared license field in agreement with the text', () => {
+    expect(MANIFEST.license).toBe('MIT');
   });
 });
 
