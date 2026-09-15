@@ -210,6 +210,36 @@ const WRITE_SITES: readonly ManifestEntry[] = [
     why: "removes <dataDir>/cache.db and its -wal/-shm siblings for a whole-cache `agent-lens rebuild`. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm'], db/open.ts#1's idiom verbatim. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and never a transcript root. The removal runs only while THIS process holds <dataDir>/cache.db.lock: a lock already `held` returns 1 above this line, because unlinking under another process's live handle forks the database silently — its writes keep succeeding and are lost on close. `force: true` is load-bearing: a cleanly closed cache has no -wal/-shm to remove. Nothing durable is at risk here at all — cache.db is a projection of the archive, which this command never touches",
   },
   {
+    key: 'cli/commands/schedule.ts#1',
+    callee: 'mkdirSync',
+    why: 'ensureDirOutsideCorpus: creates the parent directory of a schedule artifact — <dataDir>/schedule for the generated wrapper, <dataDir>/logs for the launchd out/err logs, or ~/Library/LaunchAgents for the plist. The LaunchAgents target is OUTSIDE the data dir by design — launchd only reads per-user agents from there — and is a fixed name derived from the injected home dir, never from the corpus. Not a transcript root, and assertNotUnderRoot(dir, resolveTranscriptRoot(), …) runs before this mkdir so even `--dataDir ~/.claude/projects` cannot land a schedule directory inside the corpus. Lexical scope, like render-gate/index.ts#1: recursive mkdir traverses existing symlinked components; the assert-then-mkdir window is the same PERMANENT dirfd limit the archive rows record',
+  },
+  {
+    key: 'cli/commands/schedule.ts#2',
+    callee: 'writeFileSync',
+    why: 'writes the temp half of the atomic wrapper/plist write. Two fixed targets, one call site: <dataDir>/schedule/archive.sh.tmp.<pid> and ~/Library/LaunchAgents/com.agent-lens.archive.plist.tmp.<pid>. The plist target is outside the data dir — honest scope, not rounded up — but never a transcript root, and the assertNotUnderRoot guard from #1 runs on the final path before the temp is written',
+  },
+  {
+    key: 'cli/commands/schedule.ts#3',
+    callee: 'chmodSync',
+    why: 'forces the final mode on the temp file from #2 (0700 wrapper, 0644 plist — launchd reads the plist) since umask can mask the create-mode. Path-based, unlike the fd-based archive rows: the temp name is ours alone for the life of the write, created by #2 in the same call, so there is no fd to reuse and nothing racing to swap the leaf that #4 would not also lose to',
+  },
+  {
+    key: 'cli/commands/schedule.ts#4',
+    callee: 'renameSync',
+    why: 'atomically moves the temp file from #2 onto <dataDir>/schedule/archive.sh or ~/Library/LaunchAgents/com.agent-lens.archive.plist. rename(2) acts on the link itself, never a symlink target. Neither destination is a transcript root, and both were asserted not-under-the-corpus before the temp was written',
+  },
+  {
+    key: 'cli/commands/schedule.ts#5',
+    callee: 'unlinkSync',
+    why: "removeIfPresent: unlinks exactly four fixed names, all preceded by assertNotUnderRoot against the corpus — the two artifacts the turn-on created (<dataDir>/schedule/archive.sh and ~/Library/LaunchAgents/com.agent-lens.archive.plist, removed on turn-off) and the founder's two legacy hand-authored ones (~/Library/LaunchAgents/com.faithful.agent-lens.archive.plist and ~/.agent-lens/archive-cron.sh, removed once by the turn-on migration so two jobs never race). unlink removes the link itself, never a symlink target. cron.log and the archive are deliberately not on this list",
+  },
+  {
+    key: 'cli/commands/schedule.ts#6',
+    callee: 'rmdirSync',
+    why: 'removes <dataDir>/schedule itself on turn-off, inside a try/catch: rmdir(2) only ever deletes an EMPTY directory, so anything a user parked in there survives and the call degrades to a no-op. Fixed name under the data dir, never a transcript root',
+  },
+  {
     key: 'db/open.ts#1',
     callee: 'rmSync',
     why: "removes <dataDir>/cache.db and its -wal/-shm siblings when user_version does not match SCHEMA_VERSION. One call site, not three: the suffixes are a loop over ['', '-wal', '-shm']. The path is join(dataDir, 'cache.db') plus a fixed suffix, never a corpus name, and the removal runs only while THIS process holds the cache lock — unlinking under a live handle forks the database silently, which is why the lock is taken before the open. `force: true` is load-bearing: a first run on an empty data dir reads user_version 0, takes this branch, and finds no -wal/-shm to remove",

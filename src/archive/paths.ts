@@ -98,6 +98,21 @@ export function resolveCronLogPath(dataDir?: string): string {
   return join(resolveDataDir(dataDir), LOGS_DIR, 'cron.log');
 }
 
+/** Where launchd reads per-user agents from. Outside the data dir by design. */
+export function resolveLaunchAgentsDir(homeDir: string = homedir()): string {
+  return join(homeDir, 'Library', 'LaunchAgents');
+}
+
+/** The plist for `label`, under the per-user LaunchAgents dir. */
+export function resolvePlistPath(label: string, homeDir: string = homedir()): string {
+  return join(resolveLaunchAgentsDir(homeDir), `${label}.plist`);
+}
+
+/** The wrapper `agent-lens schedule` generates; rewritten in full on every turn-on. */
+export function resolveScheduleWrapperPath(dataDir?: string): string {
+  return join(resolveDataDir(dataDir), 'schedule', 'archive.sh');
+}
+
 /** Pure lexical comparison over two ALREADY-resolved paths. */
 function isUnder(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);

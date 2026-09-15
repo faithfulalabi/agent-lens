@@ -51,30 +51,24 @@ only by the archive.
 
 ## Keeping the archive current
 
-Run `agent-lens archive` on a schedule, using whatever your OS already provides — a launchd agent
-on macOS, a systemd timer or cron elsewhere. It is safe to run often: an advisory lock means a
-second concurrent pass copies nothing and exits 0, an unchanged corpus copies zero bytes, and a
-pass with nothing to report writes no log line.
+```bash
+agent-lens schedule install
+```
+
+On macOS that sets up a launchd job that runs `agent-lens archive` every 15 minutes and logs each
+pass where `agent-lens doctor` reads it. Run it again any time — it replaces its own job rather
+than duplicating it. `agent-lens schedule status` reports the job and its last successful pass;
+`agent-lens schedule disable` turns it off cleanly, leaving the archive and its logs untouched. On
+other platforms, run `agent-lens archive` every ~15 minutes yourself via a systemd timer or cron.
 
 One caveat worth knowing before you rely on an interval: a wall-clock schedule does not fire while
 the machine is asleep. Treat the interval as a bound on _wake_ time, not on elapsed time.
 
-| Flag                     | Meaning                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| `--json`                 | emit the full pass report (the stable contract for `doctor`) |
-| `--dataDir <dir>`        | override `~/.agent-lens`                                     |
-| `--transcriptRoot <dir>` | override `~/.claude/projects`                                |
-| `--verify`               | full-file integrity audit — **not for the scheduled pass**   |
-
-Each pass compares a 4 KB head and a 4 KB seam per file, roughly 1% of the corpus by bytes: enough
-to catch a rewritten file at the point an append would splice onto it, and deliberately not a full
-integrity check. `--verify` re-reads every archived file and its source in full. It is the real
-audit and it costs a read of the entire corpus, so run it by hand or on a weekly schedule, never on
-the frequent one.
-
-When a source has been rewritten — it shrank, or its head or seam changed — the archived bytes are
-**kept** and the file is marked `diverged` rather than overwritten, and the event is recorded in
-`~/.agent-lens/logs/archive.jsonl`.
+The pass is safe to run often: an advisory lock means a second concurrent pass copies nothing and
+exits 0, and an unchanged corpus copies zero bytes. When a source has been rewritten, the archived
+bytes are **kept** and the file is marked `diverged` rather than overwritten. `agent-lens archive
+--verify` is the full-file integrity audit — **not for the scheduled pass**; run it by hand or on a
+weekly schedule.
 
 ## `agent-lens doctor` — what is protected, and what is not
 
