@@ -31,6 +31,9 @@ test('a cold install renders the session list, a session and an event', async ({
 
   // 2 — session detail. A bare `<a href>`, so this is a real navigation.
   await page.locator(slot(SELECTORS.sessionRow)).first().click();
+  // PR #87 made sessions open conversation-first (Thread view); trace-group rows
+  // live only in the tree, so switch to it — as render-gate's openFirstSession does.
+  await page.getByRole('button', { name: 'Tree', exact: true }).click();
   await page.waitForSelector(slot(SELECTORS.traceRow));
 
   // 3 — turn 1 expanded, because its children land at index 1 and are inside the

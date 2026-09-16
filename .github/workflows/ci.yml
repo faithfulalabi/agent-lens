@@ -1,0 +1,65 @@
+# The merge gate. Runs the exact npm scripts CONTRIBUTING.md names, plus
+# build + smoke:pack, on the engines floor (Node 24, package.json).
+#
+# smoke:ui has no standalone step on purpose: it cannot run outside
+# `smoke:pack` (cold-run.spec.ts requires SMOKE_BASE_URL, which only
+# scripts/pack-smoke.mjs sets when it boots the jail), and its full
+# Playwright/Chrome drive already runs inside `smoke:pack`. Cost of that
+# coverage: zero browser download — playwright.config.ts uses
+# `channel: 'chrome'`, and ubuntu-latest ships google-chrome-stable.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancels a superseded run on the same ref; never retries a failed one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Branch protection pins this exact check context.
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+
+      # Root `prepare` runs `npm --prefix ui install` against ui's lockfile,
+      # so one `npm ci` installs both trees — no separate ui install step.
+      - run: npm ci
+
+      # internal_docs/ is deliberately untracked, but the ui spec-parity tests
+      # hard-fail (never skip) without these three files. The founder-owned
+      # AGENT_LENS_SPEC_TAR secret is a base64 tar of exactly those files,
+      # refreshed by hand when the specs change.
+      # ponytail: ceiling — secrets are absent on fork PRs, so this step (and
+      # the run) will fail there. Matters only once the repo goes public.
+      - name: Provision spec files from secret
+        env:
+          AGENT_LENS_SPEC_TAR: ${{ secrets.AGENT_LENS_SPEC_TAR }}
+        run: |
+          if [ -z "$AGENT_LENS_SPEC_TAR" ]; then
+            echo "::error::AGENT_LENS_SPEC_TAR secret is missing or empty. The ui spec-parity tests fail loudly without internal_docs/agent-lens/spec — refresh the secret (see task-2.1-ci-workflow.md)."
+            exit 1
+          fi
+          echo "$AGENT_LENS_SPEC_TAR" | base64 -d | tar xz
+          test -f internal_docs/agent-lens/spec/design-system.md
+          test -f internal_docs/agent-lens/spec/user-flows/01-first-run-install.md
+          test -f internal_docs/agent-lens/spec/user-flows/03-inspect-session.md
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke:pack
