@@ -246,6 +246,12 @@ describe('startDevServer — wiring pinned at the seam', () => {
     expect(DEV_SERVER_SOURCE).toContain('options.projects ?? [slugFor(process.cwd())]');
   });
 
+  // Vite's default 'localhost' resolves to ::1 first on some platforms while
+  // every dial in this suite is 127.0.0.1; the bind must name the family.
+  it('pins the Vite bind to IPv4 loopback', () => {
+    expect(DEV_SERVER_SOURCE).toContain("host: '127.0.0.1'");
+  });
+
   // Vite's own SIGTERM handler `process.exit()`s mid-`handle.close()`, leaving
   // `config.json` and the WAL behind. Signals cannot be driven from this worker.
   it('takes SIGTERM back from Vite before registering its own shutdown', () => {

@@ -44,11 +44,13 @@ export interface ArchiveReader {
 /**
  * The uncompressed length the frame header declares.
  *
- * This is the whole read-side truncation defence, and it has to be, because
- * `zstdDecompressSync` returns a SHORT buffer on a truncated frame without
- * throwing — at any size, with or without the checksum flag. 100 bytes off a
- * 6.15 MB frame yields 6,029,312 bytes silently; 5 bytes off a 5 KB frame
- * yields 0, so a naive "did we get anything back" check would miss it too.
+ * Half the read-side truncation defence: on Node 26 `zstdDecompressSync`
+ * returns a SHORT buffer on a truncated frame without throwing — at any size,
+ * with or without the checksum flag. 100 bytes off a 6.15 MB frame yields
+ * 6,029,312 bytes silently; 5 bytes off a 5 KB frame yields 0, so a naive
+ * "did we get anything back" check would miss it too. Node 24 throws
+ * `Z_BUF_ERROR` instead; `decompressSealedFrame` folds both behaviours into
+ * one loud throw.
  */
 export function declaredContentSize(frame: Buffer, label: string): number {
   if (frame.length < 5 || frame.readUInt32LE(0) !== ZSTD_MAGIC) {
@@ -80,6 +82,34 @@ export function declaredContentSize(frame: Buffer, label: string): number {
     default:
       return Number(frame.readBigUInt64LE(offset));
   }
+}
+
+/**
+ * Decompress a sealed frame under the ruled truncation contract: a truncated
+ * frame throws the same message on every supported Node version. Node 26
+ * decompresses a truncated frame to a short buffer; Node 24 throws
+ * `Z_BUF_ERROR` and recovers nothing, so its count is 0. Every other codec
+ * code (bad magic, checksum, over-bound) is rethrown unchanged.
+ */
+export function decompressSealedFrame(
+  frame: Buffer,
+  declared: number,
+  label: string,
+  maxBytes: number,
+): Buffer {
+  let out: Buffer;
+  try {
+    out = zstdDecompressSync(frame, { maxOutputLength: maxBytes });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'Z_BUF_ERROR') throw error;
+    throw new Error(`truncated sealed archive ${label}: declares ${declared} bytes but 0 decompressed`);
+  }
+  if (out.length !== declared) {
+    throw new Error(
+      `truncated sealed archive ${label}: declares ${declared} bytes but ${out.length} decompressed`,
+    );
+  }
+  return out;
 }
 
 export function createArchiveReader(
@@ -140,12 +170,7 @@ export function createArchiveReader(
         `sealed archive ${label} declares ${declared} bytes, over the ${maxBytes}-byte bound`,
       );
     }
-    const buf = zstdDecompressSync(frame, { maxOutputLength: maxBytes });
-    if (buf.length !== declared) {
-      throw new Error(
-        `truncated sealed archive ${label}: the frame declares ${declared} bytes but ${buf.length} decompressed`,
-      );
-    }
+    const buf = decompressSealedFrame(frame, declared, label, maxBytes);
 
     // Only a verified buffer enters the cache, so a second read of a truncated
     // frame throws again instead of being served the short buffer.
