@@ -7,14 +7,14 @@ describe('scaffold smoke', () => {
     expect(typeof estimateCost).toBe('function');
   });
 
-  it('registers the six CLI commands', () => {
+  it('registers the seven CLI commands', () => {
     // Seven until task 4.5, then three. `hook`, `install`, `uninstall` and
     // `import` were the hook path and its stubs; RFC 002 closes that path, so
     // they are gone rather than stubbed. `rebuild`, `warm` and `prune` are the
-    // ship-phase three, and ORDER IS ASSERTED: `printHelp` lists them in this
-    // order, so the destructive one stays last.
+    // ship-phase three, `schedule` is plan 003's, and ORDER IS ASSERTED:
+    // `printHelp` lists them in this order, so the destructive one stays last.
     const names = COMMANDS.map((c) => c.name);
-    expect(names).toEqual(['start', 'doctor', 'archive', 'rebuild', 'warm', 'prune']);
+    expect(names).toEqual(['start', 'doctor', 'archive', 'rebuild', 'warm', 'schedule', 'prune']);
   });
 
   it('registers every command as a lazily-loaded runner', () => {

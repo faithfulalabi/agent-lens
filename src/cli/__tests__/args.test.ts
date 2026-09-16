@@ -61,7 +61,7 @@ function seeded(): Sandbox {
   return s;
 }
 
-const COMMAND_NAMES = ['start', 'doctor', 'archive', 'rebuild', 'warm', 'prune'];
+const COMMAND_NAMES = ['start', 'doctor', 'archive', 'rebuild', 'warm', 'schedule', 'prune'];
 
 // `--help` is a column here by founder ruling (OQ3, arm A): it is refused like
 // any other unknown flag, and no per-command help renderer ships in 0.6.
@@ -168,6 +168,9 @@ describe('4 — the positive control: every valid flag still parses (AC4)', () =
     ['rebuild', ['abc', '--dataDir=/x']],
     ['warm', ['--dataDir', VALUE, '--transcriptRoot', VALUE]],
     ['warm', ['--dataDir=/x', '--transcriptRoot=/y']],
+    ['schedule', ['install']],
+    ['schedule', ['status', '--dataDir', VALUE]],
+    ['schedule', ['disable', '--dataDir=/x']],
     ['prune', ['--dataDir', VALUE, '--transcriptRoot', VALUE, '--settingsPath', VALUE]],
     ['prune', ['--dataDir=/x', 'abc', '--transcriptRoot=/y']],
     ['prune', []],

@@ -69,6 +69,16 @@ export const COMMANDS: Command[] = [
     run: (args) => import('./commands/warm.js').then((m) => m.warm(args)),
   },
   {
+    // Before `prune` on purpose: `printHelp` lists in this order and the
+    // destructive command stays last. The summary wording is pinned by
+    // `smoke.test.ts` — see the help-output ban there before rewording it.
+    name: 'schedule',
+    summary: 'Manage the recurring archive job (turn on, report, turn off)',
+    flags: { '--dataDir': 'value' },
+    positional: 'anywhere',
+    run: (args) => import('./commands/schedule.js').then((m) => m.schedule(args)),
+  },
+  {
     name: 'prune',
     summary: 'Permanently delete archived transcripts — asks first, no undo',
     flags: { '--dataDir': 'value', '--transcriptRoot': 'value', '--settingsPath': 'value' },
