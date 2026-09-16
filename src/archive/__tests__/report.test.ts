@@ -427,11 +427,10 @@ describe('AC1/AC2 — a sealed file is checked against the hash the seal recorde
     expect(integrity.bytesRead).toBe(0);
   });
 
-  it('a truncation whose sealed_size was rewritten reaches sealed-frame, and the counter moved', () => {
-    // Deliberately NOT the fixture above. On a small seal the truncated frame
-    // decompresses to nothing at all, so `bytesRead` is 0 whether the counter is
-    // placed before the comparisons or after them, and the placement would ship
-    // untested. Past ~1 MB the two orders give different answers.
+  it('a truncation whose sealed_size was rewritten reaches sealed-frame, counting 0', () => {
+    // Deliberately NOT the fixture above: past ~1 MB Node 26's codec produces a
+    // partial buffer on truncation, which is exactly the case the ruled
+    // contract must NOT leak through as a moved counter.
     const sealedPath = sealForReal(SESSION, jsonLines(40_000));
     truncateSync(sealedPath, statSync(sealedPath).size - 100);
     patchSidecar(sb(), SESSION, { sealed_size: statSync(sealedPath).size });
@@ -441,9 +440,11 @@ describe('AC1/AC2 — a sealed file is checked against the hash the seal recorde
     expect(integrity.diverged.map((f) => [f.relPath, f.reason])).toEqual([
       [SESSION, 'sealed-frame'],
     ]);
-    // Every byte the decompressor produced is counted whatever the verdict.
-    // Counting only on the verified branch reports 0 here.
-    expect(integrity.bytesRead).toBeGreaterThan(0);
+    // Re-ruled (task 2.2, founder-sanctioned): a truncated frame yields no
+    // usable bytes on the floor Node version (24 throws Z_BUF_ERROR and
+    // recovers nothing), so truncation counts 0 on every supported version
+    // alike. Partial-byte counting survives only for full-decompress verdicts.
+    expect(integrity.bytesRead).toBe(0);
   });
 
   it('a byte flip the codec refuses outright is a divergence, not a crash', () => {

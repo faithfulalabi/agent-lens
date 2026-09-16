@@ -18,7 +18,6 @@ import { createHash } from 'node:crypto';
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { zstdDecompressSync } from 'node:zlib';
 import { discover } from './discover.js';
 import { detectDivergence, type DivergenceReason } from './mirror.js';
 import {
@@ -29,7 +28,7 @@ import {
   resolveTranscriptRoot,
   statSafe,
 } from './paths.js';
-import { DEFAULT_MAX_BYTES, declaredContentSize } from './read.js';
+import { DEFAULT_MAX_BYTES, declaredContentSize, decompressSealedFrame } from './read.js';
 import { readSidecar, sidecarPath } from './sidecar.js';
 
 const CHUNK_BYTES = 1024 * 1024;
@@ -249,8 +248,9 @@ type SealedVerdict =
 /**
  * The decompressed frame, or a refusal — returned rather than thrown, because
  * `maxOutputLength` alone raises an errno-less `RangeError` that the classifier
- * below would have to pattern-match back out of a message. `loadSealed` in
- * `read.ts` keeps its throw; this is a second, separate reader.
+ * below would have to pattern-match back out of a message. This is a second,
+ * separate reader from `loadSealed` in `read.ts`, but both decompress through
+ * `decompressSealedFrame`, so `loaded` guarantees `buf.length === declared`.
  */
 type SealedFrame =
   { state: 'loaded'; buf: Buffer; declared: number } | { state: 'over-bound'; declared: number };
@@ -271,7 +271,7 @@ function loadSealedFrame(diskPath: string): SealedFrame {
   // non-frame fails with our message rather than the codec's.
   const declared = declaredContentSize(frame, diskPath);
   if (declared > DEFAULT_MAX_BYTES) return { state: 'over-bound', declared };
-  const buf = zstdDecompressSync(frame, { maxOutputLength: DEFAULT_MAX_BYTES });
+  const buf = decompressSealedFrame(frame, declared, diskPath, DEFAULT_MAX_BYTES);
   return { state: 'loaded', buf, declared };
 }
 
@@ -307,10 +307,12 @@ function classifySealedThrow(error: unknown): SealedVerdict {
  * path; only the re-hash waits for `--verify`.
  *
  * `bytesRead` is returned on every branch below the decompressor, not only on
- * the verified one. A sealed file that decompresses megabytes and then diverges
- * really did read those bytes, and a counter that only moved on success would
- * make the cost boundary green because it is dead rather than because the path
- * is cheap.
+ * the verified one. A sealed file that decompresses fully and then diverges on
+ * its hash really did read those bytes, and a counter that only moved on
+ * success would make the cost boundary green because it is dead rather than
+ * because the path is cheap. A TRUNCATED frame counts 0: on the floor Node
+ * version (24) the codec recovers nothing, so `decompressSealedFrame` throws
+ * before any usable bytes exist, on every supported version alike.
  */
 function checkSealed(params: {
   diskPath: string;
@@ -375,11 +377,6 @@ function checkSealed(params: {
 
   const bytesRead = frame.buf.length;
 
-  // The frame's own header, which a truncated frame contradicts without ever
-  // throwing — see `declaredContentSize`.
-  if (frame.buf.length !== frame.declared) {
-    return { verdict: { state: 'diverged', reason: 'sealed-frame' }, bytesRead };
-  }
   // The only limb that catches a whole-frame substitution: a validly compressed,
   // correctly checksummed frame of the same length holding different content
   // passes every structural check above and fails only here.

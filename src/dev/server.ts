@@ -113,6 +113,9 @@ export async function startDevServer(
       configFile: join(uiDir, 'vite.config.ts'),
       plugins: [devBootstrapPlugin(token)],
       server: {
+        // Explicit IPv4 loopback: Vite's default 'localhost' resolves to ::1
+        // first on some platforms, while every dial in this path is 127.0.0.1.
+        host: '127.0.0.1',
         proxy: {
           '/api': {
             target: `http://127.0.0.1:${handle.port}`,

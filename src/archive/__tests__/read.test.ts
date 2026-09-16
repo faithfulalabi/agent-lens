@@ -5,7 +5,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, truncateSync } from 'node:fs';
 import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
-import { createArchiveReader, declaredContentSize } from '../read.js';
+import {
+  createArchiveReader,
+  declaredContentSize,
+  decompressSealedFrame,
+  DEFAULT_MAX_BYTES,
+} from '../read.js';
 import { sealArchiveFile } from '../seal.js';
 import { canonicalizeTranscriptPath } from '../paths.js';
 import {
@@ -276,9 +281,19 @@ describe('AC3/AC4 — a truncated .zst is caught by the frame header (Test 10)',
     const frameSize = readBytes(`${logical}.zst`).length;
     truncateSync(`${logical}.zst`, frameSize - 5);
 
-    // The raw decompress returns ZERO bytes here, silently, so a naive
-    // `length > 0` guard would have waved this straight through.
-    expect(zstdDecompressSync(readBytes(`${logical}.zst`)).length).toBe(0);
+    // Re-ruled (task 2.2, founder-sanctioned): the raw codec is
+    // version-dependent here. Node 26 returns ZERO bytes silently — so a naive
+    // `length > 0` guard would have waved this straight through — while Node 24
+    // throws Z_BUF_ERROR, recovering nothing. Either way no usable bytes exist.
+    let raw: Buffer | undefined;
+    let rawCode: string | undefined;
+    try {
+      raw = zstdDecompressSync(readBytes(`${logical}.zst`));
+    } catch (error) {
+      rawCode = (error as NodeJS.ErrnoException).code;
+    }
+    if (raw !== undefined) expect(raw.length).toBe(0);
+    else expect(rawCode).toBe('Z_BUF_ERROR');
 
     const reader = createArchiveReader();
     expect(() => reader.read(logical, 0, 10)).toThrow(
@@ -286,18 +301,37 @@ describe('AC3/AC4 — a truncated .zst is caught by the frame header (Test 10)',
     );
   });
 
-  it('control — the codec itself returns SHORT without throwing, checksum flag or not', () => {
-    // The design turns entirely on this: if `zstdDecompressSync` ever started
-    // throwing here, the content-size check would be belt-and-braces instead of
-    // the only read-side defence, and this control is what would tell us.
+  it('control — the codec goes short-or-throws on truncation; the shared helper is loud either way', () => {
+    // Re-ruled (task 2.2, founder-sanctioned): the codec's truncation behaviour
+    // is version-dependent — Node 26 returns SHORT without throwing (checksum
+    // flag or not), Node 24 throws Z_BUF_ERROR with nothing recovered. The
+    // ruled contract lives in `decompressSealedFrame`, which folds both into
+    // one canonical throw; this control tells us if either codec side shifts.
     const body = Buffer.from(transcriptLines(20000));
     for (const checksum of [false, true]) {
       const frame = zstdCompressSync(body, {
         params: checksum ? { ...PARAMS, [zlibConstants.ZSTD_c_checksumFlag]: 1 } : PARAMS,
       });
-      const out = zstdDecompressSync(frame.subarray(0, frame.length - 100));
-      expect(out.length, `checksum=${checksum}`).toBeLessThan(body.length);
-      expect(out.length, `checksum=${checksum}`).toBeGreaterThan(0);
+      const truncated = frame.subarray(0, frame.length - 100);
+
+      let out: Buffer | undefined;
+      let code: string | undefined;
+      try {
+        out = zstdDecompressSync(truncated);
+      } catch (error) {
+        code = (error as NodeJS.ErrnoException).code;
+      }
+      if (out !== undefined) {
+        expect(out.length, `checksum=${checksum}`).toBeLessThan(body.length);
+        expect(out.length, `checksum=${checksum}`).toBeGreaterThan(0);
+      } else {
+        expect(code, `checksum=${checksum}`).toBe('Z_BUF_ERROR');
+      }
+
+      // Whichever side this runtime took, the shared helper throws canonically.
+      expect(() =>
+        decompressSealedFrame(truncated, body.length, 'fixture', DEFAULT_MAX_BYTES),
+      ).toThrow(new RegExp(`truncated sealed archive fixture: declares ${body.length} bytes`));
     }
   });
 
