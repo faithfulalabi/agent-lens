@@ -60,6 +60,8 @@ jobs:
 
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      # Build before test: the spawned-binary tests run bin/agent-lens.js,
+      # which imports the BUILT CLI from dist/ — absent on a fresh checkout.
       - run: npm run build
+      - run: npm test
       - run: npm run smoke:pack
