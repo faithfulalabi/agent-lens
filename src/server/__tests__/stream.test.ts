@@ -12,8 +12,8 @@
 // ★ AND EVERY TEST TERMINATES THROUGH `hub.drain()`. Under this design the route
 // emits nothing by itself: it attaches and parks. `drain()` closes the stream,
 // which ends `responseReadable`, which resolves the collected text. A test that
-// reads a body without draining would sit at vitest's 5 s default — the root
-// project sets no `testTimeout` — and fail for a reason that is not the assertion.
+// reads a body without draining would sit until the root project's 15 s
+// `testTimeout` and fail for a reason that is not the assertion.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';

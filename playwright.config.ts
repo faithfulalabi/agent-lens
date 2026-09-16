@@ -1,7 +1,7 @@
 // The smoke runner, deliberately separate from `npm test`.
 //
-// `vitest.config.ts` sets no `testTimeout` on the node project, and a run that
-// packs a tarball and launches Chrome would feed that gap directly. So the smoke
+// `vitest.config.ts` caps the node project at a 15s `testTimeout`, and a run
+// that packs a tarball and launches Chrome would blow through it. So the smoke
 // keeps its own config and its own script, and `npm test` collects exactly what
 // it collected before plus `src/packaging.test.ts`.
 //

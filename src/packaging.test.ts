@@ -2,9 +2,9 @@
 //
 // Deliberately fast and hermetic. The tarball-content proof, the resolution jail
 // and the browser drive all live in `scripts/pack-smoke.mjs`, OUTSIDE `npm test`:
-// the root vitest project sets no `testTimeout` (`vitest.config.ts`), and a
-// packing, Chrome-launching run inside the default suite would feed that gap
-// directly. This file is what makes task 8.4 confirm rather than discover.
+// the root vitest project caps tests at 15s (`vitest.config.ts` `testTimeout`),
+// and a packing, Chrome-launching run inside the default suite would blow
+// through it. This file is what makes task 8.4 confirm rather than discover.
 
 import { describe, expect, it } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
