@@ -1,6 +1,10 @@
 # The merge gate. Runs the exact npm scripts CONTRIBUTING.md names, plus
 # build + smoke:pack, on the engines floor (Node 24, package.json).
 #
+# Three jobs so a red lands on the PR checks list with a name (lint / test /
+# smoke) and the fast checks don't wait on the slow ones. Branch protection
+# pins all three contexts.
+#
 # smoke:ui has no standalone step on purpose: it cannot run outside
 # `smoke:pack` (cold-run.spec.ts requires SMOKE_BASE_URL, which only
 # scripts/pack-smoke.mjs sets when it boots the jail), and its full
@@ -20,13 +24,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    # Branch protection pins this exact check context.
-    name: ci
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -34,16 +36,30 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             ui/package-lock.json
-
       # Root `prepare` runs `npm --prefix ui install` against ui's lockfile,
       # so one `npm ci` installs both trees — no separate ui install step.
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
       - run: npm ci
 
       # internal_docs/ is deliberately untracked, but the ui spec-parity tests
       # hard-fail (never skip) without these three files. The founder-owned
       # AGENT_LENS_SPEC_TAR secret is a base64 tar of exactly those files,
       # refreshed by hand when the specs change.
-      # ponytail: ceiling — secrets are absent on fork PRs, so this step (and
+      # ponytail: ceiling — secrets are absent on fork PRs, so this job (and
       # the run) will fail there. Matters only once the repo goes public.
       - name: Provision spec files from secret
         env:
@@ -58,10 +74,27 @@ jobs:
           test -f internal_docs/agent-lens/spec/user-flows/01-first-run-install.md
           test -f internal_docs/agent-lens/spec/user-flows/03-inspect-session.md
 
-      - run: npm run lint
       - run: npm run typecheck
       # Build before test: the spawned-binary tests run bin/agent-lens.js,
       # which imports the BUILT CLI from dist/ — absent on a fresh checkout.
       - run: npm run build
       - run: npm test
+
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+      - run: npm ci
+      # pack-smoke.mjs runs its own build before packing, so no separate
+      # `npm run build` here; the explicit build step lives in the test job,
+      # where dist/ is a hard prerequisite. No spec secret either — the smoke
+      # drives a synthetic corpus and never reads internal_docs.
       - run: npm run smoke:pack
