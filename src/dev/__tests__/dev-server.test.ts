@@ -228,15 +228,15 @@ describe('startDevServer — wiring pinned at the seam', () => {
   });
 
   it.each([
-    ['/Users/faithful/Desktop/agent-lens', '-Users-faithful-Desktop-agent-lens'],
+    ['/Users/jordan/Desktop/agent-lens', '-Users-jordan-Desktop-agent-lens'],
     [
-      '/Users/faithful/Desktop/BLITZ-DATA/client-projects/locdnstudios',
-      '-Users-faithful-Desktop-BLITZ-DATA-client-projects-locdnstudios',
+      '/Users/jordan/Desktop/DELTA-WORKS/client-projects/northwind',
+      '-Users-jordan-Desktop-DELTA-WORKS-client-projects-northwind',
     ],
     // The discriminating row: goes RED under `cwd.split(sep).join('-')`.
     [
-      '/Users/faithful/Desktop/Personal_Finance/personal_finance_kpi_project',
-      '-Users-faithful-Desktop-Personal-Finance-personal-finance-kpi-project',
+      '/Users/jordan/Desktop/Budget_Tracker/quarterly_revenue_kpi_project',
+      '-Users-jordan-Desktop-Budget-Tracker-quarterly-revenue-kpi-project',
     ],
   ])('slugFor(%s)', (cwd, slug) => {
     expect(slugFor(cwd)).toBe(slug);
