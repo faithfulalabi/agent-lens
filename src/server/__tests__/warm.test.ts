@@ -29,6 +29,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { resolveTranscriptRoot } from '../../archive/paths.js';
+import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { createCorpusSweep, emptyReport, type CorpusSweep } from '../../corpus/watch.js';
 import { ensureProjectedFold } from '../../db/freshness.js';
@@ -737,7 +739,11 @@ describe('AC2/AC3 — the real archive, opt-in', () => {
       const MAX_PASSES = 12;
       const perPass: number[] = [];
       const started = performance.now();
-      const queue = track(createWarmQueue({ db, env: createProjectionEnv(), hub }));
+      const env = createProjectionEnv(createArchiveReader(), {
+        archiveRoot: join(dataDir, 'archive'),
+        transcriptRoot: resolveTranscriptRoot(),
+      });
+      const queue = track(createWarmQueue({ db, env, hub }));
       let previousKey = '';
       for (let pass = 0; pass < MAX_PASSES; pass += 1) {
         const remaining = readWarmableIds(db);

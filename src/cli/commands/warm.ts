@@ -13,7 +13,8 @@
 // SET REPEATING, never the count falling — a repeated set is the permanently
 // failing residual.
 
-import { resolveDataDir } from '../../archive/index.js';
+import { resolveArchiveRoot, resolveDataDir, resolveTranscriptRoot } from '../../archive/index.js';
+import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
 import { DbLockedError, openDb } from '../../db/open.js';
@@ -93,7 +94,11 @@ function summarize(perPass: readonly number[], residual: number): string {
 async function drainCorpus(dataDir: string, transcriptRoot: string | undefined): Promise<number> {
   const opened = openDb({ dataDir });
   const hub = printingHub();
-  const queue = createWarmQueue({ db: opened.db, env: createProjectionEnv(), hub });
+  const env = createProjectionEnv(createArchiveReader(), {
+    archiveRoot: resolveArchiveRoot(dataDir),
+    transcriptRoot: resolveTranscriptRoot(transcriptRoot),
+  });
+  const queue = createWarmQueue({ db: opened.db, env, hub });
   try {
     // WAVE 1 FIRST. `readWarmableIds` reads `sessions` rows and only the boot
     // sweep creates them, so a warm straight after a whole-cache rebuild would

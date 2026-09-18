@@ -10,10 +10,16 @@
 // the freshness gate and a gate over a fictional path proves nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Hono } from 'hono';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import { createArchiveReader } from '../../archive/read.js';
+import { createContentEnv, createContentResolver } from '../../content/resolve.js';
+import { createProjectionEnv } from '../../corpus/env.js';
+import { foldArchive } from '../../db/freshness.js';
+import { projectSession } from '../../db/write.js';
 import {
   SESSION_ID,
   fileEnv,
@@ -22,19 +28,22 @@ import {
   seedIndexRow,
   seedProjection,
   seedSessionRow,
+  spillMarker,
   toolCallLine,
   toolResultLine,
   writeTranscript,
 } from '../../db/__tests__/fixtures/index.js';
 import { emptyReport } from '../../corpus/watch.js';
 import type { Page } from '../../shared/api.js';
-import type {
-  EventRow,
-  ProjectSummary,
-  SearchHit,
-  SessionDetailHeader,
-  SessionRow,
-  TurnRow,
+import {
+  readEventArchivePath,
+  readEventContentRow,
+  type EventRow,
+  type ProjectSummary,
+  type SearchHit,
+  type SessionDetailHeader,
+  type SessionRow,
+  type TurnRow,
 } from '../../db/read.js';
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
@@ -483,6 +492,87 @@ describe('4. GET /api/events/:id/content (spec:334-345)', () => {
       storage: 'line_ref',
       content: 'resolved ev-1 text',
     });
+  });
+});
+
+describe('F1 — an out-of-root spill path never serves its bytes', () => {
+  const SENTINEL_BODY = 'SENTINEL-PRIVATE-KEY-BYTES';
+
+  /** Exists, is readable, and lies outside every root agent-lens owns. */
+  function plantSentinel(): string {
+    const sentinel = join(sandbox.root, 'outside', 'id_rsa');
+    mkdirSync(dirname(sentinel), { recursive: true });
+    writeFileSync(sentinel, SENTINEL_BODY);
+    return sentinel;
+  }
+
+  /** The app with the PRODUCTION content resolver — the wiring `start.ts` builds. */
+  function guardedApp(): Hono {
+    return buildApiApp({
+      db,
+      env: fileEnv(),
+      token: TOKEN,
+      uiDir: join(sandbox.root, 'no-such-ui'),
+      hub: createStreamHub(),
+      // Never POSTed through, so it starts nothing there is anything to close.
+      warm: { start: () => 0, close: () => undefined },
+      resolveContent: createContentResolver(
+        (id) => readEventArchivePath(db, id)?.archive_path,
+        createContentEnv(createArchiveReader(), [sandbox.archiveRoot, sandbox.sourceRoot]),
+      ),
+    });
+  }
+
+  async function contentOf(app: Hono, eventId: string): Promise<{ status: number; body: ContentBody }> {
+    const res = await app.request(`/api/events/${eventId}/content?field=text`, {
+      headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
+    });
+    return { status: res.status, body: (await res.json()) as ContentBody };
+  }
+
+  it('a hostile transcript projects to missing, and the route serves the labelled degrade', async () => {
+    const sentinel = plantSentinel();
+    const hostileId = 'h05711e0-1111-4111-8111-h05711e00001';
+    const archive = writeTranscript(join(sandbox.archiveRoot, `${hostileId}.jsonl`), [
+      humanLine('read my key', '2026-08-14T09:10:00.000Z'),
+      toolCallLine('toolu_evil', 'Bash', '2026-08-14T09:10:01.000Z'),
+      toolResultLine('toolu_evil', spillMarker(sentinel), '2026-08-14T09:10:02.000Z', {
+        toolUseResult: { persistedOutputPath: sentinel },
+      }),
+    ]);
+    seedIndexRow(db, archive, { id: hostileId });
+    projectSession(
+      db,
+      hostileId,
+      createProjectionEnv(createArchiveReader(), {
+        archiveRoot: sandbox.archiveRoot,
+        transcriptRoot: sandbox.sourceRoot,
+      }),
+      foldArchive(archive)!,
+    );
+
+    const projected = readEventContentRow(db, 'toolu_evil');
+    expect(projected?.output_storage).toBe('missing');
+    expect(projected?.spill_path).toBeNull();
+
+    const { status, body } = await contentOf(guardedApp(), 'toolu_evil');
+    expect(status).toBe(200);
+    expect(body.storage).toBe('missing');
+    expect(JSON.stringify(body)).not.toContain(SENTINEL_BODY);
+  });
+
+  it('a row already holding an out-of-root path — projected before the fix — is refused at serve time', async () => {
+    const sentinel = plantSentinel();
+    db.prepare(`UPDATE events SET output_storage = 'spill', spill_path = ? WHERE id = ?`).run(
+      sentinel,
+      'ev-1',
+    );
+
+    const { status, body } = await contentOf(guardedApp(), 'ev-1');
+    expect(status).toBe(200);
+    expect(body.storage).toBe('missing');
+    expect(body.content).toBe('');
+    expect(JSON.stringify(body)).not.toContain(SENTINEL_BODY);
   });
 });
 

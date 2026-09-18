@@ -182,6 +182,9 @@ describe('SECURITY.md carries the whole trust boundary (Test 6)', () => {
     // the phrase out for the reader.
     ['the static page is not token-guarded', /static page.{0,30}not.{0,20}token-guarded/i],
     ['the token bootstrap that replaces it', /token injected/i],
+    // Task 3.5 (finding F1): the spill containment boundary, at both times.
+    ['the spill-path containment', /realpath-resolves inside the transcript root or the archive/i],
+    ['the spill check at projection and serve time', /projection time.{0,120}serve time/i],
   ])('discloses %s', (_label, pattern) => {
     expect(security).toMatch(pattern);
   });

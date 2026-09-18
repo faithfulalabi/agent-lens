@@ -36,6 +36,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { foldArchive } from '../../db/freshness.js';
 import { projectSession } from '../../db/write.js';
@@ -104,7 +105,14 @@ function replay(id: string): string {
       seedIndexRow(db, archivePath, { id });
       const fold = foldArchive(archivePath);
       if (fold === undefined) throw new Error(`no bytes to fold at ${archivePath}`);
-      projectSession(db, id, createProjectionEnv(), fold);
+      // Both roots at the replay root: every capture-set path is under it, and
+      // no machine-local `~/.claude` path may leak into a golden snapshot.
+      projectSession(
+        db,
+        id,
+        createProjectionEnv(createArchiveReader(), { archiveRoot: root, transcriptRoot: root }),
+        fold,
+      );
       return projectionSnapshot(db);
     } finally {
       db.close();

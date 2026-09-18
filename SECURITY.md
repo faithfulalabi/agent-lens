@@ -68,6 +68,23 @@ widens the list to that machine's own interface addresses and no further — nev
   registered ahead of the auth middleware on purpose (`src/server/app.ts`), and the Host allowlist
   above is what keeps a foreign page from being the one that receives it.
 
+### 5. A spill path declared by a transcript is only read from inside known roots
+
+A transcript line can declare the absolute path of a spilled tool output — the structured
+`persistedOutputPath` pointer, or the `Full output saved to:` marker. A transcript is untrusted
+input: a shared or imported session could declare any file you can read, such as an SSH key.
+
+agent-lens dereferences a declared path only when it realpath-resolves inside the transcript root
+or the archive (`src/archive/paths.ts`, `isUnderAnyRoot`). Resolving before the check is what makes
+a symlink that escapes through either root count as outside. When only the sealed `.zst` twin of
+the path exists, the twin must realpath-resolve inside those roots too.
+
+The check runs twice: at projection time, before a path is persisted into the index
+(`src/transcript/spill.ts`), and again at serve time, before `GET /api/events/:id/content` reads a
+recorded path (`src/content/resolve.ts`) — so rows written before the check existed cannot serve
+out-of-root bytes either. A declared path outside the roots degrades to the existing
+"full output no longer on disk" state: never an error, and never a served file.
+
 ## What agent-lens never does
 
 - It never writes to `~/.claude/projects`. The archive is a one-way read; a source file is never

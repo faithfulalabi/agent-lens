@@ -113,7 +113,12 @@ function tracingReader(log: Trace[], inner: ArchiveReader = createArchiveReader(
 }
 
 function tracingEnv(log: Trace[], inner?: ArchiveReader): ContentEnv {
-  return { ...createContentEnv(inner ?? createArchiveReader()), reader: tracingReader(log, inner) };
+  return { ...sandboxEnv(inner), reader: tracingReader(log, inner) };
+}
+
+/** The production env over the sandbox roots — the same shape `start.ts` binds. */
+function sandboxEnv(reader: ArchiveReader = createArchiveReader()): ContentEnv {
+  return createContentEnv(reader, [sb().archiveRoot, sb().sourceRoot]);
 }
 
 // --- row and transcript builders --------------------------------------------
@@ -234,7 +239,8 @@ function oversized(seed: string): string {
 // --- AC1: every storage state resolves --------------------------------------
 
 describe('AC1 — the column states resolve from the row alone', () => {
-  const env = createContentEnv();
+  // No spill row in this describe, so the containment roots are never consulted.
+  const env = createContentEnv(createArchiveReader(), []);
 
   it('1. inline returns the column, on both fields, and sizes it from *_bytes', () => {
     const text = resolveContent(
@@ -345,7 +351,7 @@ describe('AC1 — line_ref preads the archive', () => {
       { ...content, result_offset: content.src_offset, result_len: content.src_len },
       'text',
       path,
-      createContentEnv(),
+      sandboxEnv(),
     );
     expect(wrong.content).not.toBe(slice.content);
     // The emitting line holds a `tool_use`, not a `tool_result`, so the arm
@@ -357,7 +363,7 @@ describe('AC1 — line_ref preads the archive', () => {
       { ...content, result_block: 99 },
       'text',
       path,
-      createContentEnv(),
+      sandboxEnv(),
     );
     expect(wrongBlock.content).toBe(content.text);
   });
@@ -366,7 +372,7 @@ describe('AC1 — line_ref preads the archive', () => {
     const { path, row: content } = lineRefInput();
     rmSync(path);
 
-    const slice = resolveContent(content, 'input', path, createContentEnv());
+    const slice = resolveContent(content, 'input', path, sandboxEnv());
     expect(slice.storage).toBe('line_ref');
     expect(slice.content).toBe(content.input);
     // The size stays honest, so the route's `truncated` flag is still right.
@@ -449,7 +455,7 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     const content = contentRow(db, 'toolu_spill');
     expect(content.output_storage).toBe('spill');
 
-    const slice = resolveContent(content, 'text', path, createContentEnv());
+    const slice = resolveContent(content, 'text', path, sandboxEnv());
     expect(slice).toEqual({
       storage: 'spill',
       content: BODY,
@@ -468,23 +474,58 @@ describe('AC1 — spill resolves, archive mirror first', () => {
       row({ output_storage: 'spill', spill_path: DECLARED }),
       'text',
       path,
-      createContentEnv(),
+      sandboxEnv(),
     );
     expect(slice.spill_path).toBe(mirror);
     expect(slice.content).toBe(BODY);
   });
 
-  it('11. falls back to the recorded path when the archive has no mirror', () => {
+  it('11. falls back to a CONTAINED recorded path when the archive has no mirror', () => {
+    const { path } = project([humanLine('no mirror here', TS(0))], 'no-mirror');
+    const contained = writeFile(
+      join(sb().sourceRoot, '-slug', 'x', 'tool-results', SPILL_NAME),
+      BODY,
+    );
+
+    const slice = resolveContent(
+      row({ output_storage: 'spill', spill_path: contained }),
+      'text',
+      path,
+      sandboxEnv(),
+    );
+    expect(slice.spill_path).toBe(contained);
+    expect(slice.content).toBe(BODY);
+  });
+
+  it('11b. F1: an out-of-root recorded path is refused even though the file exists', () => {
+    // Rows projected before the containment fix (or by another writer) can hold
+    // any path; the serve arm must not read it. `missing` is the labelled
+    // degrade, never the file's bytes.
     const { path } = project([humanLine('no mirror here', TS(0))], 'no-mirror');
     const loose = writeFile(join(sb().root, 'loose', 'tool-results', SPILL_NAME), BODY);
+    expect(existsSync(loose)).toBe(true);
 
     const slice = resolveContent(
       row({ output_storage: 'spill', spill_path: loose }),
       'text',
       path,
-      createContentEnv(),
+      sandboxEnv(),
     );
-    expect(slice.spill_path).toBe(loose);
+    expect(slice).toEqual({ storage: 'missing', content: '', byte_size: 0 });
+  });
+
+  it('11c. F1: the mirror still wins for a row whose recorded path is out of root', () => {
+    const { db, path, mirror } = spillSession();
+    const content = contentRow(db, 'toolu_spill');
+    const hijacked = writeFile(join(sb().root, 'loose', 'tool-results', SPILL_NAME), 'HIJACK');
+
+    const slice = resolveContent(
+      { ...content, spill_path: hijacked },
+      'text',
+      path,
+      sandboxEnv(),
+    );
+    expect(slice.spill_path).toBe(mirror);
     expect(slice.content).toBe(BODY);
   });
 
@@ -498,7 +539,7 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     const flat = writeSidecarTranscript(join(dir, 'subagents'), 'kid', [
       humanLine('child work', TS(3)),
     ]);
-    expect(resolveContent(dangling, 'text', flat, createContentEnv())).toMatchObject({
+    expect(resolveContent(dangling, 'text', flat, sandboxEnv())).toMatchObject({
       spill_path: mirror,
       content: BODY,
     });
@@ -507,7 +548,7 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     const nested = writeSidecarTranscript(join(dir, 'subagents', 'workflows', 'wf_1'), 'deep', [
       humanLine('deeper', TS(4)),
     ]);
-    expect(resolveContent(dangling, 'text', nested, createContentEnv()).spill_path).toBe(mirror);
+    expect(resolveContent(dangling, 'text', nested, sandboxEnv()).spill_path).toBe(mirror);
 
     // The control: the path a "look next to the transcript" anchor would build
     // is not on disk and is not what was served. That is the whole defect.
@@ -533,7 +574,7 @@ describe('AC2 — missing is a 200-shaped answer and an ordinary path', () => {
 
     let slice!: ReturnType<typeof resolveContent>;
     expect(() => {
-      slice = resolveContent(content, 'text', path, createContentEnv());
+      slice = resolveContent(content, 'text', path, sandboxEnv());
     }).not.toThrow();
 
     expect(slice).toEqual({ storage: 'missing', content: '', byte_size: 0 });
@@ -564,7 +605,7 @@ describe('AC2 — missing is a 200-shaped answer and an ordinary path', () => {
 
     let slice!: ReturnType<typeof resolveContent>;
     expect(() => {
-      slice = resolveContent(content, 'text', path, createContentEnv());
+      slice = resolveContent(content, 'text', path, sandboxEnv());
     }).not.toThrow();
     expect(slice).toEqual({ storage: 'missing', content: '', byte_size: 0 });
   });
@@ -629,7 +670,7 @@ describe('AC3 — byte_size is the true size, so the route ranges correctly', ()
       row({ text: 'a'.repeat(100), text_bytes: 100, output_storage: 'inline' }),
       'text',
       undefined,
-      createContentEnv(),
+      sandboxEnv(),
     );
     expect(serve(slice, undefined)).toMatchObject({
       range: { start: 0, end: 99 },
@@ -644,7 +685,7 @@ describe('AC3 — byte_size is the true size, so the route ranges correctly', ()
       multiChildResultLine('toolu_rng', [oversized('range payload ')], TS(2)),
     ]);
     const content = contentRow(db, 'toolu_rng');
-    const slice = resolveContent(content, 'text', path, createContentEnv());
+    const slice = resolveContent(content, 'text', path, sandboxEnv());
 
     // A length past the end truncates; a start past the end is an empty slice.
     expect(serve(slice, { start: 0, end: 9 }).content).toHaveLength(10);
@@ -659,7 +700,7 @@ describe('AC3 — byte_size is the true size, so the route ranges correctly', ()
       row({ text: EMOJI, text_bytes: null }),
       'text',
       undefined,
-      createContentEnv(),
+      sandboxEnv(),
     );
     // Four bytes per emoji, one JS char pair each: the size is a BYTE count.
     expect(slice.byte_size).toBe(12);
@@ -686,7 +727,7 @@ describe('AC3 — byte_size is the true size, so the route ranges correctly', ()
             row({ text, text_bytes: null }),
             'text',
             undefined,
-            createContentEnv(),
+            sandboxEnv(),
           );
           const clamped = clampRange({ start, end: start + span }, slice.byte_size);
           expect(clamped.length).toBeGreaterThanOrEqual(0);
@@ -725,7 +766,7 @@ describe('AC4 — a sealed archive answers byte-identically to a hot one', () =>
     const content = contentRow(db, 'toolu_seal');
 
     const hot = (field: ContentField) =>
-      resolveContent(content, field, path, createContentEnv(createArchiveReader()));
+      resolveContent(content, field, path, sandboxEnv());
     const hotText = hot('text');
     const hotInput = hot('input');
 
@@ -733,7 +774,7 @@ describe('AC4 — a sealed archive answers byte-identically to a hot one', () =>
 
     // The LOGICAL path is unchanged — the caller never learns the file moved.
     const reader = createArchiveReader();
-    const sealedEnv = createContentEnv(reader);
+    const sealedEnv = sandboxEnv(reader);
     expect(resolveContent(content, 'text', path, sealedEnv)).toEqual(hotText);
     expect(resolveContent(content, 'input', path, sealedEnv)).toEqual(hotInput);
     // A control: the sealed limb was actually taken.
@@ -757,11 +798,11 @@ describe('AC4 — a sealed archive answers byte-identically to a hot one', () =>
     );
     const content = row({ output_storage: 'spill', spill_path: declared });
 
-    const hot = resolveContent(content, 'text', path, createContentEnv());
+    const hot = resolveContent(content, 'text', path, sandboxEnv());
     expect(hot.storage).toBe('spill');
 
     seal(mirror);
-    const sealed = resolveContent(content, 'text', path, createContentEnv());
+    const sealed = resolveContent(content, 'text', path, sandboxEnv());
 
     // Byte-identical, including `byte_size` — the LOGICAL length in both states.
     expect(sealed).toEqual(hot);
@@ -787,7 +828,7 @@ describe('AC1 — the re-derived resultText agrees with the projector', () => {
     const content = contentRow(db, 'toolu_drift');
     expect(content.output_storage).toBe('line_ref');
 
-    const slice = resolveContent(content, 'text', path, createContentEnv());
+    const slice = resolveContent(content, 'text', path, sandboxEnv());
 
     // The join, verbatim: '\n' between every child including the empty one.
     expect(slice.content).toBe(CHILDREN.join('\n'));
@@ -816,17 +857,19 @@ describe('the resolver fits 4.3’s ApiDeps seam', () => {
     // The compile-time half: this assignment is the assertion.
     const resolver: ContentResolver = createContentResolver(
       (session_id) => readEventArchivePath(db, session_id)?.archive_path,
+      sandboxEnv(),
     );
 
     const slice = resolver(content, 'input');
     expect(slice.storage).toBe('line_ref');
-    expect(slice.content).toBe(resolveContent(content, 'input', path, createContentEnv()).content);
+    expect(slice.content).toBe(resolveContent(content, 'input', path, sandboxEnv()).content);
   });
 
   it('26. an unknown session degrades instead of throwing', () => {
     const { db } = project([humanLine('orphan', TS(0))], 'orphan');
     const resolver = createContentResolver(
       (session_id) => readEventArchivePath(db, session_id)?.archive_path,
+      sandboxEnv(),
     );
     expect(
       resolver(

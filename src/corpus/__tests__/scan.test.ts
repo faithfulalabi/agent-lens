@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { createArchiveReader } from '../../archive/read.js';
 import { foldArchive } from '../../db/freshness.js';
 import { projectSession, upsertSessionIndex } from '../../db/write.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
@@ -265,7 +266,11 @@ describe('AC3 — the journal is excluded by path, before it is opened', () => {
     });
 
     expect(rowCount(db, 'journal.jsonl')).toBe(1);
-    expect(projectSession(db, rowIdOf(rel), createProjectionEnv(), fold)).toBe('empty');
+    const env = createProjectionEnv(createArchiveReader(), {
+      archiveRoot: sandbox.archiveRoot,
+      transcriptRoot: sandbox.sourceRoot,
+    });
+    expect(projectSession(db, rowIdOf(rel), env, fold)).toBe('empty');
 
     const row = db
       .prepare('SELECT projection_state FROM sessions WHERE id = ?')

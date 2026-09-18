@@ -536,6 +536,11 @@ const SUPPRESSIONS: readonly Suppression[] = [
     why: "homonym: the render gate's own Observations record of what it read out of the browser, matching the three reviewed render-gate/index.ts entries",
   },
   {
+    key: 'server/__tests__/api-routes.test.ts#toolUseResult#1',
+    line: 'toolUseResult: { persistedOutputPath: sentinel },',
+    why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The hostile out-of-root spill pointer the F1 containment test projects',
+  },
+  {
     key: 'server/__tests__/persistence.test.ts#sessionId#1',
     line: 'sessionId: SESSION,',
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The session id of the one archived line this suite seeds',

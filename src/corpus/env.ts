@@ -7,7 +7,8 @@
 // manifest: the one reviewed open lives in `archive/read.ts` already.
 
 import { existsSync } from 'node:fs';
-import { createArchiveReader, type ArchiveReader } from '../archive/read.js';
+import { isUnderAnyRoot } from '../archive/paths.js';
+import type { ArchiveReader } from '../archive/read.js';
 import { readSidecars } from '../db/sidecars.js';
 import type { ProjectionEnv } from '../db/write.js';
 import { DriftCounter } from '../transcript/drift.js';
@@ -50,13 +51,20 @@ function readLines(
   return { lines, drift };
 }
 
+/** The roots a transcript-declared spill path may resolve inside (finding F1). */
+export interface ProjectionRoots {
+  archiveRoot: string;
+  transcriptRoot: string;
+}
+
 /**
  * The three reads `projectSession` needs, over the real archive.
  *
  * `reader` is shared with the sidecar resolver so one sealed frame is
- * decompressed once per pass rather than once per child.
+ * decompressed once per pass rather than once per child. `roots` is REQUIRED —
+ * containment is by construction, not caller discipline.
  */
-export function createProjectionEnv(reader: ArchiveReader = createArchiveReader()): ProjectionEnv {
+export function createProjectionEnv(reader: ArchiveReader, roots: ProjectionRoots): ProjectionEnv {
   return {
     readLines: (archivePath) => readLines(reader, archivePath),
 
@@ -69,6 +77,9 @@ export function createProjectionEnv(reader: ArchiveReader = createArchiveReader(
       // GRANDPARENT. The bug was masked because every declared source path still
       // exists, so `resolvePersistedOutput` never reached the re-anchor.
       sessionRoot: sessionRootOf(archivePath),
+      archiveRoot: roots.archiveRoot,
+      withinRoots: (path) =>
+        isUnderAnyRoot(path, [roots.archiveRoot, roots.transcriptRoot, sessionRootOf(archivePath)]),
     }),
 
     sidecars: (archivePath, sourcePath, toolUseIds) =>

@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { readOrCreateToken } from '../shared/index.js';
+import { resolveArchiveRoot, resolveTranscriptRoot } from '../archive/index.js';
 import { createArchiveReader } from '../archive/read.js';
 import { createContentResolver, createContentEnv } from '../content/resolve.js';
 import { createCorpusSweep } from '../corpus/watch.js';
@@ -114,6 +115,12 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   const db = opened.db;
 
   const reader = createArchiveReader();
+  // The F1 containment roots: a declared or recorded spill path is only ever
+  // dereferenced inside these, at projection and at serve time.
+  const roots = {
+    archiveRoot: resolveArchiveRoot(dataDir),
+    transcriptRoot: resolveTranscriptRoot(options.transcriptRoot),
+  };
   const sweep = createCorpusSweep({
     db,
     dataDir,
@@ -132,20 +139,20 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   // inside the sweep gate below would be undefined on the exact boot every
   // socket-level test uses — and `POST /api/warm` would 202 while warming
   // nothing.
-  const warm = createWarmQueue({ db, env: createProjectionEnv(reader), hub });
+  const warm = createWarmQueue({ db, env: createProjectionEnv(reader, roots), hub });
 
   const app = buildApiApp({
     db,
     token,
     host,
     uiDir: options.uiDir,
-    env: createProjectionEnv(reader),
+    env: createProjectionEnv(reader, roots),
     sweep,
     hub,
     warm,
     resolveContent: createContentResolver(
       (id) => readEventArchivePath(db, id)?.archive_path,
-      createContentEnv(reader),
+      createContentEnv(reader, [roots.archiveRoot, roots.transcriptRoot]),
     ),
   });
   const fetch = app.fetch;
@@ -204,7 +211,7 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     sweep.tick();
     tick = startLiveTick({
       db,
-      env: createProjectionEnv(reader),
+      env: createProjectionEnv(reader, roots),
       sweep,
       hub,
       ...(options.sweepIntervalMs !== undefined && { intervalMs: options.sweepIntervalMs }),

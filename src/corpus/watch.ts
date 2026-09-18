@@ -179,7 +179,7 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
   const archiveRoot = resolveArchiveRoot(options.dataDir);
   const sourceRoot = resolveTranscriptRoot(options.transcriptRoot);
   const reader = options.reader ?? createArchiveReader();
-  const env = createProjectionEnv(reader);
+  const env = createProjectionEnv(reader, { archiveRoot, transcriptRoot: sourceRoot });
 
   let last = emptyReport();
 

@@ -20,7 +20,8 @@
 
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { createArchiveReader, type ArchiveReader } from '../archive/read.js';
+import { isUnderAnyRoot } from '../archive/paths.js';
+import type { ArchiveReader } from '../archive/read.js';
 import { toolResultsDirOf } from '../corpus/paths.js';
 import type { EventContentRow } from '../db/read.js';
 import { contentBlocks, type Block } from '../transcript/blocks.js';
@@ -43,6 +44,13 @@ export interface ContentEnv {
    * every sealed spill missing.
    */
   exists(path: string): boolean;
+  /**
+   * True when a RECORDED `spill_path` may be dereferenced verbatim — it
+   * realpath-resolves inside a root this product owns (finding F1). Optional so
+   * hermetic env literals stay valid; `createContentEnv` always binds it.
+   * Absent means unchecked. A throwing predicate refuses, fail-closed.
+   */
+  withinRoots?(path: string): boolean;
 }
 
 /**
@@ -150,6 +158,16 @@ function probe(env: ContentEnv, path: string): boolean {
   }
 }
 
+/** The F1 gate on the verbatim fallback arm. Fail-closed on a throwing predicate. */
+function within(env: ContentEnv, path: string): boolean {
+  if (env.withinRoots === undefined) return true;
+  try {
+    return env.withinRoots(path) === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Where a spill's bytes are readable NOW.
  *
@@ -174,7 +192,10 @@ function spillSource(
     const mirrored = join(toolResultsDirOf(archivePath), name);
     if (probe(env, mirrored)) return mirrored;
   }
-  return probe(env, row.spill_path) ? row.spill_path : undefined;
+  // The verbatim fallback: a recorded path is only read from inside the roots,
+  // so a row projected before the F1 fix (or by another writer) cannot serve
+  // out-of-root bytes either. The mirror arm above builds its own path.
+  return within(env, row.spill_path) && probe(env, row.spill_path) ? row.spill_path : undefined;
 }
 
 /**
@@ -316,26 +337,31 @@ function resolveText(
 }
 
 /**
- * The production env. The probe is `corpus/env.ts:64-67`'s, verbatim: the `.zst`
+ * The production env. The probe is `corpus/env.ts`'s, verbatim: the `.zst`
  * limb is required, not defensive, because a sealed spill exists only under that
  * name. `existsSync` reads no bytes, so the "every byte through the reader" rule
  * still holds and this tree adds no row to the open manifest.
+ *
+ * `roots` is REQUIRED — the roots a recorded `spill_path` may be read from
+ * (finding F1). Production security is by construction, not caller discipline.
  */
-export function createContentEnv(reader: ArchiveReader = createArchiveReader()): ContentEnv {
+export function createContentEnv(reader: ArchiveReader, roots: readonly string[]): ContentEnv {
   return {
     reader,
     exists: (path) => existsSync(path) || existsSync(`${path}.zst`),
+    withinRoots: (path) => isUnderAnyRoot(path, roots),
   };
 }
 
 /**
  * Bind a resolver onto `ApiDeps.resolveContent` (`server/api.ts:57`). The
  * archive-path lookup is passed in as a function, so this module still never
- * touches a `DatabaseSync`.
+ * touches a `DatabaseSync`. `env` is required so every production construction
+ * carries the F1 containment roots.
  */
 export function createContentResolver(
   archivePathOf: (session_id: string) => string | undefined,
-  env: ContentEnv = createContentEnv(),
+  env: ContentEnv,
 ): (row: EventContentRow, field: ContentField) => ResolvedContent {
   return (row, field) => resolveContent(row, field, archivePathOf(row.session_id), env);
 }
