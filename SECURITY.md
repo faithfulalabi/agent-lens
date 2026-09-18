@@ -68,7 +68,27 @@ widens the list to that machine's own interface addresses and no further — nev
   registered ahead of the auth middleware on purpose (`src/server/app.ts`), and the Host allowlist
   above is what keeps a foreign page from being the one that receives it.
 
-### 5. A spill path declared by a transcript is only read from inside known roots
+### 5. Archive writes are contained and refuse symlinked destinations
+
+Everything the archive pass writes — mirrored bytes, the seal, the pass log, the lock — lands under
+the data dir (default `~/.agent-lens`), and each write is checked against its root. Directory chains
+are asserted to resolve inside the archive root or the data dir both before and after they are
+created, and every final path component is either opened with `O_NOFOLLOW` or created with
+`O_CREAT|O_EXCL`, so a symlink planted at a write destination is refused by the kernel instead of
+followed (`src/archive/paths.ts`).
+
+The archive root itself may be a symlink — relocating a keep-forever store onto another volume is
+supported. What is refused is any resolution that escapes the root, and in particular anything that
+lands inside the transcript corpus: the pass refuses to write into `~/.claude/projects` even when
+`--dataDir` points at it (`src/archive/mirror.ts`).
+
+Two limits, stated rather than rounded up: a symlink planted in the window between a containment
+check and the create it guards is caught only at the final write, and a dangling symlinked ancestor
+is refused by the kernel's own error rather than by the guard. Node exposes no `openat`/`mkdirat`
+directory-fd syscalls, so that window is a permanent property of the runtime; the guarantee is
+strongest at the final path component.
+
+### 6. A spill path declared by a transcript is only read from inside known roots
 
 A transcript line can declare the absolute path of a spilled tool output — the structured
 `persistedOutputPath` pointer, or the `Full output saved to:` marker. A transcript is untrusted
