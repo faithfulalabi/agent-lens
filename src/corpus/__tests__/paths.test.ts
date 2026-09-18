@@ -28,13 +28,13 @@ const KINDS: readonly CorpusKind[] = ['session', 'sidecar', 'excluded', 'ignored
 
 describe('AC1 — encodeProjectDir is total and exact', () => {
   it.each([
-    ['/Users/faithful', '-Users-faithful'],
-    ['/Users/faithful/Desktop/Verona', '-Users-faithful-Desktop-Verona'],
+    ['/Users/jordan', '-Users-jordan'],
+    ['/Users/jordan/Desktop/Harbor', '-Users-jordan-Desktop-Harbor'],
     // The hyphenated leaf: this is the case the decode direction cannot recover.
-    ['/Users/faithful/Desktop/agent-lens', '-Users-faithful-Desktop-agent-lens'],
+    ['/Users/jordan/Desktop/agent-lens', '-Users-jordan-Desktop-agent-lens'],
     [
-      '/Users/faithful/Desktop/agent-lens/experiments/tracer-bullet/scratch-project',
-      '-Users-faithful-Desktop-agent-lens-experiments-tracer-bullet-scratch-project',
+      '/Users/jordan/Desktop/agent-lens/experiments/tracer-bullet/scratch-project',
+      '-Users-jordan-Desktop-agent-lens-experiments-tracer-bullet-scratch-project',
     ],
   ])('encodes %s', (cwd, slug) => {
     expect(encodeProjectDir(cwd)).toBe(slug);
@@ -62,14 +62,14 @@ function countHyphens(parts: readonly string[]): number {
 describe('AC1 — decodeProjectDir is a documented seed, corrected at projection', () => {
   it('returns the naive form, and does NOT claim to be exact', () => {
     // Exact where no path component contains a hyphen…
-    expect(decodeProjectDir('-Users-faithful')).toBe('/Users/faithful');
+    expect(decodeProjectDir('-Users-jordan')).toBe('/Users/jordan');
     // …and provably wrong where one does. This is the whole reason the seed is
     // superseded by WRITE_HEADER_SQL's COALESCE(:project_path, project_path).
-    expect(decodeProjectDir('-Users-faithful-Desktop-agent-lens')).toBe(
-      '/Users/faithful/Desktop/agent/lens',
+    expect(decodeProjectDir('-Users-jordan-Desktop-agent-lens')).toBe(
+      '/Users/jordan/Desktop/agent/lens',
     );
-    expect(decodeProjectDir(encodeProjectDir('/Users/faithful/Desktop/agent-lens'))).not.toBe(
-      '/Users/faithful/Desktop/agent-lens',
+    expect(decodeProjectDir(encodeProjectDir('/Users/jordan/Desktop/agent-lens'))).not.toBe(
+      '/Users/jordan/Desktop/agent-lens',
     );
   });
 
