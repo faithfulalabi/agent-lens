@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { resolveArchiveRoot, resolveTranscriptRoot } from '../../archive/paths.js';
 import { createArchiveReader } from '../../archive/read.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
 import { readEventArchivePath, readEventContentRow, type EventContentRow } from '../../db/read.js';
@@ -84,7 +85,7 @@ describe('the resolver over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => 
       const { db, rows } = corpus();
       expect(rows.length).toBeGreaterThan(0);
 
-      const env = createContentEnv(createArchiveReader());
+      const env = createContentEnv(createArchiveReader(), [resolveArchiveRoot(), resolveTranscriptRoot()]);
       const byStorage = new Map<string, number>();
 
       for (const { row, archivePath } of rows) {
@@ -148,7 +149,7 @@ describe('the resolver over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => 
         return;
       }
 
-      const env = createContentEnv(createArchiveReader());
+      const env = createContentEnv(createArchiveReader(), [resolveArchiveRoot(), resolveTranscriptRoot()]);
       const started = performance.now();
       for (const { row, archivePath } of refs) {
         resolveContent(row, row.output_storage === 'line_ref' ? 'text' : 'input', archivePath, env);

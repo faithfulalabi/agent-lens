@@ -25,6 +25,7 @@ import {
   snapshotTreeSafe,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
 import { humanLine } from '../../db/__tests__/fixtures/index.js';
@@ -127,6 +128,10 @@ describe('parseSessionId — one positional, at any index (task 0.15)', () => {
     // this task exists for. The space form is the one a naive scan misreads.
     [['--dataDir=/x', 'abc'], 'abc'],
     [['--dataDir', '/x', 'abc'], 'abc'],
+    // Task 3.5: `--transcriptRoot` is a value flag too, both spellings.
+    [['--transcriptRoot', '/x'], undefined],
+    [['--transcriptRoot', '/x', 'abc'], 'abc'],
+    [['--transcriptRoot=/x', 'abc'], 'abc'],
   ])('%j -> %s', (args, expected) => {
     expect(parseSessionId(args)).toBe(expected);
   });
@@ -281,7 +286,14 @@ describe('3 + 4 — the single-session rebuild (AC1)', () => {
 
       // The gate says `'hit'` — the stamp still matches — so it writes NOTHING,
       // and no amount of re-reading brings the events back.
-      const gate = ensureProjectedFold(opened.db, id, createProjectionEnv());
+      const gate = ensureProjectedFold(
+        opened.db,
+        id,
+        createProjectionEnv(createArchiveReader(), {
+          archiveRoot: join(s.dataDir, 'archive'),
+          transcriptRoot: s.sourceRoot,
+        }),
+      );
       expect(gate.outcome).toBe('hit');
       expect(readEventCount(opened.db, id)).toBe(0);
       // …and the warm queue cannot rescue it either: the row is not warmable.

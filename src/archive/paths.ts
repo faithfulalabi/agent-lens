@@ -160,6 +160,27 @@ export function assertUnderArchiveRoot(path: string, archiveRoot: string): void 
   assertUnderRoot(path, archiveRoot, ARCHIVE_ROOT_LABEL);
 }
 
+/**
+ * True when `path` realpath-resolves inside at least one of `roots`. The boolean
+ * face of `assertUnderRoot`, for the spill resolvers (finding F1): a
+ * transcript-declared path is only dereferenced inside a root this product
+ * owns. Empty roots refuse everything — fail-closed.
+ *
+ * When the logical tail is absent the archive reader opens the `<path>.zst`
+ * twin instead, so the twin is realpath-contained too — otherwise a symlink
+ * planted AS the twin escapes on the never-resolved logical leaf.
+ */
+export function isUnderAnyRoot(path: string, roots: readonly string[]): boolean {
+  if (roots.length === 0) return false;
+  const resolvedRoots = roots.map((root) => realpathDeepest(root));
+  const contained = (candidate: string): boolean => {
+    const resolved = realpathDeepest(candidate);
+    return resolvedRoots.some((root) => isUnder(resolved, root));
+  };
+  if (!contained(path)) return false;
+  return statSafe(path) !== undefined || contained(`${path}.zst`);
+}
+
 /** Root-relative mapping key, or `undefined` when `path` escapes `root`. */
 export function relativeUnder(root: string, path: string): string | undefined {
   const rel = relative(root, path);

@@ -11,11 +11,22 @@
 // reasons spelled out at its own describe block.
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { createArchiveReader } from '../../archive/read.js';
+import { createProjectionEnv } from '../../corpus/env.js';
 import {
   isHarnessTruncated,
   resolvePersistedOutput,
@@ -350,6 +361,88 @@ describe('AC6 — the ladder climbs to the session root', () => {
   function existsSyncLike(onDisk: readonly string[], path: string): boolean {
     return onDisk.includes(path) || onDisk.includes(`${path}.zst`);
   }
+});
+
+describe('F1 — the verbatim arm refuses a declared path outside the injected roots', () => {
+  it('an out-of-root declared path that EXISTS is missing:not-on-disk, never served', () => {
+    const state = resolvePersistedOutput(
+      pointerLine(DECLARED),
+      envWith([DECLARED], { withinRoots: () => false }),
+    );
+
+    expect(state).toEqual({ kind: 'missing', reason: 'not-on-disk', declaredPath: DECLARED });
+  });
+
+  it('an in-root declared path still resolves verbatim', () => {
+    const state = resolvePersistedOutput(
+      pointerLine(DECLARED),
+      envWith([DECLARED], { withinRoots: (path) => path === DECLARED }),
+    );
+
+    expect(state).toMatchObject({ kind: 'resolved', path: DECLARED, source: 'pointer' });
+  });
+
+  it('a refused verbatim path still re-anchors — that arm is root-contained by construction', () => {
+    const SESSION = '/archive/-slug/sess-1';
+    const mirror = join(SESSION, 'tool-results', basename(DECLARED));
+    const state = resolvePersistedOutput(
+      pointerLine(DECLARED),
+      envWith([DECLARED, mirror], { sessionRoot: SESSION, withinRoots: () => false }),
+    );
+
+    expect(state).toMatchObject({ kind: 'resolved', path: mirror });
+  });
+
+  it('a THROWING predicate refuses fail-closed and keeps the resolver total', () => {
+    const env = envWith([DECLARED], {
+      withinRoots: () => {
+        throw new Error('predicate exploded');
+      },
+    });
+
+    let state!: SpillState;
+    expect(() => {
+      state = resolvePersistedOutput(pointerLine(DECLARED), env);
+    }).not.toThrow();
+    expect(state).toEqual({ kind: 'missing', reason: 'not-on-disk', declaredPath: DECLARED });
+  });
+});
+
+describe('F1 — createProjectionEnv binds the containment predicate to the real roots', () => {
+  it('the production spill env refuses an out-of-root sentinel and resolves an in-root spill', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-lens-spill-roots-')));
+    try {
+      const archiveRoot = join(root, 'archive');
+      const transcriptRoot = join(root, 'projects');
+      const archivePath = join(archiveRoot, '-slug', 'sess-1.jsonl');
+
+      // Exists, is readable, and lies outside every root agent-lens owns.
+      const sentinel = join(root, 'outside', 'id_rsa');
+      mkdirSync(dirname(sentinel), { recursive: true });
+      writeFileSync(sentinel, 'SENTINEL-PRIVATE-KEY');
+
+      const env = createProjectionEnv(createArchiveReader(), {
+        archiveRoot,
+        transcriptRoot,
+      }).spillEnv(archivePath);
+
+      expect(resolvePersistedOutput(pointerLine(sentinel), env)).toEqual({
+        kind: 'missing',
+        reason: 'not-on-disk',
+        declaredPath: sentinel,
+      });
+
+      const inRoot = join(transcriptRoot, '-slug', 'sess-1', 'tool-results', 'b1a2c3d4.txt');
+      mkdirSync(dirname(inRoot), { recursive: true });
+      writeFileSync(inRoot, 'spilled body');
+      expect(resolvePersistedOutput(pointerLine(inRoot), env)).toMatchObject({
+        kind: 'resolved',
+        path: inRoot,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('AC2 — never throws, exhaustively', () => {

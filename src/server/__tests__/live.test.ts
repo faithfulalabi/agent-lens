@@ -37,8 +37,8 @@ import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { discover } from '../../archive/discover.js';
 import { archiveOnce, createMirrorContext, mirrorFile } from '../../archive/mirror.js';
-import { canonicalizeTranscriptPath } from '../../archive/paths.js';
-import { createArchiveReader } from '../../archive/read.js';
+import { canonicalizeTranscriptPath, resolveTranscriptRoot } from '../../archive/paths.js';
+import { createArchiveReader, type ArchiveReader } from '../../archive/read.js';
 import {
   cleanup,
   makeSandbox,
@@ -185,6 +185,12 @@ function sb(): Sandbox {
   return sandbox;
 }
 
+/** The production projection env over the sandbox roots. */
+function projEnv(reader: ArchiveReader = createArchiveReader()): ProjectionEnv {
+  const s = sb();
+  return createProjectionEnv(reader, { archiveRoot: s.archiveRoot, transcriptRoot: s.sourceRoot });
+}
+
 afterEach(() => {
   for (const tick of ticks.splice(0)) tick.close();
   for (const sweep of sweeps.splice(0)) sweep.close();
@@ -236,7 +242,7 @@ function liveSide(options: { env?: ProjectionEnv; now?: () => number } = {}): Li
   const hub = recordingHub();
   const tick = startLiveTick({
     db,
-    env: options.env ?? createProjectionEnv(),
+    env: options.env ?? projEnv(),
     // Wave 2 flips `rollup_state` to `'complete'`, which `projectionSnapshot`
     // compares. Stubbing it is what keeps AC2 a statement about projection.
     sweep: { ...sweep, wave2: () => emptyReport() },
@@ -252,7 +258,7 @@ function liveSide(options: { env?: ProjectionEnv; now?: () => number } = {}): Li
 function coldSide(id = SESSION_ID): DatabaseSync {
   const db = cache();
   sweepOver(db).wave1();
-  ensureProjectedFold(db, id, createProjectionEnv());
+  ensureProjectedFold(db, id, projEnv());
   return db;
 }
 
@@ -315,7 +321,7 @@ describe('AC2 — a live reprojection is byte-identical to a cold one', () => {
     expect(changedFrames(live.hub)).toHaveLength(1);
 
     growArchived(path, [notificationLine('toolu_silent', 'the silent arm answer', ts(30))]);
-    ensureProjectedFold(live.db, SESSION_ID, createProjectionEnv());
+    ensureProjectedFold(live.db, SESSION_ID, projEnv());
     const projectedAt = readSessionHeader(live.db, SESSION_ID)!.projection.projected_at;
 
     await live.tick.tick();
@@ -344,7 +350,7 @@ describe('AC2 — a failed projection is retried, never forgotten', () => {
     // tree — so a tick that dropped the id on `'failed'` would lose this
     // session's growth permanently rather than for one second.
     writeArchived(fixtureLines());
-    const live = liveSide({ env: flakyEnv(createProjectionEnv(), 1) });
+    const live = liveSide({ env: flakyEnv(projEnv(), 1) });
 
     await live.tick.tick();
     expect(changedFrames(live.hub)).toHaveLength(0);
@@ -390,7 +396,7 @@ describe('AC4 — the timer never overlaps two passes', () => {
 
     const tick = startLiveTick({
       db: cache(),
-      env: createProjectionEnv(),
+      env: projEnv(),
       sweep,
       hub,
       intervalMs: 2,
@@ -513,7 +519,7 @@ describe('AC4 — the 100 ms / 5 s per-session backoff', () => {
   it('backs a slow session off to 5 s, and reconsiders it exactly then', async () => {
     let clock = 1_000_000;
     const now = (): number => clock;
-    const base = createProjectionEnv();
+    const base = projEnv();
     const path = writeArchived(fixtureLines());
 
     const live = liveSide({
@@ -551,7 +557,7 @@ describe('AC4 — the 100 ms / 5 s per-session backoff', () => {
     const other = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
     let clock = 1_000_000;
     const now = (): number => clock;
-    const base = createProjectionEnv();
+    const base = projEnv();
     const slowPath = writeArchived(fixtureLines());
     // Its own call ids, because `events.id` is a global primary key.
     const fastPath = writeArchived(concurrentAgents('toolu_b', 1), other);
@@ -594,7 +600,7 @@ describe('AC4 — the 100 ms / 5 s per-session backoff', () => {
   it('never backs off a fast session — the non-vacuity control', async () => {
     let clock = 1_000_000;
     const now = (): number => clock;
-    const base = createProjectionEnv();
+    const base = projEnv();
     const path = writeArchived(fixtureLines());
 
     // 40 ms, comfortably under SLOW_MS.
@@ -670,7 +676,7 @@ describe('AC4 — a half-written source line never reaches the projector', () =>
     archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
 
     const log: ReaderLog = newReaderLog();
-    const live = liveSide({ env: createProjectionEnv(countingReader(log, createArchiveReader())) });
+    const live = liveSide({ env: projEnv(countingReader(log, createArchiveReader())) });
     await live.tick.tick();
 
     // The direct, positive form of "the projector reads the archive": every byte
@@ -795,7 +801,10 @@ describe('AC3 — the "under 10" bound as a property of the real corpus', () => 
         const sweep = createCorpusSweep({ db, dataDir: scratch, transcriptRoot: scratch });
         const tick = startLiveTick({
           db,
-          env: createProjectionEnv(),
+          env: createProjectionEnv(createArchiveReader(), {
+            archiveRoot: join(scratch, 'archive'),
+            transcriptRoot: resolveTranscriptRoot(),
+          }),
           sweep: { ...sweep, wave2: () => emptyReport() },
           hub,
           intervalMs: 0,
@@ -944,7 +953,10 @@ describe('AC4(a) — a session that exceeds SLOW_MS is backed off on the next ti
       const sweep = createCorpusSweep({ db, dataDir: scratch, transcriptRoot: scratch });
       const tick = startLiveTick({
         db,
-        env: createProjectionEnv(),
+        env: createProjectionEnv(createArchiveReader(), {
+          archiveRoot: join(scratch, 'archive'),
+          transcriptRoot: resolveTranscriptRoot(),
+        }),
         sweep: { ...sweep, wave2: () => emptyReport() },
         hub,
         intervalMs: 0,
@@ -1028,9 +1040,13 @@ describe('AC4(b) — one tick is bounded at wave 1 + DEADLINE_MS + one session',
         const hub = recordingHub();
         const clock = shiftableClock();
         const sweep = createCorpusSweep({ db, dataDir, transcriptRoot: scratch });
+        const realEnv = createProjectionEnv(createArchiveReader(), {
+          archiveRoot: join(dataDir, 'archive'),
+          transcriptRoot: resolveTranscriptRoot(),
+        });
         const tick = startLiveTick({
           db,
-          env: createProjectionEnv(),
+          env: realEnv,
           // Wave 2 is stubbed for the same reason as everywhere else in this file:
           // it rolls sub-agents up and has nothing to do with the reprojection bound.
           sweep: { ...sweep, wave2: () => emptyReport() },
@@ -1060,7 +1076,7 @@ describe('AC4(b) — one tick is bounded at wave 1 + DEADLINE_MS + one session',
             id: string;
           }[]
         ).map((row) => row.id);
-        const env = createProjectionEnv();
+        const env = realEnv;
         const costs = new Map<string, number>();
         for (const id of ids) {
           db.prepare('UPDATE sessions SET projected_size = NULL WHERE id = ?').run(id);

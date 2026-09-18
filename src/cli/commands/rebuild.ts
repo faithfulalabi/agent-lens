@@ -18,7 +18,13 @@
 
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { acquireLock, resolveDataDir } from '../../archive/index.js';
+import {
+  acquireLock,
+  resolveArchiveRoot,
+  resolveDataDir,
+  resolveTranscriptRoot,
+} from '../../archive/index.js';
+import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { ensureProjectedFold } from '../../db/freshness.js';
 import { CACHE_DB_FILE, CACHE_LOCK_FILE, DbLockedError, openDb } from '../../db/open.js';
@@ -35,10 +41,10 @@ export function parseSessionId(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (arg.startsWith('-')) {
-      // ponytail: rebuild's one value flag, spelled here as well as in the
+      // ponytail: rebuild's value flags, spelled here as well as in the
       // COMMANDS table on purpose (no shared parser near a destructive
-      // command's walk) — a second value flag must be added in both places.
-      if (arg === '--dataDir') i += 1;
+      // command's walk) — a new value flag must be added in both places.
+      if (arg === '--dataDir' || arg === '--transcriptRoot') i += 1;
       continue;
     }
     return arg;
@@ -83,10 +89,13 @@ function rebuildCache(dataDir: string): number {
 }
 
 /** Forces one session's projection, following `api.ts`'s reproject route. */
-function rebuildSession(dataDir: string, id: string): number {
+function rebuildSession(dataDir: string, transcriptRoot: string, id: string): number {
   const opened = openDb({ dataDir });
   try {
-    const env = createProjectionEnv();
+    const env = createProjectionEnv(createArchiveReader(), {
+      archiveRoot: resolveArchiveRoot(dataDir),
+      transcriptRoot,
+    });
     const started = Date.now();
     const gate = ensureProjectedFold(opened.db, id, env);
 
@@ -123,8 +132,11 @@ function rebuildSession(dataDir: string, id: string): number {
 export async function rebuild(args: string[] = []): Promise<number> {
   try {
     const dataDir = resolveDataDir(parseStringFlag(args, 'dataDir'));
+    // Mirrors `warm`: without it, a session started with `--transcriptRoot`
+    // would reproject its resolved spills to `missing`.
+    const transcriptRoot = resolveTranscriptRoot(parseStringFlag(args, 'transcriptRoot'));
     const id = parseSessionId(args);
-    return id === undefined ? rebuildCache(dataDir) : rebuildSession(dataDir, id);
+    return id === undefined ? rebuildCache(dataDir) : rebuildSession(dataDir, transcriptRoot, id);
   } catch (error) {
     if (error instanceof DbLockedError) {
       console.error(`${error.message} — stop it, or reproject from the running UI instead`);

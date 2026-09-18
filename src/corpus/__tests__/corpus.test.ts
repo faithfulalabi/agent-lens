@@ -41,7 +41,10 @@ function coldScan(): { db: ReturnType<typeof openCache>; result: ScanResult } {
 
 /** Every line of a whole transcript, classified. The ground truth for a fold. */
 function wholeFileLines(archivePath: string): readonly ParsedLine[] {
-  return createProjectionEnv().readLines(archivePath).lines;
+  return createProjectionEnv(createArchiveReader(), {
+    archiveRoot: ARCHIVE_ROOT,
+    transcriptRoot: SOURCE_ROOT,
+  }).readLines(archivePath).lines;
 }
 
 /** The pre-4.1 answer: the first and last lines only. */

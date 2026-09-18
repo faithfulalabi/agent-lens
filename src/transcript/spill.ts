@@ -81,6 +81,13 @@ export interface ResolveEnv {
    *  this is the GRANDPARENT of the transcript, not its own directory. */
   sessionRoot?: string;
   archiveRoot?: string;
+  /**
+   * True when a DECLARED path may be dereferenced verbatim — it realpath-resolves
+   * inside a root this product owns (finding F1). Optional so hermetic env
+   * literals stay valid; the production factory (`corpus/env.ts`) always binds
+   * it. Absent means unchecked. A throwing predicate refuses, fail-closed.
+   */
+  withinRoots?(path: string): boolean;
 }
 
 /** The declared path plus where it came from, before any existence check. */
@@ -203,7 +210,19 @@ export function resolvePersistedOutput(line: unknown, env: ResolveEnv): SpillSta
     ...(declared.declaredSize !== undefined && { declaredSize: declared.declaredSize }),
   });
 
-  if (probe(declared.path)) return resolvedAt(declared.path);
+  // The verbatim arm only: the re-anchor arm below builds its own paths under
+  // the injected roots and needs no gate.
+  const contained = (path: string): boolean => {
+    if (env.withinRoots === undefined) return true;
+    try {
+      return env.withinRoots(path) === true;
+    } catch {
+      // Fail-closed: a throwing predicate refuses the path, never the projection.
+      return false;
+    }
+  };
+
+  if (contained(declared.path) && probe(declared.path)) return resolvedAt(declared.path);
 
   let rescued: string | undefined;
   try {
