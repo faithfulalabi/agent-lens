@@ -7,15 +7,6 @@
 // then dropped the seven entity types that went with them, and Task 5.2 dropped
 // the eight that described the plan-001 span tree.
 
-export type { SessionStatus, CaptureMode } from './entities.js';
-
-export type { ModelPrice, TokenUsage } from './pricing.js';
-export {
-  PRICING_TABLE,
-  PRICING_TABLE_DATE,
-  PRICING_VERSION,
-  estimateCost,
-  normalizeModelKey,
-} from './pricing.js';
+export { estimateCost } from './pricing.js';
 
 export { readOrCreateToken, readToken, TOKEN_HEADER } from './token.js';
