@@ -36,9 +36,9 @@ import {
   compressLikeSeal,
   plantCrashWindow,
   sha256Hex,
-  useSandbox,
   writeSidecar,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const ARCHIVE_SRC = join(dirname(fileURLToPath(import.meta.url)), '..');

@@ -6,14 +6,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { it } from 'vitest';
 import { classifyLine, type LineContext, type ParsedLine } from '../line.js';
 import { DriftCounter } from '../drift.js';
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
-
-/** `it` for the real-corpus sweeps: skipped unless `AGENT_LENS_REAL_CORPUS=1`. */
-export const runIt: typeof it.skip = process.env['AGENT_LENS_REAL_CORPUS'] === '1' ? it : it.skip;
 
 /** The frozen archive those sweeps read. */
 export const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');

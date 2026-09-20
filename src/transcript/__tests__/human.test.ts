@@ -12,14 +12,8 @@ import { readFileSync } from 'node:fs';
 import { arr, obj } from '../accessors.js';
 import { classifyLine, type ParsedLine } from '../line.js';
 import { fallbackIsHuman, isHumanPrompt, MACHINERY_TAGS } from '../human.js';
-import {
-  ARCHIVE_ROOT,
-  archiveJsonlFiles,
-  classifyFixture,
-  ctx,
-  offsetLines,
-  runIt,
-} from './fixtures.js';
+import { ARCHIVE_ROOT, archiveJsonlFiles, classifyFixture, ctx, offsetLines } from './fixtures.js';
+import { runIt } from './run-it.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
 const MIN_FILES = 100;

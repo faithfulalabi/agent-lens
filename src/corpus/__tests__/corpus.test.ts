@@ -17,7 +17,7 @@ import { createArchiveReader } from '../../archive/read.js';
 import { readSessionEnvelope, readSidecars } from '../../db/sidecars.js';
 import { foldSessionEnvelope, type ParsedLine } from '../../transcript/line.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
-import { runIt } from '../../transcript/__tests__/fixtures.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { createProjectionEnv } from '../env.js';
 import { classifyCorpusPath, encodeProjectDir, decodeProjectDir, rowIdOf } from '../paths.js';
 import { scanCorpus, type ScanResult } from '../scan.js';

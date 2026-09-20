@@ -22,9 +22,9 @@ import {
   runMain,
   SLUG,
   snapshotTreeSafe,
-  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { createCorpusSweep } from '../../corpus/watch.js';

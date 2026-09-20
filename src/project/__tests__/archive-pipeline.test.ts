@@ -21,8 +21,8 @@ import {
   ARCHIVE_ROOT,
   archiveJsonlFiles,
   classifyArchiveFile,
-  runIt,
 } from '../../transcript/__tests__/fixtures.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { runPipeline } from '../pipeline.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
 

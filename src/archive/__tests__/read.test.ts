@@ -13,7 +13,8 @@ import {
 } from '../read.js';
 import { sealArchiveFile } from '../seal.js';
 import { canonicalizeTranscriptPath } from '../paths.js';
-import { codeOf, readBytes, SLUG, transcriptLines, useSandbox, writeArchive } from './fixtures.js';
+import { codeOf, readBytes, SLUG, transcriptLines, writeArchive } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 
 const sb = useSandbox();
 

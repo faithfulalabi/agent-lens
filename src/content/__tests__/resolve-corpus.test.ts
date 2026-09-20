@@ -16,7 +16,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { resolveArchiveRoot, resolveTranscriptRoot } from '../../archive/paths.js';
 import { createArchiveReader } from '../../archive/read.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
-import { runIt } from '../../transcript/__tests__/fixtures.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { readEventArchivePath, readEventContentRow, type EventContentRow } from '../../db/read.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
 import { INLINE_MAX } from '../../project/tools.js';

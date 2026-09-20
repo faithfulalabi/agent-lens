@@ -21,8 +21,8 @@ import {
   ARCHIVE_ROOT,
   archiveJsonlFiles,
   classifyArchiveFile,
-  runIt,
 } from '../../transcript/__tests__/fixtures.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { runPipeline } from '../pipeline.js';
 
 /** Lower bounds, well under what was measured on 2026-08-14 (276 files, 45,219 lines). */

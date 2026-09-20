@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { foldRequestGroup, groupByRequestId, modelOfRequestGroup } from '../usage.js';
-import { ARCHIVE_ROOT, archiveJsonlFiles, runIt } from './fixtures.js';
+import { ARCHIVE_ROOT, archiveJsonlFiles } from './fixtures.js';
+import { runIt } from './run-it.js';
 
 /** One assistant line carrying `message.usage`, shaped as the harness sends it. */
 function assistantLine(

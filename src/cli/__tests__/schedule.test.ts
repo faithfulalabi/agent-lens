@@ -17,9 +17,9 @@ import {
   captureConsole,
   runMain,
   snapshotTreeSafe,
-  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { parseCronLog } from '../../archive/cron-log.js';
 import {
   resolveCronLogPath,

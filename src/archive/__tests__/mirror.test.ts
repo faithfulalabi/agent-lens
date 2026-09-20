@@ -28,10 +28,10 @@ import {
   sourcePath,
   writeArchive,
   writeSource,
-  useSandbox,
   type Sandbox,
   type TreeEntry,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 
 const sb = useSandbox();
 

@@ -18,9 +18,9 @@ import {
   settingsPath,
   snapshotTreeSafe,
   writeSettings,
-  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import {
   sessionRecords,
   SLUG,

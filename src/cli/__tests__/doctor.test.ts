@@ -30,9 +30,9 @@ import {
   writeSettings,
   writeSidecar,
   writeSource,
-  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { sessionRecords, writeSession } from '../../corpus/__tests__/fixtures.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
 import { openDb } from '../../db/open.js';

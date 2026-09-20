@@ -12,12 +12,8 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  captureConsole,
-  plantHeldLock,
-  useSandbox,
-  type Sandbox,
-} from '../../archive/__tests__/fixtures.js';
+import { captureConsole, plantHeldLock, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { sessionRecords, writeSession, writeSidecar } from '../../corpus/__tests__/fixtures.js';
 import { CACHE_LOCK_FILE, openDb } from '../../db/open.js';
 import { countUnprojected, readHealthCounts } from '../../db/read.js';

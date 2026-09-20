@@ -43,9 +43,9 @@ import {
   writeSettings,
   writeSidecar,
   writeSource,
-  useSandbox,
   type Sandbox,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 import { archiveOnce } from '../mirror.js';
 import { sidecarPath } from '../sidecar.js';
 

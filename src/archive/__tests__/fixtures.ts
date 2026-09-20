@@ -18,7 +18,6 @@ import { createHash } from 'node:crypto';
 import { hostname, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
-import { afterEach } from 'vitest';
 import { main } from '../../cli/index.js';
 import { serializeSidecar, SIDECAR_VERSION, type SealSidecar } from '../sidecar.js';
 
@@ -45,19 +44,6 @@ export function makeSandbox(): Sandbox {
 
 export function cleanup(sandbox: Sandbox): void {
   rmSync(sandbox.root, { recursive: true, force: true });
-}
-
-/**
- * One sandbox per test, made on first use and removed after it. Call once at a
- * file's top level; the returned getter is the file's `sb()`.
- */
-export function useSandbox(): () => Sandbox {
-  let sandbox: Sandbox | undefined;
-  afterEach(() => {
-    if (sandbox) cleanup(sandbox);
-    sandbox = undefined;
-  });
-  return () => (sandbox ??= makeSandbox());
 }
 
 export function writeSource(sandbox: Sandbox, rel: string, content: string | Buffer): string {

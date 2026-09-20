@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { useSandbox } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { createArchiveReader, type ArchiveReader } from '../../archive/read.js';
 import { classifyLine, foldSessionEnvelope } from '../../transcript/line.js';
 import { DriftCounter } from '../../transcript/drift.js';

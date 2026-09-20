@@ -5,13 +5,8 @@
 // saying why. This is the line, and these are its two arms.
 
 import { describe, expect, it } from 'vitest';
-import {
-  jsonLines,
-  SLUG,
-  writeArchive,
-  writeSource,
-  useSandbox,
-} from '../../archive/__tests__/fixtures.js';
+import { jsonLines, SLUG, writeArchive, writeSource } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { emptyArchiveNotice } from '../commands/start.js';
 
 const sb = useSandbox();

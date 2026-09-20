@@ -22,7 +22,8 @@ import {
   type Block,
   type BlockKind,
 } from '../blocks.js';
-import { ARCHIVE_ROOT, archiveJsonlFiles, fixtureBytes, offsetLines, runIt } from './fixtures.js';
+import { ARCHIVE_ROOT, archiveJsonlFiles, fixtureBytes, offsetLines } from './fixtures.js';
+import { runIt } from './run-it.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
 const MIN_FILES = 100;

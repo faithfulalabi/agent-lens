@@ -11,7 +11,8 @@ import { describe, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { classifyLine, type ParsedKind } from '../line.js';
 import { DriftCounter } from '../drift.js';
-import { ARCHIVE_ROOT, archiveJsonlFiles, offsetLines, runIt } from './fixtures.js';
+import { ARCHIVE_ROOT, archiveJsonlFiles, offsetLines } from './fixtures.js';
+import { runIt } from './run-it.js';
 
 /** Lower bounds, well under what was measured on 2026-08-13 (254 files, 40,701 lines). */
 const MIN_FILES = 100;
