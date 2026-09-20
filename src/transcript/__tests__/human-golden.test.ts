@@ -17,19 +17,12 @@
 // private to each suite on purpose, so one suite's bound never silently governs
 // another's.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { obj, str } from '../accessors.js';
 import { classifyLine, type ParsedLine } from '../line.js';
 import { fallbackIsHuman, isHumanPrompt } from '../human.js';
-import { archiveJsonlFiles, ctx, offsetLines } from './fixtures.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
+import { ARCHIVE_ROOT, archiveJsonlFiles, ctx, offsetLines, runIt } from './fixtures.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
 const MIN_FILES = 100;

@@ -2,7 +2,7 @@
 // honest counters (AC4), and the frame content-size check that is the whole
 // read-side defence against a truncated `.zst`.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { existsSync, truncateSync } from 'node:fs';
 import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import {
@@ -13,27 +13,9 @@ import {
 } from '../read.js';
 import { sealArchiveFile } from '../seal.js';
 import { canonicalizeTranscriptPath } from '../paths.js';
-import {
-  cleanup,
-  makeSandbox,
-  readBytes,
-  SLUG,
-  transcriptLines,
-  writeArchive,
-  type Sandbox,
-} from './fixtures.js';
+import { codeOf, readBytes, SLUG, transcriptLines, useSandbox, writeArchive } from './fixtures.js';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 /** Plant a hot archive file and return its logical path. */
 function plant(rel: string, body: string): string {
@@ -45,15 +27,6 @@ function plantSealed(rel: string, body: string): string {
   const logical = plant(rel, body);
   sealArchiveFile(logical, canonicalizeTranscriptPath(sb().archiveRoot));
   return logical;
-}
-
-function codeOf(run: () => unknown): string | undefined {
-  try {
-    run();
-    return undefined;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code;
-  }
 }
 
 describe('AC3 — one accessor, two storage states, byte-identical (Test 6)', () => {

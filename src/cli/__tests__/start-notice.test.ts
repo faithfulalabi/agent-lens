@@ -4,29 +4,17 @@
 // headline claim of the re-architecture, silently false, with no line on screen
 // saying why. This is the line, and these are its two arms.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  cleanup,
   jsonLines,
-  makeSandbox,
   SLUG,
   writeArchive,
   writeSource,
-  type Sandbox,
+  useSandbox,
 } from '../../archive/__tests__/fixtures.js';
 import { emptyArchiveNotice } from '../commands/start.js';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 describe('emptyArchiveNotice — printed, never mirrored', () => {
   it('names both directories and the command that joins them when the archive is empty', () => {

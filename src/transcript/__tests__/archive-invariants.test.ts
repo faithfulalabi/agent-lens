@@ -7,18 +7,11 @@
 // transcript expiry. So every assertion here is an INVARIANT or a LOWER BOUND —
 // never an absolute count, which would red on a Tuesday for no reason.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { classifyLine, type ParsedKind } from '../line.js';
 import { DriftCounter } from '../drift.js';
-import { archiveJsonlFiles, offsetLines } from './fixtures.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
+import { ARCHIVE_ROOT, archiveJsonlFiles, offsetLines, runIt } from './fixtures.js';
 
 /** Lower bounds, well under what was measured on 2026-08-13 (254 files, 40,701 lines). */
 const MIN_FILES = 100;

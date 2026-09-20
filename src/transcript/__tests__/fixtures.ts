@@ -3,12 +3,20 @@
 // below it assert behaviour instead of re-deriving file plumbing four times.
 
 import { readFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { it } from 'vitest';
 import { classifyLine, type LineContext, type ParsedLine } from '../line.js';
 import { DriftCounter } from '../drift.js';
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+
+/** `it` for the real-corpus sweeps: skipped unless `AGENT_LENS_REAL_CORPUS=1`. */
+export const runIt: typeof it.skip = process.env['AGENT_LENS_REAL_CORPUS'] === '1' ? it : it.skip;
+
+/** The frozen archive those sweeps read. */
+export const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
 
 /** One JSONL line with the byte offset of its first byte, and its own length. */
 export interface OffsetLine {
@@ -41,14 +49,14 @@ export function offsetLines(text: string): OffsetLine[] {
   return lines;
 }
 
-/** Every line of a fixture, classified, sharing one `DriftCounter`. */
-export function classifyFixture(name: string): {
+/** Every line of a JSONL text, classified, sharing one `DriftCounter`. */
+export function classifyText(text: string): {
   lines: ParsedLine[];
   drift: DriftCounter;
   offsets: OffsetLine[];
 } {
   const drift = new DriftCounter();
-  const offsets = offsetLines(fixtureBytes(name).toString('utf8'));
+  const offsets = offsetLines(text);
   const lines = offsets.map((entry) =>
     classifyLine(JSON.parse(entry.text), {
       byteOffset: entry.byteOffset,
@@ -57,6 +65,32 @@ export function classifyFixture(name: string): {
     }),
   );
   return { lines, drift, offsets };
+}
+
+/** Every line of a fixture, classified. */
+export function classifyFixture(name: string): ReturnType<typeof classifyText> {
+  return classifyText(fixtureBytes(name).toString('utf8'));
+}
+
+/**
+ * Every line of an ARCHIVED transcript, classified. Unlike a fixture, a real
+ * file may end in a partially written line; it still gets a row.
+ */
+export function classifyArchiveFile(file: string): ParsedLine[] {
+  const drift = new DriftCounter();
+  return offsetLines(readFileSync(file).toString('utf8')).map((entry) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(entry.text);
+    } catch {
+      parsed = undefined;
+    }
+    return classifyLine(parsed, {
+      byteOffset: entry.byteOffset,
+      byteLength: entry.byteLength,
+      drift,
+    });
+  });
 }
 
 /**

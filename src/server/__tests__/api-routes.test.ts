@@ -33,6 +33,12 @@ import {
   toolResultLine,
   writeTranscript,
 } from '../../db/__tests__/fixtures/index.js';
+import {
+  EVENT_ROW_KEYS,
+  SEARCH_HIT_KEYS,
+  SESSION_ROW_KEYS as DB_SESSION_ROW_KEYS,
+  TURN_ROW_KEYS,
+} from '../../db/__tests__/fixtures/shapes.js';
 import { emptyReport } from '../../corpus/watch.js';
 import type { Page } from '../../shared/api.js';
 import {
@@ -50,111 +56,12 @@ import { buildApiApp } from '../app.js';
 import type { DriftReport } from '../api.js';
 import { createStreamHub, type StreamHub } from '../stream.js';
 import { createWarmQueue, type WarmQueue } from '../warm.js';
+import { stubWarm } from './helpers.js';
 
 const TOKEN = 'test-token';
 
-/** `SessionRow`, transcribed from `data-model-v2.md:276-286`. `live` included. */
-const SESSION_ROW_KEYS = [
-  'id',
-  'title',
-  'preview',
-  'project_path',
-  'git_branch',
-  'model',
-  'harness_version',
-  'started_at',
-  'last_activity_at',
-  'live',
-  'turn_count',
-  'tool_call_count',
-  'error_count',
-  'tokens_in',
-  'tokens_out',
-  'tokens_cache_read',
-  'tokens_cache_write',
-  'est_cost',
-  'agent_count',
-  'sub_tool_call_count',
-  'sub_error_count',
-  'sub_tokens_in',
-  'sub_tokens_out',
-  'sub_tokens_cache_read',
-  'sub_tokens_cache_write',
-  'sub_est_cost',
-  'rollup_state',
-  'has_drift',
-];
-
-/** `TurnRow`, from `data-model-v2.md:314-317`. */
-const TURN_ROW_KEYS = [
-  'id',
-  'seq',
-  'kind',
-  // Task 5.1: the Agent call a task_notification turn answers.
-  'parent_event_id',
-  'title',
-  'started_at',
-  'ended_at',
-  'duration_ms',
-  'duration_source',
-  'tokens_in',
-  'tokens_out',
-  'tokens_cache_read',
-  'tokens_cache_write',
-  'est_cost',
-  'tool_call_count',
-  'error_count',
-  'first_seq',
-  'last_seq',
-];
-
-/** `EventRow`, from `data-model-v2.md:318-329`. */
-const EVENT_ROW_KEYS = [
-  'id',
-  'turn_id',
-  'seq',
-  'kind',
-  'ts',
-  'request_id',
-  'block_index',
-  'name',
-  'status',
-  'duration_ms',
-  'duration_source',
-  'input',
-  'input_bytes',
-  'input_storage',
-  'text',
-  'text_bytes',
-  'output_storage',
-  'spill_path',
-  'spill_bytes',
-  'model',
-  'tokens_in',
-  'tokens_out',
-  'tokens_cache_read',
-  'tokens_cache_write',
-  'est_cost',
-  'child_session_id',
-  'agent_type',
-  'agent_status',
-  'raw_type',
-  'raw_subtype',
-];
-
-/** `SearchHit`, from `data-model-v2.md:353`. */
-const SEARCH_HIT_KEYS = [
-  'session_id',
-  'session_title',
-  'project_path',
-  'turn_id',
-  'event_id',
-  'seq',
-  'kind',
-  'name',
-  'ts',
-  'snippet',
-];
+/** `SessionRow` as served: the db row plus the server-stamped `live`. */
+const SESSION_ROW_KEYS = [...DB_SESSION_ROW_KEYS, 'live'];
 
 const PAGE_KEYS = ['items', 'limit', 'offset', 'has_more'];
 
@@ -478,7 +385,7 @@ describe('4. GET /api/events/:id/content (spec:334-345)', () => {
       uiDir: join(sandbox.root, 'no-such-ui'),
       hub: createStreamHub(),
       // Never POSTed through, so it starts nothing there is anything to close.
-      warm: { start: () => 0, close: () => undefined },
+      warm: stubWarm(),
       resolveContent: (row, field) => ({
         storage: 'line_ref',
         content: `resolved ${row.id} ${field}`,
@@ -515,7 +422,7 @@ describe('F1 — an out-of-root spill path never serves its bytes', () => {
       uiDir: join(sandbox.root, 'no-such-ui'),
       hub: createStreamHub(),
       // Never POSTed through, so it starts nothing there is anything to close.
-      warm: { start: () => 0, close: () => undefined },
+      warm: stubWarm(),
       resolveContent: createContentResolver(
         (id) => readEventArchivePath(db, id)?.archive_path,
         createContentEnv(createArchiveReader(), [sandbox.archiveRoot, sandbox.sourceRoot]),
@@ -523,7 +430,10 @@ describe('F1 — an out-of-root spill path never serves its bytes', () => {
     });
   }
 
-  async function contentOf(app: Hono, eventId: string): Promise<{ status: number; body: ContentBody }> {
+  async function contentOf(
+    app: Hono,
+    eventId: string,
+  ): Promise<{ status: number; body: ContentBody }> {
     const res = await app.request(`/api/events/${eventId}/content?field=text`, {
       headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
     });
@@ -819,7 +729,7 @@ describe('10. GET /api/health (spec:394-396)', () => {
       token: TOKEN,
       uiDir: join(sandbox.root, 'no-such-ui'),
       hub: createStreamHub(),
-      warm: { start: () => 0, close: () => undefined },
+      warm: stubWarm(),
       sweep: {
         tick: () => {
           throw new Error('unused');

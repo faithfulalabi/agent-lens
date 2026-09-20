@@ -10,7 +10,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -23,12 +22,7 @@ import {
   type Block,
   type BlockKind,
 } from '../blocks.js';
-import { archiveJsonlFiles, fixtureBytes, offsetLines } from './fixtures.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
+import { ARCHIVE_ROOT, archiveJsonlFiles, fixtureBytes, offsetLines, runIt } from './fixtures.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
 const MIN_FILES = 100;

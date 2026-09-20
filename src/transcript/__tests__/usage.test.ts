@@ -9,10 +9,9 @@
 // true as the archive grows, where absolute counts do not.
 
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { foldRequestGroup, groupByRequestId, modelOfRequestGroup } from '../usage.js';
+import { ARCHIVE_ROOT, archiveJsonlFiles, runIt } from './fixtures.js';
 
 /** One assistant line carrying `message.usage`, shaped as the harness sends it. */
 function assistantLine(
@@ -310,34 +309,14 @@ describe('AC3 — groupByRequestId drops nothing and merges nothing it should no
 
 // --- AC2: the corpus invariants, opt-in ------------------------------------
 
-const REAL_CORPUS = process.env['AGENT_LENS_REAL_CORPUS'] === '1';
-const corpusIt = REAL_CORPUS ? it : it.skip;
-
-/** Every archived transcript. The archive is frozen; `~/.claude/projects` is not. */
-function archivedTranscripts(root: string, out: string[] = []): string[] {
-  let entries;
-  try {
-    entries = readdirSync(root, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) archivedTranscripts(path, out);
-    else if (entry.name.endsWith('.jsonl')) out.push(path);
-  }
-  return out;
-}
-
 describe('AC2 — the fold rule holds over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => {
-  corpusIt(
+  runIt(
     'every multi-line group copies input and grows output to its last line',
     () => {
-      const root = join(homedir(), '.agent-lens', 'archive');
       const groups: unknown[][] = [];
       let usageLines = 0;
 
-      for (const file of archivedTranscripts(root)) {
+      for (const file of archiveJsonlFiles(ARCHIVE_ROOT)) {
         let text: string;
         try {
           text = readFileSync(file, 'utf8');

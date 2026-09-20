@@ -14,19 +14,16 @@
 // `ParsedLine[]`, which is the honest way to run a differential anyway: two
 // independent implementations, one corpus.
 
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect } from 'vitest';
 import { DriftCounter } from '../../transcript/drift.js';
-import { classifyLine, type ParsedLine } from '../../transcript/line.js';
-import { archiveJsonlFiles, offsetLines } from '../../transcript/__tests__/fixtures.js';
+import type { ParsedLine } from '../../transcript/line.js';
+import {
+  ARCHIVE_ROOT,
+  archiveJsonlFiles,
+  classifyArchiveFile,
+  runIt,
+} from '../../transcript/__tests__/fixtures.js';
 import { runPipeline } from '../pipeline.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
 
 /** Lower bounds, well under what was measured on 2026-08-14 (276 files, 45,219 lines). */
 const MIN_FILES = 100;
@@ -36,23 +33,6 @@ const MIN_AGREEMENTS = 20000;
 
 /** `capture/merge.ts:57`. Reproduced so the port is faithful, hop limit included. */
 const MAX_ANCESTOR_HOPS = 128;
-
-function parsedLines(file: string): ParsedLine[] {
-  const drift = new DriftCounter();
-  return offsetLines(readFileSync(file).toString('utf8')).map((entry) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(entry.text);
-    } catch {
-      parsed = undefined;
-    }
-    return classifyLine(parsed, {
-      byteOffset: entry.byteOffset,
-      byteLength: entry.byteLength,
-      drift,
-    });
-  });
-}
 
 function rawString(line: ParsedLine, field: string): string | undefined {
   const value: unknown = line.raw[field];
@@ -112,7 +92,7 @@ describe('AC2 — the forward pass agrees with the ancestor walk (opt-in via AGE
       const walkOnly: string[] = [];
 
       for (const file of files) {
-        const lines = parsedLines(file);
+        const lines = classifyArchiveFile(file);
         lineCount += lines.length;
         const forward = forwardPass(lines);
         const walked = ancestorPass(lines);
@@ -152,7 +132,7 @@ describe('AC2 — the forward pass agrees with the ancestor walk (opt-in via AGE
       const split: string[] = [];
 
       for (const file of files) {
-        const lines = parsedLines(file);
+        const lines = classifyArchiveFile(file);
         const forward = forwardPass(lines);
         const offsetToSegment = new Map(
           lines.map((line, index) => [line.byte_offset, forward.segment[index]!]),

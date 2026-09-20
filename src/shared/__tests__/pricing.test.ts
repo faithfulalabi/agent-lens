@@ -14,6 +14,8 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     ['us.anthropic.claude-opus-4-8', 'claude-opus-4-8'],
     ['anthropic.claude-sonnet-5', 'claude-sonnet-5'],
     ['us.anthropic.claude-haiku-4-5-20251001', 'claude-haiku-4-5'],
+    // `-4-5` is part of the family key, not a `-YYYYMMDD` build stamp.
+    ['claude-sonnet-4-5', 'claude-sonnet-4-5'],
   ])('%s -> %s', (input, expected) => {
     expect(normalizeModelKey(input)).toBe(expected);
   });
@@ -25,11 +27,6 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     [''],
   ])('returns undefined for the unknown family %s', (input) => {
     expect(normalizeModelKey(input)).toBeUndefined();
-  });
-
-  it('does not mistake a version segment for a date suffix', () => {
-    // `-4-5` is part of the family key, not a `-YYYYMMDD` build stamp.
-    expect(normalizeModelKey('claude-sonnet-4-5')).toBe('claude-sonnet-4-5');
   });
 });
 

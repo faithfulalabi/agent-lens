@@ -40,8 +40,6 @@ export interface ManualSseOptions {
    * cover it hang or pass vacuously.
    */
   signal?: AbortSignal;
-  status?: number;
-  statusText?: string;
 }
 
 /** A streaming `Response` whose body the test pushes to by hand. */
@@ -83,11 +81,7 @@ export function manualSse(options: ManualSseOptions = {}): ManualSse {
   }
 
   return {
-    response: new Response(stream, {
-      status: options.status ?? 200,
-      statusText: options.statusText ?? '',
-      headers: { 'content-type': 'text/event-stream' },
-    }),
+    response: new Response(stream, { headers: { 'content-type': 'text/event-stream' } }),
     push(text) {
       if (!settled && controller !== undefined) controller.enqueue(encoder.encode(text));
     },
@@ -100,11 +94,6 @@ export function manualSse(options: ManualSseOptions = {}): ManualSse {
 }
 
 export interface SseResponseOptions extends ManualSseOptions {
-  /**
-   * Re-cut the whole byte stream into equal-length pieces, so a frame can be
-   * split across two reads. Default: one chunk per frame.
-   */
-  chunkSize?: number;
   /** Leave the body open after the last frame instead of ending it. */
   keepOpen?: boolean;
 }
@@ -112,17 +101,9 @@ export interface SseResponseOptions extends ManualSseOptions {
 /** A finished `Response` carrying `frames`, ready to hand back from a fake fetch. */
 export function sseResponse(frames: readonly string[], options: SseResponseOptions = {}): Response {
   const source = manualSse(options);
-  for (const chunk of chunksOf(frames, options.chunkSize)) source.push(chunk);
+  for (const frame of frames) source.push(frame);
   if (options.keepOpen !== true) source.end();
   return source.response;
-}
-
-function chunksOf(frames: readonly string[], size: number | undefined): string[] {
-  if (size === undefined) return [...frames];
-  const text = frames.join('');
-  const out: string[] = [];
-  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
-  return out;
 }
 
 /* -------------------------------------------------------------- clock --- */

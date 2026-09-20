@@ -9,11 +9,15 @@
 // recorded this over the real archive (43 rows in the first snapshot, 360 in the
 // table by the end); this is the hermetic miniature of it.
 
-import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import {
+  captureConsole,
+  plantHeldLock,
+  useSandbox,
+  type Sandbox,
+} from '../../archive/__tests__/fixtures.js';
 import { sessionRecords, writeSession, writeSidecar } from '../../corpus/__tests__/fixtures.js';
 import { CACHE_LOCK_FILE, openDb } from '../../db/open.js';
 import { countUnprojected, readHealthCounts } from '../../db/read.js';
@@ -23,34 +27,15 @@ import { printingHub, warm } from '../commands/warm.js';
 const START = '2026-08-14T09:00:00.000Z';
 const END = '2026-08-14T09:00:30.000Z';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 function argsFor(s: Sandbox): string[] {
   return [`--dataDir=${s.dataDir}`, `--transcriptRoot=${s.sourceRoot}`];
 }
 
 async function runWarm(args: string[]): Promise<{ code: number; lines: string[] }> {
-  const lines: string[] = [];
-  const log = console.log;
-  const err = console.error;
-  console.log = (msg?: unknown) => void lines.push(String(msg));
-  console.error = (msg?: unknown) => void lines.push(String(msg));
-  try {
-    return { code: await warm(args), lines };
-  } finally {
-    console.log = log;
-    console.error = err;
-  }
+  const { value: code, lines } = await captureConsole(() => warm(args));
+  return { code, lines };
 }
 
 /** `{done, total}` for every rendered progress line, in order. */
@@ -198,11 +183,7 @@ describe('13 — teardown, and the lock a running server holds (AC3)', () => {
     const s = sb();
     writeSession(s, 'aaaaaaaa-1111-4111-8111-wm0000000020', sessionRecords('c1', START, END));
     openDb({ dataDir: s.dataDir }).close();
-    writeFileSync(
-      join(s.dataDir, CACHE_LOCK_FILE),
-      JSON.stringify({ pid: 1, started_at: Date.now(), hostname: hostname() }),
-      { mode: 0o600 },
-    );
+    plantHeldLock(join(s.dataDir, CACHE_LOCK_FILE));
 
     const { code, lines } = await runWarm(argsFor(s));
 

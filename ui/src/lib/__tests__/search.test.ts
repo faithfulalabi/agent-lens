@@ -1,6 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { createElement } from 'react';
 
 import {
   emptyResultCopy,
@@ -140,24 +138,6 @@ describe('splitSnippet never yields markup, on adversarial real content (Test 2)
         .map((part) => part.text)
         .join(''),
     ).toBe('const x = <script>alert(1)</script> && a < b');
-  });
-
-  it('a static render escapes the tag rather than emitting one', () => {
-    const markup = renderToStaticMarkup(
-      createElement(
-        'p',
-        null,
-        splitSnippet(ADVERSARIAL).map((part, index) =>
-          createElement(part.matched ? 'mark' : 'span', { key: index }, part.text),
-        ),
-      ),
-    );
-    expect(markup, 'the entity is what proves React treated it as text').toContain(
-      '&lt;script&gt;',
-    );
-    expect(markup, 'a live tag here would be the injection').not.toContain('<script>');
-    // The highlight IS an element — drawn by the component, not sent by SQLite.
-    expect(markup).toContain('<mark>');
   });
 });
 

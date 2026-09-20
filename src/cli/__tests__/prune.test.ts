@@ -8,17 +8,17 @@
 // an unrecognised flag is silently ignored binary-wide today, so nothing here
 // may reach a real `~/.agent-lens` or a real `~/.claude/settings.json`.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDoctorReport, type DoctorReport } from '../../archive/index.js';
 import {
-  cleanup,
-  makeSandbox,
+  captureConsole,
   settingsPath,
   snapshotTreeSafe,
   writeSettings,
+  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
 import {
@@ -47,17 +47,7 @@ const TWO = 'aaaaaaaa-1111-4111-8111-pr0000000002';
 const HERE = resolve(import.meta.dirname, '../../..');
 const BIN = join(HERE, 'bin', 'agent-lens.js');
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 function argsFor(s: Sandbox, extra: string[] = []): string[] {
   return [
@@ -84,18 +74,9 @@ function reportFor(s: Sandbox): DoctorReport {
 }
 
 async function runPrune(args: string[], answer?: string): Promise<{ code: number; out: string }> {
-  const lines: string[] = [];
-  const log = console.log;
-  const err = console.error;
-  console.log = (msg?: unknown) => void lines.push(String(msg));
-  console.error = (msg?: unknown) => void lines.push(String(msg));
-  try {
-    const options = answer === undefined ? {} : { confirm: () => Promise.resolve(answer) };
-    return { code: await prune(args, options), out: lines.join('\n') };
-  } finally {
-    console.log = log;
-    console.error = err;
-  }
+  const options = answer === undefined ? {} : { confirm: () => Promise.resolve(answer) };
+  const { value: code, lines } = await captureConsole(() => prune(args, options));
+  return { code, out: lines.join('\n') };
 }
 
 /** Spawns the real binary with stdin already at EOF — what a cron gives it. */
@@ -203,14 +184,7 @@ describe('18 — a cron can never prune (AC4)', () => {
     writeSession(s, ONE, sessionRecords('c1', START, END));
     const before = snapshotTreeSafe(s.archiveRoot);
 
-    const status = await spawnPrune(
-      [
-        `--dataDir=${s.dataDir}`,
-        `--transcriptRoot=${s.sourceRoot}`,
-        `--settingsPath=${settingsPath(s)}`,
-      ],
-      s.dataDir,
-    );
+    const status = await spawnPrune(argsFor(s), s.dataDir);
 
     expect(status).toBe(EXIT_OK);
     expect(status).not.toBe(2); // exit 2 blocks a Claude Code session

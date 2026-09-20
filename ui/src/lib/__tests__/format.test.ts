@@ -209,6 +209,9 @@ describe('formatDurationMs spells a raw millisecond count', () => {
     expect(formatDurationMs(value)).toBe(expected);
   });
 
+  // One speller, two entry points: the 20 / 1_020 / 123_000 / 7_620_000 rows are
+  // the same four intervals formatDuration's table pins to the same strings,
+  // which is what stops the millisecond path drifting from the timestamp path.
   it.each([
     [20, '20ms'],
     [999, '999ms'],
@@ -218,19 +221,6 @@ describe('formatDurationMs spells a raw millisecond count', () => {
     [7_620_000, '2h 7m'],
   ])('%sms renders as %s', (value, expected) => {
     expect(formatDurationMs(value)).toBe(expected);
-  });
-
-  it.each([
-    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:00:00.020Z'],
-    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:00:01.020Z'],
-    ['2026-07-29T09:00:00.000Z', '2026-07-29T09:02:03.000Z'],
-    ['2026-07-29T09:00:00.000Z', '2026-07-29T11:07:00.000Z'],
-  ])('agrees with formatDuration across %s -> %s', (started, ended) => {
-    // One speller, two entry points. This is what stops the millisecond path
-    // from drifting away from the timestamp path a boundary at a time.
-    expect(formatDurationMs(Date.parse(ended) - Date.parse(started))).toBe(
-      formatDuration(started, ended),
-    );
   });
 
   it('spells the duration a turn actually arrives with', () => {

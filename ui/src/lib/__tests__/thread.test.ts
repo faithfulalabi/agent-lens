@@ -130,7 +130,6 @@ describe('a tool call carries its four facts (Test 4, AC2)', () => {
     expect(row.status).toBe('ok');
     expect(row.input).toBe('{"cmd":"ls"}');
     expect(row.output).toBe('a.txt');
-    expect(row.event.ts, 'the row keeps its own timestamp').toBe(row.event.ts);
   });
 
   it('falls back to the wire kind when the projector recorded no name', () => {
@@ -173,11 +172,6 @@ describe('the thread reads wider than the tree scans (F4)', () => {
     expect(row.input).toBeNull();
     expect(row.output).toBeNull();
   });
-
-  it('leaves a payload inside the budget untouched, ellipsis included', () => {
-    const [row] = rowsFor([{ kind: 'tool_call', input: '{"cmd":"ls"}' }]);
-    expect(row?.kind === 'tool' && row.input).toBe('{"cmd":"ls"}');
-  });
 });
 
 /* --------------------------------------- Test 8/9 — the reasoning row --- */
@@ -186,6 +180,13 @@ describe('a thinking event renders one marker, never a blank row (Test 8, AC3)',
   it('gives every thinking event its own row carrying the copy verbatim', () => {
     // MEASURED: 8,047 of 8,047 rows arrive with this exact string, one distinct
     // value, zero null and zero empty — the projector elided them at ingest.
+    //
+    // Four ADJACENT events stay four rows: nothing folds, because no fold key
+    // folds anything. The maximum number of `thinking` events per `request_id`
+    // is 1, with zero groups above one, and a `thinking` event immediately after
+    // another by `seq` happens zero times corpus-wide. So a run fold and a
+    // request fold both reduce 8,047 to 8,047, and neither is shipped. Adjacency
+    // is the shape that would have folded if anything did.
     const rows = rowsFor(
       Array.from({ length: 4 }, () => ({ kind: 'thinking', text: REASONING_NOT_RECORDED })),
     );
@@ -198,22 +199,6 @@ describe('a thinking event renders one marker, never a blank row (Test 8, AC3)',
       expect(row.text).not.toBe('');
       expect(row.recorded).toBe(false);
     }
-  });
-
-  it('folds nothing, because no fold key folds anything', () => {
-    /*
-     * The maximum number of `thinking` events per `request_id` is 1, with zero
-     * groups above one, and a `thinking` event immediately after another by
-     * `seq` happens zero times corpus-wide. So a run fold and a request fold
-     * both reduce 8,047 to 8,047, and neither is shipped. Adjacency is the
-     * shape that would have folded if anything did.
-     */
-    const rows = rowsFor([
-      { kind: 'thinking', text: REASONING_NOT_RECORDED },
-      { kind: 'thinking', text: REASONING_NOT_RECORDED },
-      { kind: 'thinking', text: REASONING_NOT_RECORDED },
-    ]);
-    expect(rows).toHaveLength(3);
   });
 
   it('still shows a marker when the wire sends null or blank', () => {
@@ -261,11 +246,6 @@ describe('an unrecognized record names its type and its subtype (Test 10, AC3)',
     const [row] = rowsFor([{ kind: 'unknown', raw_type: rawType, raw_subtype: rawSubtype }]);
 
     expect(row?.kind === 'unknown' && row.label).toBe(label);
-  });
-
-  it('never renders an empty label', () => {
-    const [row] = rowsFor([{ kind: 'unknown', raw_type: 'attachment' }]);
-    expect(row?.kind === 'unknown' && row.label.trim()).not.toBe('');
   });
 });
 

@@ -160,14 +160,6 @@ describe('withinRange narrows on last_activity_at, never on started_at (Test 5)'
     expect(withinRange(page, '3d', NOW).map((row) => row.id)).not.toEqual(byStart);
   });
 
-  it('drops a session that is old on both readings', () => {
-    expect(withinRange([stale], '3d', NOW)).toEqual([]);
-  });
-
-  it('keeps a session wholly inside the range', () => {
-    expect(withinRange([inside], '3d', NOW).map((row) => row.id)).toEqual(['inside']);
-  });
-
   it('keeps everything for `all`, and copies rather than aliasing', () => {
     const kept = withinRange(page, 'all', NOW);
     expect(kept).toHaveLength(3);

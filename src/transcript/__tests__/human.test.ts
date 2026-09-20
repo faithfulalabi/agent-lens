@@ -9,17 +9,17 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { arr, obj } from '../accessors.js';
 import { classifyLine, type ParsedLine } from '../line.js';
 import { fallbackIsHuman, isHumanPrompt, MACHINERY_TAGS } from '../human.js';
-import { archiveJsonlFiles, classifyFixture, ctx, offsetLines } from './fixtures.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
+import {
+  ARCHIVE_ROOT,
+  archiveJsonlFiles,
+  classifyFixture,
+  ctx,
+  offsetLines,
+  runIt,
+} from './fixtures.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
 const MIN_FILES = 100;

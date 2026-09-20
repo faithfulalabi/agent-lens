@@ -3,8 +3,7 @@
 // immutability assertions below would snapshot the developer's real
 // `~/.claude/settings.json`.
 
-import { afterEach, describe, it, expect } from 'vitest';
-import { createHash } from 'node:crypto';
+import { describe, it, expect } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Through the public barrel, the way anything outside `src/archive/` reaches it.
@@ -19,10 +18,9 @@ import {
 } from '../commands/doctor.js';
 import type { LastPassReport } from '../../archive/index.js';
 import {
+  captureConsole,
   archivePath,
-  cleanup,
   jsonLines,
-  makeSandbox,
   settingsPath,
   sha256Hex,
   SLUG,
@@ -32,6 +30,7 @@ import {
   writeSettings,
   writeSidecar,
   writeSource,
+  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
 import { sessionRecords, writeSession } from '../../corpus/__tests__/fixtures.js';
@@ -41,17 +40,7 @@ import { openDb } from '../../db/open.js';
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 /** The argv a real invocation carries. `--flag=value`, never `--flag value`:
  *  `parseStringFlag` would otherwise swallow a following `--verify` as its value. */
@@ -65,17 +54,7 @@ function argsFor(s: Sandbox, extra: string[] = []): string[] {
 }
 
 async function runDoctor(args: string[]): Promise<string> {
-  const lines: string[] = [];
-  const original = console.log;
-  console.log = (msg?: unknown) => {
-    lines.push(String(msg));
-  };
-  try {
-    await doctor(args);
-  } finally {
-    console.log = original;
-  }
-  return lines.join('\n');
+  return (await captureConsole(() => doctor(args))).out;
 }
 
 interface FileStamp {
@@ -87,7 +66,7 @@ function stampFile(path: string): FileStamp | undefined {
   if (!existsSync(path)) return undefined;
   return {
     mtimeMs: statSync(path).mtimeMs,
-    sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
+    sha256: sha256Hex(readFileSync(path)),
   };
 }
 
@@ -206,7 +185,6 @@ describe('AC3 — doctor writes nothing at all', () => {
 
     expect(output).toContain('coverage: 0 of 1 source files mirrored');
     expect(existsSync(s.dataDir)).toBe(false);
-    expect(snapshotTreeSafe(s.dataDir).size).toBe(0);
   });
 });
 

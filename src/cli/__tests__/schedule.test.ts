@@ -8,16 +8,16 @@
 // always inside the sandbox. The real launchd interaction is verified by manual
 // measurement on the founder's machine, exactly as the wrapper's predecessor was.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  cleanup,
-  makeSandbox,
+  captureConsole,
   runMain,
   snapshotTreeSafe,
+  useSandbox,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
 import { parseCronLog } from '../../archive/cron-log.js';
@@ -42,17 +42,7 @@ import {
 
 const NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 interface TestBed {
   deps: ScheduleDeps;
@@ -105,18 +95,8 @@ async function run(
   args: string[],
   deps: ScheduleDeps,
 ): Promise<{ code: number; out: string; err: string }> {
-  const out: string[] = [];
-  const err: string[] = [];
-  const log = console.log;
-  const error = console.error;
-  console.log = (msg?: unknown) => void out.push(String(msg));
-  console.error = (msg?: unknown) => void err.push(String(msg));
-  try {
-    return { code: await schedule(args, deps), out: out.join('\n'), err: err.join('\n') };
-  } finally {
-    console.log = log;
-    console.error = error;
-  }
+  const { value: code, out, err } = await captureConsole(() => schedule(args, deps));
+  return { code, out, err };
 }
 
 function dataDirArgs(s: Sandbox, action: string): string[] {

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CACHE_DB_FILE } from '../../db/open.js';
-import { bootTestServer, cleanupDir, TOKEN_HEADER } from './helpers.js';
+import { bootTestServer, cleanupDir, listedIds } from './helpers.js';
 
 let dataDir: string;
 
@@ -40,13 +40,6 @@ function seedArchive(dir: string): void {
   writeFileSync(join(slug, `${SESSION}.jsonl`), `${JSON.stringify(line)}\n`);
 }
 
-async function listedIds(url: (path: string) => string, token: string): Promise<string[]> {
-  const body = (await (
-    await fetch(url('/api/sessions'), { headers: { [TOKEN_HEADER]: token } })
-  ).json()) as { items: { id: string }[] };
-  return body.items.map((item) => item.id);
-}
-
 describe('restart persistence', () => {
   it('keeps the swept session index across close + reopen on the same data dir', async () => {
     const first = await bootTestServer({ sweepIntervalMs: 0 });
@@ -54,11 +47,11 @@ describe('restart persistence', () => {
     seedArchive(dataDir);
     // One pass, driven rather than timed: the assertion is about what persists,
     // not about how long a 1 Hz interval takes to fire.
-    expect(await listedIds(first.url, first.token)).toEqual([]);
+    expect(await listedIds(first)).toEqual([]);
     await first.close();
 
     const swept = await bootTestServer({ dataDir, sweepIntervalMs: 60_000 });
-    expect(await listedIds(swept.url, swept.token)).toEqual([SESSION]);
+    expect(await listedIds(swept)).toEqual([SESSION]);
     await swept.close();
 
     expect(existsSync(join(dataDir, CACHE_DB_FILE))).toBe(true);
@@ -67,7 +60,7 @@ describe('restart persistence', () => {
     // it was persisted, which is the whole claim.
     const second = await bootTestServer({ dataDir, sweepIntervalMs: 0 });
     try {
-      expect(await listedIds(second.url, second.token)).toEqual([SESSION]);
+      expect(await listedIds(second)).toEqual([SESSION]);
     } finally {
       await second.close();
     }
