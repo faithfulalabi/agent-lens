@@ -88,14 +88,6 @@ function keyOf(event_id: string, spill_path: string): string {
   return `${event_id}\u0000${spill_path}`;
 }
 
-/** True when the row must leave the index: its event, its pointer or its file is gone. */
-function isStale(db: DatabaseSync, env: SpillIndexEnv, row: IndexedRow): boolean {
-  if (row.current_storage !== 'spill' || row.current_path !== row.spill_path) return true;
-  const content = db.prepare(CONTENT_ROW_SQL).get(row.event_id) as unknown as
-    EventContentRow | undefined;
-  return content === undefined || env.locate(content) === undefined;
-}
-
 /**
  * One pass: reconcile every indexed row, then index the spill bodies not yet in.
  *
@@ -114,8 +106,15 @@ export function indexSpills(
 
   const indexed = new Set<string>();
   const remove = db.prepare(DELETE_SQL);
+  const contentRow = db.prepare(CONTENT_ROW_SQL);
+  /** The row leaves the index when its event, its pointer or its file is gone. */
+  const isStale = (row: IndexedRow): boolean => {
+    if (row.current_storage !== 'spill' || row.current_path !== row.spill_path) return true;
+    const content = contentRow.get(row.event_id) as unknown as EventContentRow | undefined;
+    return content === undefined || env.locate(content) === undefined;
+  };
   for (const row of db.prepare(INDEXED_SQL).all() as unknown as IndexedRow[]) {
-    if (isStale(db, env, row)) {
+    if (isStale(row)) {
       remove.run(row.rowid);
       report.removed += 1;
     } else {
