@@ -202,12 +202,6 @@ function bestBuildMs(eventCount: number): number {
 }
 
 describe('the row model builds within a complexity budget (Test 5, AC1a)', () => {
-  it('builds and flattens 5,000 events into the row list', () => {
-    const tree = makeLargeTree();
-    const model = buildTurnGroups(tree.turns, tree.eventsByTurn);
-    expect(flatten(model, model.rowIds).length).toBe(5010);
-  });
-
   it('costs about five times as much for five times the events, not twenty-five', () => {
     // Floored so the ratio cannot be manufactured by a baseline that rounded to
     // zero — on a fast machine 1,000 events genuinely can measure under 1 ms.

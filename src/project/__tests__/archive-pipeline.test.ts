@@ -12,21 +12,19 @@
 // `epochMs` and every ordering compare rest on the narrow 24-character form.
 // These reds are the drift alarm for that ceiling.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { contentBlocks } from '../../transcript/blocks.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import { classifyLine, type ParsedLine } from '../../transcript/line.js';
-import { archiveJsonlFiles, offsetLines } from '../../transcript/__tests__/fixtures.js';
+import type { ParsedLine } from '../../transcript/line.js';
+import {
+  ARCHIVE_ROOT,
+  archiveJsonlFiles,
+  classifyArchiveFile,
+} from '../../transcript/__tests__/fixtures.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { runPipeline } from '../pipeline.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
-
-const ENABLED = process.env.AGENT_LENS_REAL_CORPUS === '1';
-const runIt = ENABLED ? it : it.skip;
-
-const ARCHIVE_ROOT = join(homedir(), '.agent-lens', 'archive');
 
 /** Lower bounds, well under what was measured on 2026-08-14 (276 files, 45,219 lines). */
 const MIN_FILES = 100;
@@ -57,23 +55,6 @@ const PERSISTED_MARKER = '<persisted-output>';
 /** The one shape `epochMs` slices and every ordering compare rests on. */
 const FIXED_WIDTH_Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
-function parsedLines(file: string): ParsedLine[] {
-  const drift = new DriftCounter();
-  return offsetLines(readFileSync(file).toString('utf8')).map((entry) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(entry.text);
-    } catch {
-      parsed = undefined;
-    }
-    return classifyLine(parsed, {
-      byteOffset: entry.byteOffset,
-      byteLength: entry.byteLength,
-      drift,
-    });
-  });
-}
-
 describe('AC6 — the timestamp shape the projector rests on still holds', () => {
   runIt(
     'every top-level timestamp is the 24-character Z form, and every uuid line carries one',
@@ -87,7 +68,7 @@ describe('AC6 — the timestamp shape the projector rests on still holds', () =>
       const missing: string[] = [];
 
       for (const file of files) {
-        for (const line of parsedLines(file)) {
+        for (const line of classifyArchiveFile(file)) {
           const at = line.timestamp;
           if (at !== undefined) {
             stamps += 1;
@@ -123,7 +104,6 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
       let inversions = 0;
       let derivedTurns = 0;
       let headers = 0;
-      let emptyFiles = 0;
 
       const duplicateIds: string[] = [];
       const duplicateUuids: string[] = [];
@@ -137,7 +117,7 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
 
       for (const file of files) {
         const bytes = readFileSync(file);
-        const lines = parsedLines(file);
+        const lines = classifyArchiveFile(file);
         lineCount += lines.length;
 
         const { header, turns, events } = runPipeline(lines, {
@@ -147,7 +127,6 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
 
         // --- AC5: a file that emits nothing is not a session ------------------
         if (events.length === 0) {
-          emptyFiles += 1;
           if (header !== undefined || turns.length > 0)
             badHeaders.push(`${file}: empty but present`);
           continue;
@@ -264,8 +243,6 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
       expect(inversions).toBeGreaterThanOrEqual(MIN_INVERSIONS);
       // The derived path is the MAJORITY, not a fallback — 57.6% measured.
       expect(derivedTurns).toBeGreaterThanOrEqual(MIN_DERIVED_TURNS);
-      // At least one archived file is not a session transcript at all.
-      expect(emptyFiles).toBeGreaterThanOrEqual(0);
     },
     600000,
   );
@@ -294,7 +271,7 @@ describe('Task 3.2 — the tool join over the whole archive, as properties', () 
       const badTextBytes: string[] = [];
 
       for (const file of files) {
-        const lines = parsedLines(file);
+        const lines = classifyArchiveFile(file);
         const { events } = runPipeline(lines, { session_id: file, drift: new DriftCounter() });
 
         // The harness names below are read HERE, in a test, which the one door

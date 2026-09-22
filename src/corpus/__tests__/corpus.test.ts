@@ -10,20 +10,18 @@
 // Reads `~/.agent-lens/archive` and never `~/.claude/projects`. The database is
 // in memory, so nothing here writes to the real data dir.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createArchiveReader } from '../../archive/read.js';
 import { readSessionEnvelope, readSidecars } from '../../db/sidecars.js';
 import { foldSessionEnvelope, type ParsedLine } from '../../transcript/line.js';
 import { openCache } from '../../db/__tests__/fixtures/index.js';
+import { runIt } from '../../transcript/__tests__/run-it.js';
 import { createProjectionEnv } from '../env.js';
 import { classifyCorpusPath, encodeProjectDir, decodeProjectDir, rowIdOf } from '../paths.js';
 import { scanCorpus, type ScanResult } from '../scan.js';
 import { conservationOf, createCorpusSweep } from '../watch.js';
-
-const ENABLED = process.env['AGENT_LENS_REAL_CORPUS'] === '1';
-const runIt = ENABLED ? it : it.skip;
 
 const DATA_DIR = join(homedir(), '.agent-lens');
 const ARCHIVE_ROOT = join(DATA_DIR, 'archive');

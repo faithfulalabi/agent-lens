@@ -11,20 +11,20 @@
 // spawn: `archive.test.ts` already owns the process-exit-code harness, and it is
 // extended there for these four commands rather than duplicated here.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  cleanup,
-  makeSandbox,
+  captureConsole,
   pinSandboxEnv,
+  plantHeldLock,
   runMain,
   SLUG,
   snapshotTreeSafe,
   type Sandbox,
 } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
@@ -44,17 +44,7 @@ import { parseSessionId, rebuild } from '../commands/rebuild.js';
 
 const IDS = ['aaaaaaaa-1111-4111-8111-rb0000000001', 'aaaaaaaa-1111-4111-8111-rb0000000002'];
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 /** One archived transcript in the mirror's `<slug>/<stem>.jsonl` layout. */
 function seedArchive(s: Sandbox, id: string, lines = 3): string {
@@ -102,17 +92,8 @@ function withCache<T>(s: Sandbox, read: (db: DatabaseSync) => T): T {
 }
 
 async function runRebuild(args: string[]): Promise<{ code: number; out: string }> {
-  const lines: string[] = [];
-  const log = console.log;
-  const err = console.error;
-  console.log = (msg?: unknown) => void lines.push(String(msg));
-  console.error = (msg?: unknown) => void lines.push(String(msg));
-  try {
-    return { code: await rebuild(args), out: lines.join('\n') };
-  } finally {
-    console.log = log;
-    console.error = err;
-  }
+  const { value: code, lines } = await captureConsole(() => rebuild(args));
+  return { code, out: lines.join('\n') };
 }
 
 describe('parseSessionId — one positional, at any index (task 0.15)', () => {
@@ -218,11 +199,7 @@ describe('1 + 2 — the whole-cache rebuild, and the lock that refuses it (AC1)'
     seedCache(s);
     const cachePath = join(s.dataDir, CACHE_DB_FILE);
     // pid 1 is alive and is not us, so the lock reads as genuinely held.
-    writeFileSync(
-      join(s.dataDir, CACHE_LOCK_FILE),
-      JSON.stringify({ pid: 1, started_at: Date.now(), hostname: hostname() }),
-      { mode: 0o600 },
-    );
+    plantHeldLock(join(s.dataDir, CACHE_LOCK_FILE));
     const before = snapshotTreeSafe(s.dataDir);
 
     const { code, out } = await runRebuild(argsFor(s));

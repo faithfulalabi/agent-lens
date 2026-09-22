@@ -33,18 +33,14 @@ describe('storageOf narrows the wire word (AC3)', () => {
     // `src/content/resolve.ts:255-257` already merges NULL and `absent` on the
     // input half — so once the no-body sentence stops naming `raw_type`,
     // nothing tells the two apart. A word this build has never seen joins them.
+    //
+    // Never coalesced to a confident arm such as `inline`: `turn-tree.ts:73-81`
+    // refuses to fabricate an `ok` status for the same reason — a default that
+    // looks like a real reading is worse than an honest "nobody classified this".
     const merged: ContentStorage = 'unclassified';
     expect(storageOf(null)).toBe(merged);
     expect(storageOf('absent')).toBe(merged);
     expect(storageOf('a_value_the_schema_gains_later')).toBe(merged);
-  });
-
-  it('never coalesces an unknown storage to a confident one', () => {
-    // `turn-tree.ts:73-81` refuses to fabricate an `ok` status for the same
-    // reason: a default that looks like a real reading is worse than an honest
-    // "nobody classified this".
-    expect(storageOf(null)).not.toBe('inline');
-    expect(storageOf('absent')).not.toBe('inline');
   });
 });
 

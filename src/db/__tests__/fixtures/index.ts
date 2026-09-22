@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSyn
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createArchiveReader, type ArchiveReader } from '../../../archive/read.js';
+import { sessionDirOf, subagentsDirOf } from '../../../corpus/paths.js';
 import { DriftCounter } from '../../../transcript/drift.js';
 import { classifyLine, type ParsedLine } from '../../../transcript/line.js';
 import type { ResolveEnv } from '../../../transcript/spill.js';
@@ -27,7 +28,6 @@ import { upsertSessionIndex, upsertSidecarIndex, type ProjectionEnv } from '../.
 
 export const SESSION_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 export const CWD = '/Users/dev/proj';
-const TRANSCRIPT_EXT = '.jsonl';
 
 /** A cache with the schema applied. In memory: the lock guards a data dir, and
  *  these suites need neither one. Pragmas are re-applied because every open
@@ -155,15 +155,8 @@ export function writeTranscript(path: string, records: readonly unknown[]): stri
   return writeFile(path, jsonl(records));
 }
 
-/** The sibling `<stem>/` directory — the same slice `foldArchive` takes. */
-export function sessionDirOf(archivePath: string): string {
-  return archivePath.slice(0, -TRANSCRIPT_EXT.length);
-}
-
 /** Where the harness puts a session's sub-agent transcripts. */
-export function subagentsDirOf(archivePath: string): string {
-  return join(sessionDirOf(archivePath), 'subagents');
-}
+export { subagentsDirOf };
 
 /** One `agent-<id>.jsonl`, under `dir`. Raw text so an over-long line is writable. */
 export function writeSidecarTranscript(
@@ -306,6 +299,10 @@ export function countOf(db: DatabaseSync, table: string, id: string): number {
 
 export function sessionRow(db: DatabaseSync, id: string): Record<string, unknown> {
   return db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown>;
+}
+
+export function eventRow(db: DatabaseSync, id: string): Record<string, unknown> {
+  return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
 }
 
 // --- Read-layer seeds ------------------------------------------------------

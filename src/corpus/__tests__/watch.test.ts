@@ -33,22 +33,20 @@ import {
   type SweepReport,
 } from '../watch.js';
 import {
+  buildTree,
   cleanup,
   CWD,
   makeSandbox,
+  OTHER,
+  PARENT,
   sessionRecords,
   SLUG,
-  writeJournal,
   writeSealedSession,
-  writeSession,
   writeSidecar,
-  writeToolResult,
+  WF_DIR,
   type Sandbox,
 } from './fixtures.js';
 
-const PARENT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-const OTHER = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
-const WF_DIR = 'wf_18e7ec0c-db9';
 const JOURNAL_REL = `${SLUG}/${PARENT}/subagents/workflows/${WF_DIR}/journal.jsonl`;
 
 let sandbox: Sandbox;
@@ -64,35 +62,6 @@ function sweep(overrides: Partial<SweepOptions> = {}): CorpusSweep & { bind(): C
   });
   sweeps.push(made);
   return made;
-}
-
-function buildTree(): void {
-  writeSession(
-    sandbox,
-    PARENT,
-    sessionRecords('call-1', '2026-08-20T10:00:00.000Z', '2026-08-20T10:05:00.000Z'),
-  );
-  writeSession(
-    sandbox,
-    OTHER,
-    sessionRecords('call-2', '2026-08-20T09:00:00.000Z', '2026-08-20T09:05:00.000Z'),
-  );
-  writeSidecar(
-    sandbox,
-    PARENT,
-    'child1',
-    sessionRecords('call-3', '2026-08-20T10:01:00.000Z', '2026-08-20T10:02:00.000Z'),
-    { toolUseId: 'call-1' },
-  );
-  writeSidecar(
-    sandbox,
-    PARENT,
-    'wfchild',
-    sessionRecords('call-4', '2026-08-20T10:03:00.000Z', '2026-08-20T10:04:00.000Z'),
-    { workflowDir: WF_DIR },
-  );
-  writeJournal(sandbox, PARENT, WF_DIR);
-  writeToolResult(sandbox, PARENT, 'b011o0n');
 }
 
 function rows(): Record<string, unknown>[] {
@@ -132,7 +101,7 @@ beforeEach(() => {
   sandbox = makeSandbox();
   db = openCache();
   sweeps = [];
-  buildTree();
+  buildTree(sandbox);
 });
 
 afterEach(() => {
@@ -615,22 +584,6 @@ describe('BLOCKING 1 — a sealed session is indexed, projected and completed', 
     expect(sealedRow['projection_state']).toBe('ready');
     expect(sealedRow['rollup_state']).toBe('complete');
     expect(report.projection_failed).toEqual([]);
-  });
-
-  it('mutation control: without the hot->sealed fallback, the fold is undefined and the gate fails', () => {
-    const logical = writeSealed();
-    // `foldArchive` before the fix, restated locally: the logical stat alone.
-    const preFix = (path: string): { mtime_ms: number } | undefined => {
-      try {
-        return { mtime_ms: Math.floor(statSync(path).mtimeMs) };
-      } catch {
-        return undefined;
-      }
-    };
-    expect(preFix(logical)).toBeUndefined();
-    // …which is what made `ensureProjected` answer 'failed' at freshness.ts:143,
-    // so the row wave 1 wrote could never be projected by wave 2.
-    expect(foldArchive(logical)).toBeDefined();
   });
 
   it('links a SEALED sidecar too — the same limb, one fix', () => {

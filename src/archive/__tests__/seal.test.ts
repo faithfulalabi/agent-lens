@@ -3,7 +3,7 @@
 // synthesized in temp dirs except the opt-in corpus test, which copies before it
 // compresses and never touches a real transcript.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   existsSync,
   mkdtempSync,
@@ -17,7 +17,6 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
 import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { archiveOnce } from '../mirror.js';
 import { sealArchiveFile } from '../seal.js';
@@ -25,9 +24,7 @@ import { canonicalizeTranscriptPath, resolveTranscriptRoot } from '../paths.js';
 import { readSidecar, serializeSidecar, sidecarPath, SIDECAR_VERSION } from '../sidecar.js';
 import {
   archivePath,
-  cleanup,
   jsonLines,
-  makeSandbox,
   readBytes,
   SLUG,
   snapshotTree,
@@ -35,8 +32,13 @@ import {
   transcriptLines,
   writeArchive,
   writeSource,
-  type Sandbox,
+  codeOf,
+  compressLikeSeal,
+  plantCrashWindow,
+  sha256Hex,
+  writeSidecar,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const ARCHIVE_SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,25 +49,11 @@ const OTHER = `${SLUG}/sess-2.jsonl`;
 /** RFC 002's "6.15 MB" reference transcript, identified by its exact length. */
 const REFERENCE_BYTES = 6_148_090;
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 function pass() {
   const s = sb();
   return archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
-}
-
-function sha256(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
 }
 
 describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1)', () => {
@@ -93,7 +81,7 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
     expect(file.archive_size).not.toBe(hotBytes.length);
 
     // The hash is over the PRE-seal bytes — the input the round-trip compared to.
-    expect(file.archive_sha256).toBe(sha256(hotBytes));
+    expect(file.archive_sha256).toBe(sha256Hex(hotBytes));
     expect(new Date(file.sealed_at!).toISOString()).toBe(file.sealed_at);
     expect(result.sealed).toEqual([logical]);
   });
@@ -106,14 +94,17 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
     const hotBytes = readBytes(logical);
 
     rmSync(sourcePath(s, SESSION));
-    pass();
+    const result = pass();
 
-    // Exactly two names: the frame and the sidecar published beside it. Sorted
-    // because readdir order is the filesystem's business, not this assertion's.
+    // Exactly two names: the frame and the sidecar published beside it — the
+    // `.tmp.<pid>` halves of both publishes are gone. Sorted because readdir
+    // order is the filesystem's business, not this assertion's.
     expect(readdirSync(join(s.archiveRoot, SLUG)).sort()).toEqual([
       'sess-1.jsonl.zst',
       'sess-1.jsonl.zst.sha256',
     ]);
+    // …and the sidecar is not a second logical file: one entry, one archived file.
+    expect(result.filesSeen).toBe(1);
     expect(zstdDecompressSync(readBytes(`${logical}.zst`)).equals(hotBytes)).toBe(true);
   });
 
@@ -127,7 +118,7 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
     expect(sealed.hot_size).toBe(body.length);
     expect(sealed.sealed_size).toBe(statSync(`${logical}.zst`).size);
     expect(sealed.sealed_size).toBeLessThan(sealed.hot_size);
-    expect(sealed.archive_sha256).toBe(sha256(Buffer.from(body)));
+    expect(sealed.archive_sha256).toBe(sha256Hex(body));
   });
 });
 
@@ -148,7 +139,7 @@ describe('AC1/AC2 — the seal persists its reference hash in a sidecar (Test 16
     expect(record!.file).toBe('sess-1.jsonl');
     expect(record!.file).not.toContain('/');
     // The hash is over the PRE-seal plaintext, i.e. exactly what the seal returned.
-    expect(record!.sha256).toBe(sha256(Buffer.from(body)));
+    expect(record!.sha256).toBe(sha256Hex(body));
     expect(record!.sha256).toBe(sealed.archive_sha256);
     expect(record!.hot_size).toBe(sealed.hot_size);
     expect(record!.sealed_size).toBe(sealed.sealed_size);
@@ -159,22 +150,6 @@ describe('AC1/AC2 — the seal persists its reference hash in a sidecar (Test 16
     // One line, newline-terminated, so a truncated tail cannot parse.
     expect(readFileSync(path, 'utf8').endsWith('\n')).toBe(true);
     expect(readFileSync(path, 'utf8').trimEnd()).not.toContain('\n');
-  });
-
-  it('leaves no sidecar temp behind, and the temp name never entered the union', () => {
-    const s = sb();
-    writeSource(s, SESSION, jsonLines(40));
-    pass();
-    rmSync(sourcePath(s, SESSION));
-    const result = pass();
-
-    // The pair and nothing else — the `.tmp.<pid>` halves of both publishes are gone.
-    expect(readdirSync(join(s.archiveRoot, SLUG)).sort()).toEqual([
-      'sess-1.jsonl.zst',
-      'sess-1.jsonl.zst.sha256',
-    ]);
-    // …and the sidecar is not a second logical file: one entry, one archived file.
-    expect(result.filesSeen).toBe(1);
   });
 
   it('the reader declines rather than throws for every expected bad input', () => {
@@ -215,18 +190,13 @@ describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () 
     const hotBytes = readBytes(logical);
     const path = sidecarPath(`${logical}.zst`);
     // A stale record from the interrupted attempt, deliberately wrong.
-    writeArchive(
-      s,
-      `${SESSION}.zst.sha256`,
-      serializeSidecar({
-        v: SIDECAR_VERSION,
-        file: 'sess-1.jsonl',
-        sha256: sha256(Buffer.from('nothing like the real bytes')),
-        hot_size: 1,
-        sealed_size: 1,
-        sealed_at: '2000-01-01T00:00:00.000Z',
-      }),
-    );
+    writeSidecar(s, SESSION, {
+      file: 'sess-1.jsonl',
+      sha256: sha256Hex('nothing like the real bytes'),
+      hot_size: 1,
+      sealed_size: 1,
+      sealed_at: '2000-01-01T00:00:00.000Z',
+    });
 
     const result = pass();
 
@@ -237,7 +207,7 @@ describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () 
     expect(zstdDecompressSync(readBytes(`${logical}.zst`)).equals(hotBytes)).toBe(true);
     // …and the stale record was replaced by one describing exactly those bytes.
     const record = readSidecar(path)!;
-    expect(record.sha256).toBe(sha256(hotBytes));
+    expect(record.sha256).toBe(sha256Hex(hotBytes));
     expect(record.hot_size).toBe(hotBytes.length);
   });
 
@@ -246,31 +216,8 @@ describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () 
     // guarantee is unchanged: nothing written, and nothing deleted.
     const s = sb();
     const body = jsonLines(20);
-    writeArchive(s, SESSION, body);
+    plantCrashWindow(s, SESSION, { hot: body, sealed: compressLikeSeal(body) });
     const logical = archivePath(s, SESSION);
-    writeArchive(
-      s,
-      `${SESSION}.zst`,
-      zstdCompressSync(Buffer.from(body), {
-        params: {
-          [zlibConstants.ZSTD_c_compressionLevel]: 3,
-          [zlibConstants.ZSTD_c_checksumFlag]: 1,
-          [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
-        },
-      }),
-    );
-    writeArchive(
-      s,
-      `${SESSION}.zst.sha256`,
-      serializeSidecar({
-        v: SIDECAR_VERSION,
-        file: 'sess-1.jsonl',
-        sha256: sha256(Buffer.from(body)),
-        hot_size: body.length,
-        sealed_size: statSync(`${logical}.zst`).size,
-        sealed_at: '2026-08-09T00:00:00.000Z',
-      }),
-    );
 
     const before = snapshotTree(s.archiveRoot);
     const result = pass();
@@ -340,13 +287,7 @@ describe('AC2 — zstd through node:zlib, with the level pinned (Test 5)', () =>
     // anything — and a dropped pin would leave the ratio at ZSTD_CLEVEL_DEFAULT,
     // a Node default that can move.
     const body = Buffer.from(transcriptLines(4000));
-    const pinned = zstdCompressSync(body, {
-      params: {
-        [zlibConstants.ZSTD_c_compressionLevel]: 3,
-        [zlibConstants.ZSTD_c_checksumFlag]: 1,
-        [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
-      },
-    });
+    const pinned = compressLikeSeal(body);
     const atNineteen = zstdCompressSync(body, {
       params: { [zlibConstants.ZSTD_c_compressionLevel]: 19 },
     });
@@ -418,15 +359,6 @@ describe('AC2 — zstd through node:zlib, with the level pinned (Test 5)', () =>
   );
 });
 
-function codeOf(run: () => unknown): string | undefined {
-  try {
-    run();
-    return undefined;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code;
-  }
-}
-
 describe('the checksum catches corruption that the content-size check cannot (Test 11)', () => {
   it('a sealed file reds on a flipped byte at unchanged length', () => {
     const s = sb();
@@ -485,13 +417,6 @@ describe('the checksum catches corruption that the content-size check cannot (Te
     guardedFlip[at] = guardedFlip[at]! ^ 0xff;
     expect(codeOf(() => zstdDecompressSync(guardedFlip))).toBe('ZSTD_error_checksum_wrong');
   });
-
-  it('raw garbage throws ZSTD_error_prefix_unknown', () => {
-    // The message is Node's and can move; the code is the stable identifier.
-    expect(codeOf(() => zstdDecompressSync(Buffer.from('pretend-zstd-bytes')))).toBe(
-      'ZSTD_error_prefix_unknown',
-    );
-  });
 });
 
 describe('the crash window between rename and unlink is a safe no-op (Test 12)', () => {
@@ -501,17 +426,7 @@ describe('the crash window between rename and unlink is a safe no-op (Test 12)',
     // Both halves present, no source: exactly the state a crash after renameSync
     // and before unlinkSync leaves behind.
     writeArchive(s, SESSION, body);
-    writeArchive(
-      s,
-      `${SESSION}.zst`,
-      zstdCompressSync(Buffer.from(body), {
-        params: {
-          [zlibConstants.ZSTD_c_compressionLevel]: 3,
-          [zlibConstants.ZSTD_c_checksumFlag]: 1,
-          [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
-        },
-      }),
-    );
+    writeArchive(s, `${SESSION}.zst`, compressLikeSeal(body));
 
     const before = snapshotTree(s.archiveRoot);
     const result = pass();

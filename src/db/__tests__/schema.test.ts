@@ -244,13 +244,6 @@ describe('★ the full column set of all four tables, as SET EQUALITY (AC2)', ()
     expect([...columns].sort()).toEqual([...expected].sort());
   });
 
-  it('sessions keeps file_size — the half of the invalidation key a stray \\ eats', () => {
-    // The single assertion that separates the escaped literal from the raw one.
-    const columns = columnNames(freshDb(), 'sessions');
-    expect(columns).toContain('file_mtime_ms');
-    expect(columns).toContain('file_size');
-  });
-
   it('the guard reds on the LineContinuation, and Test 1 stays green through it', () => {
     // The control, driving the SAME helpers with the string an UNESCAPED source
     // would have evaluated to: a backslash before a newline is eaten along with

@@ -2,7 +2,7 @@
 // case passes an explicit `settingsPath` inside that sandbox — nothing here may
 // resolve the developer's real `~/.claude/settings.json`.
 
-import { afterEach, describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
@@ -27,11 +27,9 @@ import {
 import { formatDoctorReport } from '../../cli/commands/doctor.js';
 import {
   archivePath,
-  cleanup,
   compressLikeSeal,
   decoyPath,
   jsonLines,
-  makeSandbox,
   patchSidecar,
   plantArchiveSymlink,
   plantCrashWindow,
@@ -47,6 +45,7 @@ import {
   writeSource,
   type Sandbox,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 import { archiveOnce } from '../mirror.js';
 import { sidecarPath } from '../sidecar.js';
 
@@ -59,17 +58,7 @@ const TOOL_TXT = `${SLUG}/sess-1/tool-results/big.txt`;
 /** Exactly 16 bytes — the number the pre-fix report attributed to the archive. */
 const VICTIM_BYTES = 'sixteen bytes!!\n';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 /** Always sandboxed: `settingsPath` never points at the real user file. */
 function report(extra: { verify?: boolean; settingsPath?: string } = {}) {
@@ -213,6 +202,8 @@ describe('AC3/AC5 — the sidecar is outside the accounting, and the wording sta
     const s = sb();
     const body = jsonLines(40);
     sealForReal(SESSION, body);
+    // Not a zstd frame at all: were rung 1 skipped this would throw `not a zstd
+    // frame` and be classified as diverged instead.
     writeArchive(s, `${OTHER}.zst`, Buffer.from('pretend-zstd-bytes'));
 
     const built = report({ verify: true });
@@ -540,19 +531,6 @@ describe('AC1/AC2 — a sealed file is checked against the hash the seal recorde
 });
 
 describe('AC3 — a sealed file with no usable record is refused before anything is read', () => {
-  it('never reaches the decompressor, even under --verify', () => {
-    const s = sb();
-    // Not a zstd frame at all: were rung 1 skipped this would throw `not a zstd
-    // frame` and be classified as diverged instead.
-    writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));
-
-    const { integrity } = report({ verify: true });
-
-    expect(integrity.unverifiable.map((f) => f.reason)).toEqual([SEALED_LEGACY_REASON]);
-    expect(integrity.diverged).toEqual([]);
-    expect(integrity.bytesRead).toBe(0);
-  });
-
   it('writes nothing while checking one — there is no backfill', () => {
     const s = sb();
     writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));

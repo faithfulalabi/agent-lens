@@ -24,16 +24,7 @@ import { fileEnv, openCache } from '../../db/__tests__/fixtures/index.js';
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
 import { createStreamHub, HEARTBEAT_MS, STREAM_EVENTS, type StreamHub } from '../stream.js';
-import type { WarmQueue } from '../warm.js';
-
-/**
- * A warm queue that starts nothing. This file never POSTs `/api/warm` through
- * the middleware, so a real queue would only race `db.close()` in `afterEach`.
- */
-function stubWarm(): WarmQueue {
-  return { start: () => 0, close: () => undefined };
-}
-
+import { stubWarm } from './helpers.js';
 
 const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -111,22 +102,11 @@ describe('AC1 — the three protocol rules, on the raw wire bytes', () => {
     const text = await client.bytes;
     // Byte-for-byte the string `sse-parser.test.ts:47` and `sse-client.test.ts:47`
     // already feed the client. That literal is the whole cross-project contract.
+    // The data line is empty, so it is not JSON. The swallowed crash rule 1 exists
+    // to prevent: a client that branches on "there is a data line" and parses it
+    // dies here. Branch on `event:` instead.
     expect(text).toBe('event: heartbeat\ndata: \n\n');
     expect(text.split('\n').some((line) => line.startsWith('id:'))).toBe(false);
-  });
-
-  it("a heartbeat's data is not JSON — the inverse control for rule 1", async () => {
-    const hub = makeHub();
-    const client = attach(hub);
-
-    await hub.beat();
-    await hub.drain();
-
-    const dataLine = (await client.bytes).split('\n').find((line) => line.startsWith('data:'));
-    expect(dataLine).toBe('data: ');
-    // The swallowed crash this rule exists to prevent: a client that branches on
-    // "there is a data line" and parses it dies here. Branch on `event:` instead.
-    expect(() => JSON.parse(dataLine!.slice('data: '.length))).toThrow();
   });
 
   it('a throwing route callback produces no "event: error" frame (rule 3)', async () => {

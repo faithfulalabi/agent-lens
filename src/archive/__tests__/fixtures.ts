@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
 import { main } from '../../cli/index.js';
@@ -202,27 +202,58 @@ export function snapshotTreeSafe(root: string): Map<string, TreeEntry> {
   return existsSync(root) ? snapshotTree(root) : new Map();
 }
 
+/** A lock record that reads as genuinely held: pid 1 is alive and is not us. */
+export function plantHeldLock(path: string): void {
+  writeFileSync(path, JSON.stringify({ pid: 1, started_at: Date.now(), hostname: hostname() }), {
+    mode: 0o600,
+  });
+}
+
+/** The `code` a throw carries. Node's messages move; the code is the stable identifier. */
+export function codeOf(run: () => unknown): string | undefined {
+  try {
+    run();
+    return undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code;
+  }
+}
+
 // --- driving the CLI in-process ----------------------------------------------
 
 /**
- * `main` with BOTH console channels captured. Lives here because the three
- * existing capture helpers are file-local to the test files that declare them,
- * and the one closest to this shape (`archive.test.ts`'s `silentMain`) captures
- * only stdout — a rejection message goes to stderr.
+ * Runs `fn` with BOTH console channels captured: `out` and `err` per channel,
+ * `lines` in the interleaved order they were written. The one capture every
+ * CLI suite's runner is built on.
  */
-export async function runMain(args: string[]): Promise<{ code: number; out: string; err: string }> {
+export async function captureConsole<T>(
+  fn: () => Promise<T>,
+): Promise<{ value: T; out: string; err: string; lines: string[] }> {
   const out: string[] = [];
   const err: string[] = [];
+  const lines: string[] = [];
   const log = console.log;
   const error = console.error;
-  console.log = (msg?: unknown) => void out.push(String(msg));
-  console.error = (msg?: unknown) => void err.push(String(msg));
+  console.log = (msg?: unknown) => {
+    out.push(String(msg));
+    lines.push(String(msg));
+  };
+  console.error = (msg?: unknown) => {
+    err.push(String(msg));
+    lines.push(String(msg));
+  };
   try {
-    return { code: await main(args), out: out.join('\n'), err: err.join('\n') };
+    return { value: await fn(), out: out.join('\n'), err: err.join('\n'), lines };
   } finally {
     console.log = log;
     console.error = error;
   }
+}
+
+/** `main` with both channels captured — a rejection message goes to stderr. */
+export async function runMain(args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const { value: code, out, err } = await captureConsole(() => main(args));
+  return { code, out, err };
 }
 
 /** Pins the two resolver env vars at a sandbox, and restores whatever was there. */

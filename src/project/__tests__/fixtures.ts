@@ -1,7 +1,7 @@
 // Fixture loading for the Task 3.1 suites. Only the directory binding and the
 // read are new: `FIXTURE_DIR` in `src/transcript/__tests__/fixtures.ts` is
 // hard-bound to that tree, so `classifyFixture` can never reach this one. The
-// generic halves — `offsetLines`, `archiveJsonlFiles`, `ctx` — are IMPORTED, not
+// generic halves — `classifyText`, `archiveJsonlFiles`, `ctx` — are IMPORTED, not
 // copied, and a cross-tree import from `__tests__/` is safe on both standing
 // guards: the one-door scan filters `__tests__/` before it looks, and the
 // projector hash excludes it from the digest.
@@ -10,9 +10,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
-import { DriftCounter } from '../../transcript/drift.js';
-import { classifyLine, type ParsedLine } from '../../transcript/line.js';
-import { offsetLines, type OffsetLine } from '../../transcript/__tests__/fixtures.js';
+import { contentBlocks } from '../../transcript/blocks.js';
+import type { DriftCounter } from '../../transcript/drift.js';
+import type { ParsedLine } from '../../transcript/line.js';
+import { classifyText } from '../../transcript/__tests__/fixtures.js';
+import { runPipeline, type ProjectedEvent, type Projection } from '../pipeline.js';
 
 export const PROJECT_FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -22,21 +24,45 @@ export function projectFixtureBytes(name: string): Buffer {
 }
 
 /** Every line of a fixture, classified, sharing one `DriftCounter`. */
-export function classifyProjectFixture(name: string): {
-  lines: ParsedLine[];
-  drift: DriftCounter;
-  offsets: OffsetLine[];
+export function classifyProjectFixture(name: string): ReturnType<typeof classifyText> {
+  return classifyText(projectFixtureBytes(name).toString('utf8'));
+}
+
+export const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+
+/** One fixture, classified and projected through one counter, as production does. */
+export function project(
+  name: string,
+  session = SESSION,
+): Projection & { lines: ParsedLine[]; drifter: DriftCounter } {
+  const { lines, drift } = classifyProjectFixture(name);
+  return { ...runPipeline(lines, { session_id: session, drift }), lines, drifter: drift };
+}
+
+/** The one row a test is about, by the id the fixture gave its `tool_use`. */
+export function callAt(result: Projection, id: string): ProjectedEvent {
+  const event = result.events.find((candidate) => candidate.id === id);
+  if (event === undefined) throw new Error(`no tool call ${id}`);
+  return event;
+}
+
+/** `units - toolResultUnits + blocklessUuidLines` — the whole accounting rule. */
+export function census(lines: readonly ParsedLine[]): {
+  units: number;
+  toolResults: number;
+  blockless: number;
 } {
-  const drift = new DriftCounter();
-  const offsets = offsetLines(projectFixtureBytes(name).toString('utf8'));
-  const lines = offsets.map((entry) =>
-    classifyLine(JSON.parse(entry.text), {
-      byteOffset: entry.byteOffset,
-      byteLength: entry.byteLength,
-      drift,
-    }),
-  );
-  return { lines, drift, offsets };
+  let units = 0;
+  let toolResults = 0;
+  let blockless = 0;
+  for (const line of lines) {
+    if (line.uuid === undefined) continue;
+    const blocks = contentBlocks(line);
+    units += blocks.length;
+    toolResults += blocks.filter((block) => block.kind === 'tool_result').length;
+    if (blocks.length === 0) blockless += 1;
+  }
+  return { units, toolResults, blockless };
 }
 
 /**

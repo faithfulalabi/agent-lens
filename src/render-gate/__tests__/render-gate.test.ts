@@ -200,6 +200,16 @@ function passingResult(overrides: Partial<Observations> = {}): DriveResult {
   return { ...passingObservations(overrides), shots: PASSING_SHOTS };
 }
 
+/** The report over a passing drive, so only the override can red it. */
+function reportFor(overrides: Partial<Observations> = {}): ReturnType<typeof buildReport> {
+  return buildReport({
+    task: '0.3',
+    startedAt: '2026-08-08T00:00:00.000Z',
+    result: passingResult(overrides),
+    error: null,
+  });
+}
+
 function passingOutcome(overrides: Partial<Observations> = {}): DriveOutcome {
   return {
     observations: passingObservations(overrides),
@@ -352,12 +362,7 @@ describe('buildReport (AC5)', () => {
   });
 
   it('gives every assertion the same four fields, and keeps the collectors as arrays', () => {
-    const report = buildReport({
-      task: '0.3',
-      startedAt: '2026-08-08T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
 
     expect(report.assertions.length).toBeGreaterThan(0);
     for (const record of report.assertions) {
@@ -372,12 +377,7 @@ describe('buildReport (AC5)', () => {
   // The control for the table below: without it every `reds on` row would pass
   // for the wrong reason, since any spoiled fixture reds an already-red report.
   it('is green on an unspoiled drive', () => {
-    const report = buildReport({
-      task: '0.3',
-      startedAt: '2026-08-08T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     expect(report.assertions.filter((a) => !a.ok)).toEqual([]);
     expect(report.ok).toBe(true);
   });
@@ -465,12 +465,7 @@ describe('buildReport (AC5)', () => {
       { searchScreen: { ...PASSING_SEARCH, warmControls: 1 } },
     ],
   ])('reds on %s', (_label, overrides) => {
-    const report = buildReport({
-      task: '0.3',
-      startedAt: '2026-08-08T00:00:00.000Z',
-      result: passingResult(overrides),
-      error: null,
-    });
+    const report = reportFor(overrides);
     expect(report.ok).toBe(false);
   });
 
@@ -505,14 +500,9 @@ describe('buildReport (AC5)', () => {
      * A green tick on an empty window would be a check that cannot fail, so the
      * assertion is not emitted at all and a warning says so out loud.
      */
-    const report = buildReport({
-      task: '5.2',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      // Both, because one search feeds both probes: a window with nothing to
-      // click leaves the row reading and the pane reading equally unmade.
-      result: passingResult({ toolCallInline: null, eventDetail: null }),
-      error: null,
-    });
+    // Both, because one search feeds both probes: a window with nothing to
+    // click leaves the row reading and the pane reading equally unmade.
+    const report = reportFor({ toolCallInline: null, eventDetail: null });
 
     expect(report.assertions.map((a) => a.name)).not.toContain('tool-call-inline');
     expect(report.assertions.map((a) => a.name)).not.toContain('detail-event-payload');
@@ -523,12 +513,7 @@ describe('buildReport (AC5)', () => {
   it('reports an empty slash_command window as an observation, never as a pass', () => {
     // Task 0.11, on the tool-call probe's terms: whether a slash_command turn
     // is in the rendered window is a fact about the corpus, not the screen.
-    const report = buildReport({
-      task: '0.11',
-      startedAt: '2026-09-11T00:00:00.000Z',
-      result: passingResult({ slashCommandTitles: [] }),
-      error: null,
-    });
+    const report = reportFor({ slashCommandTitles: [] });
 
     expect(report.assertions.map((a) => a.name)).not.toContain('slash-command-titles');
     expect(report.warnings.join(' ')).toContain('slash-command-titles: none in window');
@@ -536,12 +521,7 @@ describe('buildReport (AC5)', () => {
   });
 
   it('passes slash-command-titles when every rendered title is clean (AC-R1)', () => {
-    const report = buildReport({
-      task: '0.11',
-      startedAt: '2026-09-11T00:00:00.000Z',
-      result: passingResult({ slashCommandTitles: ['/run-phase', '/approach'] }),
-      error: null,
-    });
+    const report = reportFor({ slashCommandTitles: ['/run-phase', '/approach'] });
     const probe = report.assertions.find((a) => a.name === 'slash-command-titles');
 
     expect(probe?.ok).toBe(true);
@@ -550,13 +530,8 @@ describe('buildReport (AC5)', () => {
   });
 
   it('reds slash-command-titles on a raw envelope, and counts the offenders', () => {
-    const report = buildReport({
-      task: '0.11',
-      startedAt: '2026-09-11T00:00:00.000Z',
-      result: passingResult({
-        slashCommandTitles: ['/run-phase', '<command-message>run-phase is…</command-message>'],
-      }),
-      error: null,
+    const report = reportFor({
+      slashCommandTitles: ['/run-phase', '<command-message>run-phase is…</command-message>'],
     });
     const probe = report.assertions.find((a) => a.name === 'slash-command-titles');
 
@@ -567,12 +542,7 @@ describe('buildReport (AC5)', () => {
   });
 
   it('asserts the pane reading, and names all three of its clauses (AC-R1)', () => {
-    const report = buildReport({
-      task: '5.3',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const probe = report.assertions.find((a) => a.name === 'detail-event-payload');
 
     expect(probe?.ok).toBe(true);
@@ -588,12 +558,7 @@ describe('buildReport (AC5)', () => {
     ['the pane never named the storage', { storageMatched: false }],
   ])('reds when %s', (_label, overrides) => {
     const eventDetail = { ...passingObservations().eventDetail!, ...overrides };
-    const report = buildReport({
-      task: '5.3',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult({ eventDetail }),
-      error: null,
-    });
+    const report = reportFor({ eventDetail });
     expect(report.ok).toBe(false);
   });
 
@@ -602,13 +567,8 @@ describe('buildReport (AC5)', () => {
     // could never fire again. A warning nobody can trip has stopped being
     // reviewed — the same objection `retokenized.test.ts` makes about a stale
     // allowlist entry.
-    const report = buildReport({
-      task: '5.3',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult({
-        detail: { t0: 'Select a span to see its detail.', t1: 'a', t2: 'b' },
-      }),
-      error: null,
+    const report = reportFor({
+      detail: { t0: 'Select a span to see its detail.', t1: 'a', t2: 'b' },
     });
 
     expect(report.warnings.join(' ')).not.toContain('placeholder');
@@ -616,24 +576,14 @@ describe('buildReport (AC5)', () => {
   });
 
   it('asserts the payload cross-check whenever the window held a row to check', () => {
-    const report = buildReport({
-      task: '5.2',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const probe = report.assertions.find((a) => a.name === 'tool-call-inline');
     expect(probe?.ok).toBe(true);
     expect(probe?.actual).toContain('toolu_1');
   });
 
   it('asserts the thread reading, and names both of its clauses (AC-R1, task 5.4)', () => {
-    const report = buildReport({
-      task: '5.4',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
     expect(names).toContain('thread-tool-inline');
@@ -658,12 +608,7 @@ describe('buildReport (AC5)', () => {
     ['a thinking row rendered empty', { emptyRows: 1, markerRows: 2 }],
   ])('reds when %s', (_label, overrides) => {
     const threadInline = { ...passingObservations().threadInline!, ...overrides };
-    const report = buildReport({
-      task: '5.4',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult({ threadInline }),
-      error: null,
-    });
+    const report = reportFor({ threadInline });
     expect(report.ok).toBe(false);
   });
 
@@ -676,12 +621,7 @@ describe('buildReport (AC5)', () => {
      * fact can empty this probe — a null can only mean the control did not
      * work, and a warning there would ship a green gate over a dead feature.
      */
-    const report = buildReport({
-      task: '5.4',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult({ threadInline: null }),
-      error: null,
-    });
+    const report = reportFor({ threadInline: null });
 
     expect(report.ok).toBe(false);
     const reached = report.assertions.find((a) => a.name === 'thread-reached');
@@ -690,12 +630,7 @@ describe('buildReport (AC5)', () => {
   });
 
   it('asserts the live tail, and names all three of its clauses (AC-R1, task 6.2)', () => {
-    const report = buildReport({
-      task: '6.2',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
     expect(names).toContain('live-row-growth');
@@ -724,12 +659,7 @@ describe('buildReport (AC5)', () => {
     ['no page was fetched, so the rows came from somewhere else', { detailResponses: 0 }],
   ])('reds when %s', (_label, overrides) => {
     const liveUpdate = { ...passingObservations().liveUpdate!, ...overrides };
-    const report = buildReport({
-      task: '6.2',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult({ liveUpdate }),
-      error: null,
-    });
+    const report = reportFor({ liveUpdate });
     expect(report.ok).toBe(false);
   });
 
@@ -741,12 +671,7 @@ describe('buildReport (AC5)', () => {
      * can only mean the tail did not arrive. For task 6.2 that is the acceptance
      * criterion, and a warning would ship a green gate over a dead feature.
      */
-    const report = buildReport({
-      task: '6.2',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult({ liveUpdate: null }),
-      error: null,
-    });
+    const report = reportFor({ liveUpdate: null });
 
     expect(report.ok).toBe(false);
     expect(report.assertions.find((a) => a.name === 'live-update-reached')?.ok).toBe(false);
@@ -760,33 +685,11 @@ describe('buildReport (AC5)', () => {
      * further responses and red `subagent-expansion-request` on a working
      * product. The window is `[atLoad, beforeLive)`.
      */
-    const report = buildReport({
-      task: '6.2',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const request = report.assertions.find((a) => a.name === 'subagent-expansion-request');
 
     expect(request?.ok, 'the third response is the live splice, not the expansion').toBe(true);
     expect(request?.actual).toBe('/api/sessions/child-1');
-  });
-
-  it('expects a thread screenshot, so AC-R2 is not decoration (task 5.4)', () => {
-    // Without `06-thread.png` the founder opens the contact sheet for a thread
-    // task and sees five pictures of the tree, which the plan index forbids by
-    // name. The literal is pinned because nothing else pins it.
-    const report = buildReport({
-      task: '5.4',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
-    const count = report.assertions.find((a) => a.name === 'shot-count');
-
-    expect(count?.ok).toBe(true);
-    expect(count?.expected).toBe(`${SHOT_NAMES.length} screenshots`);
-    expect(report.shots.map((s) => s.name)).toContain('06-thread.png');
   });
 
   /* ------------------------- task 5.5 — the sub-agent expansion ----------- */
@@ -795,14 +698,9 @@ describe('buildReport (AC5)', () => {
     // The whole point of task 5.5 is a SECOND `/api/sessions/:id` response, so
     // the pre-5.5 spelling (`detailResponses === 1` over the drive) would red on
     // the working feature. This is the half that has to keep passing.
-    const report = buildReport({
-      task: '5.5',
-      startedAt: '2026-08-31T00:00:00.000Z',
-      result: passingResult({
-        detailResponsesAtLoad: 1,
-        detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1'],
-      }),
-      error: null,
+    const report = reportFor({
+      detailResponsesAtLoad: 1,
+      detailPaths: ['/api/sessions/sess-1', '/api/sessions/child-1'],
     });
     const responses = report.assertions.find((a) => a.name === 'session-detail-responses');
 
@@ -846,12 +744,7 @@ describe('buildReport (AC5)', () => {
      * child never loads and the drive sees no second response. The UI project
      * cannot see it at all: effects do not fire under `environment: 'node'`.
      */
-    const report = buildReport({
-      task: '5.5',
-      startedAt: '2026-08-31T00:00:00.000Z',
-      result: passingResult(overrides),
-      error: null,
-    });
+    const report = reportFor(overrides);
 
     expect(report.assertions.find((a) => a.name === 'subagent-expansion-request')?.ok).toBe(false);
     expect(report.ok).toBe(false);
@@ -861,17 +754,12 @@ describe('buildReport (AC5)', () => {
     // The exact symptom of a splice that carries a depth offset and no session
     // id: every row lands at the right indent and every one of them lies about
     // which transcript it came from.
-    const report = buildReport({
-      task: '5.5',
-      startedAt: '2026-08-31T00:00:00.000Z',
-      result: passingResult({
-        subagentExpansion: {
-          parentSessionId: 'sess-1',
-          childSessionId: 'child-1',
-          nestedEventSessionIds: ['sess-1'],
-        },
-      }),
-      error: null,
+    const report = reportFor({
+      subagentExpansion: {
+        parentSessionId: 'sess-1',
+        childSessionId: 'child-1',
+        nestedEventSessionIds: ['sess-1'],
+      },
     });
 
     expect(report.assertions.find((a) => a.name === 'subagent-nested-rows')?.ok).toBe(false);
@@ -884,12 +772,7 @@ describe('buildReport (AC5)', () => {
      * corpus, measured at 6 of 21 top-level sessions with none. A red there
      * would fail the gate for something the product did not do.
      */
-    const report = buildReport({
-      task: '5.5',
-      startedAt: '2026-08-31T00:00:00.000Z',
-      result: passingResult({ subagentExpansion: null }),
-      error: null,
-    });
+    const report = reportFor({ subagentExpansion: null });
 
     expect(report.ok).toBe(true);
     expect(report.assertions.map((a) => a.name)).not.toContain('subagent-expansion-request');
@@ -899,14 +782,13 @@ describe('buildReport (AC5)', () => {
   });
 
   it('expects a sub-agent screenshot, so AC-R2 is not decoration (Test 21)', () => {
-    // Mirrors 5.4's twin above. Without `07-subagent.png` the founder opens the
-    // contact sheet for a sub-agent task and sees six pictures without one.
-    const report = buildReport({
-      task: '5.5',
-      startedAt: '2026-08-31T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    // Without `07-subagent.png` the founder opens the contact sheet for a
+    // sub-agent task and sees pictures of everything but one. The same holds for
+    // `06-thread.png` on a thread task, and for `09-drift.png` most of all: the
+    // corpus is clean — measured 291 of 293 sessions — so it is the only shot in
+    // the set that can hold an alarm. The ten literal names are pinned through
+    // the real writer, in `runRenderGate`'s "resolves 0" test below.
+    const report = reportFor();
     const count = report.assertions.find((a) => a.name === 'shot-count');
 
     expect(count?.ok).toBe(true);
@@ -919,34 +801,12 @@ describe('buildReport (AC5)', () => {
     // order that does not exist.
   });
 
-  it('expects a drift screenshot, because no clean session can produce one (Test 12)', () => {
-    // The corpus is clean — measured 291 of 293 sessions — so this is the only
-    // shot in the set that can hold an alarm at all. Without it the founder
-    // opens the contact sheet for the alarm task and sees eight pictures of a
-    // product behaving normally.
-    const report = buildReport({
-      task: '7.3',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
-    const count = report.assertions.find((a) => a.name === 'shot-count');
-
-    expect(count?.ok).toBe(true);
-    expect(report.shots.map((s) => s.name)).toContain('09-drift.png');
-  });
-
   it('names both sides of the alarm, so neither can discharge the other (Test 13)', () => {
     // A probe that only read the raise would pass over a banner stuck on, which
     // is AC3's failure; one that only read the silence would pass over a dead
     // alarm, which is AC2's. Two records, and the `reds on` rows above spoil
     // each independently.
-    const report = buildReport({
-      task: '7.3',
-      startedAt: '2026-09-01T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
     expect(names).toContain('drift-banner-silent-when-clean');
@@ -956,12 +816,7 @@ describe('buildReport (AC5)', () => {
   });
 
   it('carries the two new readings into the report and the contact sheet', () => {
-    const report = buildReport({
-      task: '5.2',
-      startedAt: '2026-08-30T00:00:00.000Z',
-      result: passingResult(),
-      error: null,
-    });
+    const report = reportFor();
     expect(report.turnGroupCount).toBe(2);
     expect(report.detailResponses).toBe(3);
     expect(renderContactSheet(report)).toContain('2 turn group(s)');
@@ -1001,15 +856,10 @@ describe('evaluateDetail (AC3) — the three-state transition', () => {
 });
 
 describe('renderContactSheet (AC5)', () => {
-  const report = buildReport({
-    task: '0.3',
-    startedAt: '2026-08-08T00:00:00.000Z',
-    result: passingResult({
-      // Real transcript text: a turn label carries harness tags in angle brackets.
-      labels: [{ index: 0, text: '<local-command-caveat> & "quoted"' }],
-      detail: { t0: 'T-zero <b>', t1: 'T-one <i>', t2: 'T-two <u>' },
-    }),
-    error: null,
+  const report = reportFor({
+    // Real transcript text: a turn label carries harness tags in angle brackets.
+    labels: [{ index: 0, text: '<local-command-caveat> & "quoted"' }],
+    detail: { t0: 'T-zero <b>', t1: 'T-one <i>', t2: 'T-two <u>' },
   });
   const html = renderContactSheet(report);
 

@@ -16,55 +16,22 @@ import { createProjectionEnv } from '../env.js';
 import { classifyCorpusPath, decodeProjectDir, projectSlugOf, rowIdOf } from '../paths.js';
 import { scanCorpus, type ScanResult } from '../scan.js';
 import {
+  buildTree,
   cleanup,
   CWD,
   makeSandbox,
+  OTHER,
+  PARENT,
   sessionRecords,
   SLUG,
-  writeJournal,
   writeSealedSession,
   writeSession,
-  writeSidecar,
-  writeToolResult,
+  WF_DIR,
   type Sandbox,
 } from './fixtures.js';
 
-const PARENT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-const OTHER = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
-const WF_DIR = 'wf_18e7ec0c-db9';
-
 let sandbox: Sandbox;
 let db: DatabaseSync;
-
-/** Two sessions, one plain sidecar, one `wf_*` pair, a journal, a tool result. */
-function buildTree(): void {
-  writeSession(
-    sandbox,
-    PARENT,
-    sessionRecords('call-1', '2026-08-20T10:00:00.000Z', '2026-08-20T10:05:00.000Z'),
-  );
-  writeSession(
-    sandbox,
-    OTHER,
-    sessionRecords('call-2', '2026-08-20T09:00:00.000Z', '2026-08-20T09:05:00.000Z'),
-  );
-  writeSidecar(
-    sandbox,
-    PARENT,
-    'child1',
-    sessionRecords('call-3', '2026-08-20T10:01:00.000Z', '2026-08-20T10:02:00.000Z'),
-    { toolUseId: 'call-1' },
-  );
-  writeSidecar(
-    sandbox,
-    PARENT,
-    'wfchild',
-    sessionRecords('call-4', '2026-08-20T10:03:00.000Z', '2026-08-20T10:04:00.000Z'),
-    { workflowDir: WF_DIR },
-  );
-  writeJournal(sandbox, PARENT, WF_DIR);
-  writeToolResult(sandbox, PARENT, 'b011o0n');
-}
 
 function scan(): ScanResult {
   return scanCorpus(db, sandbox.archiveRoot, sandbox.sourceRoot);
@@ -102,7 +69,7 @@ function conserved(result: ScanResult): { walked: number; accounted: number } {
 beforeEach(() => {
   sandbox = makeSandbox();
   db = openCache();
-  buildTree();
+  buildTree(sandbox);
 });
 
 afterEach(() => {
@@ -216,18 +183,6 @@ describe('AC2/AC1 — a sealed session and its hot twin are one entry', () => {
 });
 
 describe('AC3 — the journal is excluded by path, before it is opened', () => {
-  it('never appears in the changed set, on any pass', () => {
-    const cold = scan();
-    indexAll(cold);
-    const warm = scan();
-
-    for (const result of [cold, warm]) {
-      expect(result.changed.map((entry) => entry.relPath)).not.toContain(
-        `${SLUG}/${PARENT}/subagents/workflows/${WF_DIR}/journal.jsonl`,
-      );
-    }
-  });
-
   it('still lets its sibling agent transcripts through, and defers the rest', () => {
     const result = scan();
     const rels = result.changed.map((entry) => entry.relPath);

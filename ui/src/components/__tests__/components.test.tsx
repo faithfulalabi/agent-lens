@@ -130,7 +130,7 @@ describe('AppShell', () => {
      * claim is unchanged — every page renders inside the shell — but the list
      * of pages now comes from App.tsx's own imports, so a task that adds a page
      * adds one import and edits no test. (Task 5.3 asked for this; 5.2a runs
-     * first, so 5.2a makes it. route-match.test.ts carries the same change.)
+     * first, so 5.2a makes it.)
      */
     const pages = pagesImportedBy(source);
     expect(pages.length, 'no page import was derived from App.tsx').toBeGreaterThan(0);

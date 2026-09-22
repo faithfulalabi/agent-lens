@@ -16,6 +16,7 @@ import { PROJECTOR_VERSION } from '../../transcript/version.js';
 import {
   countOf,
   CWD,
+  eventRow,
   fileEnv,
   ftsIntegrityCheck,
   humanLine,
@@ -227,10 +228,7 @@ describe('projectSession is one unit of work (AC1)', () => {
     const expected = runPipeline(lines, { session_id: id, drift });
 
     for (const event of expected.events) {
-      const stored = db.prepare('SELECT * FROM events WHERE id = ?').get(event.id) as Record<
-        string,
-        unknown
-      >;
+      const stored = eventRow(db, event.id);
       for (const [column, value] of Object.entries(event)) {
         // `output_storage`, `spill_path` and `text` are this task's to resolve;
         // every other column must survive the trip byte for byte.
@@ -312,10 +310,6 @@ describe('projectSession resolves the spill half of the seam (AC5)', () => {
     const probed: string[] = [];
     project(db, id, path, fileEnv({ probed }));
     return { db, id, path, probed };
-  }
-
-  function eventRow(db: DatabaseSync, id: string): Record<string, unknown> {
-    return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
   }
 
   it('a resolved claim carries the probed path and the declared size', () => {
@@ -545,6 +539,7 @@ describe('drift_json carries what BOTH stages counted (AC7)', () => {
     const id = seedIndexRow(db, path);
 
     project(db, id, path);
+    // Exactly `{}`, so `unresolved_spills` is omitted at zero too.
     expect(sessionRow(db, id).drift_json).toBe('{}');
   });
 
@@ -582,15 +577,6 @@ describe('drift_json carries what BOTH stages counted (AC7)', () => {
     expect(readFileSync(join(import.meta.dirname, '..', 'schema.ts'), 'utf8')).not.toContain(
       'unresolved_spills',
     );
-  });
-
-  it('a session with no missing spill omits the key entirely', () => {
-    const db = cache();
-    const { path } = plant('nospills', simpleSession());
-    const id = seedIndexRow(db, path);
-
-    project(db, id, path);
-    expect(String(sessionRow(db, id).drift_json)).not.toContain('unresolved_spills');
   });
 });
 
@@ -1028,10 +1014,7 @@ describe('a sidecar IS a sessions row (Task 3.3 AC1, AC2, AC3)', () => {
 
   it('the span is the sub-agent’s own, stamped sidecar_span', () => {
     const { db } = linkedSession();
-    const row = db.prepare('SELECT * FROM events WHERE id = ?').get('toolu_agent') as Record<
-      string,
-      unknown
-    >;
+    const row = eventRow(db, 'toolu_agent');
 
     expect(row.duration_source).toBe('sidecar_span');
     // TS(10) -> TS(250), and never the 1,000 ms handshake it replaced. The
@@ -1049,10 +1032,7 @@ describe('a sidecar IS a sessions row (Task 3.3 AC1, AC2, AC3)', () => {
     const id = seedIndexRow(db, path);
     project(db, id, path);
 
-    const row = db.prepare('SELECT * FROM events WHERE id = ?').get('toolu_a') as Record<
-      string,
-      unknown
-    >;
+    const row = eventRow(db, 'toolu_a');
     expect(row.duration_source).toBe('elapsed');
     expect(row.child_session_id).toBeNull();
     expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 1 });
@@ -1301,17 +1281,13 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
     return { db, id };
   }
 
-  function eventOf(db: DatabaseSync, id: string): Record<string, unknown> {
-    return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
-  }
-
   function find(db: DatabaseSync, q: string): string[] {
     return searchEvents(db, { q, limit: 50 }).map((hit) => hit.event_id);
   }
 
   it('(a) inline: a Bash result body is indexed, with a snippet that marks the term', () => {
     const { db } = threeArms();
-    expect(eventOf(db, 'toolu_inline').output_storage).toBe('inline');
+    expect(eventRow(db, 'toolu_inline').output_storage).toBe('inline');
 
     const hits = searchEvents(db, { q: INLINE_TOKEN, limit: 50 });
     expect(hits.map((hit) => hit.event_id)).toEqual(['toolu_inline']);
@@ -1320,7 +1296,7 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
 
   it('(b) preview cap: the 8 KB head is searchable and everything past the cut is not', () => {
     const { db } = threeArms();
-    const row = eventOf(db, 'toolu_big');
+    const row = eventRow(db, 'toolu_big');
     expect(row.output_storage).toBe('line_ref');
     expect(Buffer.byteLength(row.text as string, 'utf8')).toBeLessThanOrEqual(PREVIEW_MAX);
 
@@ -1330,7 +1306,7 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
 
   it('(c) spill: the body is on disk, the row keeps no text, and q finds nothing', () => {
     const { db } = threeArms();
-    const row = eventOf(db, 'toolu_spilled');
+    const row = eventRow(db, 'toolu_spilled');
 
     // Resolved, so this is the spill clause and not the `missing` one.
     expect(row.output_storage).toBe('spill');

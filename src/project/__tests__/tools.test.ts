@@ -19,24 +19,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { contentBlocks } from '../../transcript/blocks.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import type { ParsedLine } from '../../transcript/line.js';
-import { runPipeline, type ProjectedEvent, type Projection } from '../pipeline.js';
+import { runPipeline } from '../pipeline.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
-import { classifyProjectFixture, projectFixtureBytes } from './fixtures.js';
-
-const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-
-function project(name: string): Projection & { lines: ParsedLine[] } {
-  const { lines, drift } = classifyProjectFixture(name);
-  return { ...runPipeline(lines, { session_id: SESSION, drift }), lines };
-}
-
-/** The one row a test is about, by the id the fixture gave its `tool_use`. */
-function callAt(result: Projection, id: string): ProjectedEvent {
-  const event = result.events.find((candidate) => candidate.id === id);
-  if (event === undefined) throw new Error(`no tool call ${id}`);
-  return event;
-}
+import {
+  callAt,
+  census,
+  classifyProjectFixture,
+  project,
+  projectFixtureBytes,
+  SESSION,
+} from './fixtures.js';
 
 function bytes(text: string): number {
   return Buffer.byteLength(text, 'utf8');
@@ -60,17 +52,7 @@ describe('AC1 — the join folds one row, and the result contributes none', () =
     '%s still accounts for every unit after the fold',
     (name) => {
       const result = project(name);
-
-      let units = 0;
-      let toolResults = 0;
-      let blockless = 0;
-      for (const line of result.lines) {
-        if (line.uuid === undefined) continue;
-        const blocks = contentBlocks(line);
-        units += blocks.length;
-        toolResults += blocks.filter((block) => block.kind === 'tool_result').length;
-        if (blocks.length === 0) blockless += 1;
-      }
+      const { units, toolResults, blockless } = census(result.lines);
 
       // Non-vacuity: without a result in the file this is `events === units`.
       expect(toolResults).toBeGreaterThan(0);

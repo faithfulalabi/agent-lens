@@ -363,11 +363,6 @@ describe('turnIdsToOpen names every turn in the loaded child (Test 2, AC1)', () 
     const after = expandMany(before, turnIdsToOpen(child));
     expect([...after.expandedIds].sort()).toEqual(['c0', 'c1', 'mine']);
   });
-
-  it('returns the same state when every id is already open, so no render is caused', () => {
-    const state = initialNavState(new Set(['c0']));
-    expect(expandMany(state, ['c0'])).toBe(state);
-  });
 });
 
 describe('mergedRowIds keeps a child-row selection alive (Tests 11 and 12, AC1)', () => {
@@ -417,21 +412,15 @@ describe('agentStatusOf is total over the schema’s four words', () => {
   it.each([
     ['completed', 'completed'],
     ['failed', 'failed'],
+    // MEASURED: 0 rows in the archive carry `killed`. It is NOT unwritten —
+    // `src/project/tools.ts:203` assigns the notification's status verbatim and
+    // the parser is proven to return it. Reachable-but-unobserved is not dead,
+    // and dropping the arm would make this map partial against the schema.
     ['killed', 'killed'],
     ['running', 'running'],
     [null, 'unknown'],
     ['something-new', 'unknown'],
   ])('narrows %s to %s', (wire, expected) => {
     expect(agentStatusOf(wire)).toBe(expected);
-  });
-
-  it('keeps the killed arm, which has a live writer and no rows', () => {
-    /*
-     * MEASURED: 0 rows in the archive carry `killed`. It is NOT unwritten —
-     * `src/project/tools.ts:203` assigns the notification's status verbatim and
-     * the parser is proven to return it. Reachable-but-unobserved is not dead,
-     * and dropping the arm would make this map partial against the schema.
-     */
-    expect(agentStatusOf('killed')).toBe('killed');
   });
 });

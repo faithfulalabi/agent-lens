@@ -8,7 +8,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { bootTestServer, cleanupDir, openTestDb, TOKEN_HEADER, type TestServer } from './helpers.js';
+import {
+  bootTestServer,
+  cleanupDir,
+  listedIds,
+  openTestDb,
+  TOKEN_HEADER,
+  type TestServer,
+} from './helpers.js';
 
 let server: TestServer | undefined;
 
@@ -58,13 +65,6 @@ function countRows(dataDir: string, sql: string): number {
   } finally {
     db.close();
   }
-}
-
-async function listedIds(s: TestServer): Promise<string[]> {
-  const body = (await (
-    await fetch(s.url('/api/sessions'), { headers: { [TOKEN_HEADER]: s.token } })
-  ).json()) as { items: { id: string }[] };
-  return body.items.map((item) => item.id);
 }
 
 describe('startServer — corpus sweep on boot', () => {

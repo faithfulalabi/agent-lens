@@ -141,3 +141,37 @@ export function writeToolResult(
 ): string {
   return write(join(sandbox.archiveRoot, slug, sessionStem, 'tool-results', `${name}.txt`), body);
 }
+
+export const PARENT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+export const OTHER = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+export const WF_DIR = 'wf_18e7ec0c-db9';
+
+/** Two sessions, one plain sidecar, one `wf_*` pair, a journal, a tool result. */
+export function buildTree(sandbox: Sandbox): void {
+  writeSession(
+    sandbox,
+    PARENT,
+    sessionRecords('call-1', '2026-08-20T10:00:00.000Z', '2026-08-20T10:05:00.000Z'),
+  );
+  writeSession(
+    sandbox,
+    OTHER,
+    sessionRecords('call-2', '2026-08-20T09:00:00.000Z', '2026-08-20T09:05:00.000Z'),
+  );
+  writeSidecar(
+    sandbox,
+    PARENT,
+    'child1',
+    sessionRecords('call-3', '2026-08-20T10:01:00.000Z', '2026-08-20T10:02:00.000Z'),
+    { toolUseId: 'call-1' },
+  );
+  writeSidecar(
+    sandbox,
+    PARENT,
+    'wfchild',
+    sessionRecords('call-4', '2026-08-20T10:03:00.000Z', '2026-08-20T10:04:00.000Z'),
+    { workflowDir: WF_DIR },
+  );
+  writeJournal(sandbox, PARENT, WF_DIR);
+  writeToolResult(sandbox, PARENT, 'b011o0n');
+}

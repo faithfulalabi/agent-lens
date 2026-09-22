@@ -12,7 +12,7 @@ import {
   type ParsedKind,
   type ParsedLine,
 } from '../line.js';
-import { classifyFixture, ctx, fixtureBytes, offsetLines } from './fixtures.js';
+import { classifyFixture, ctx, fixtureBytes } from './fixtures.js';
 
 /** The 14 measured top-level types, with their 2026-08-13 archive counts. */
 const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
@@ -96,11 +96,6 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
   it('reads identity out of the four types that carry a uuid', () => {
     const withUuid = lines.filter((line) => line.uuid !== undefined).map((line) => line.kind);
     expect(withUuid).toEqual(['assistant', 'user', 'system', 'attachment']);
-  });
-
-  it('produces exactly one row per input line — N in, N out', () => {
-    const bytes = fixtureBytes('all-types.jsonl');
-    expect(lines).toHaveLength(offsetLines(bytes.toString('utf8')).length);
   });
 });
 

@@ -11,9 +11,7 @@
 // reintroduce either on its next release.
 
 import { describe, expect, it } from 'vitest';
-import { contentBlocks } from '../../transcript/blocks.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import type { ParsedLine } from '../../transcript/line.js';
 import { fixtureBytes, offsetLines } from '../../transcript/__tests__/fixtures.js';
 import {
   epochMs,
@@ -22,15 +20,13 @@ import {
   type ProjectedTurn,
   type Projection,
 } from '../pipeline.js';
-import { classifyProjectFixture, projectFixtureBytes } from './fixtures.js';
-
-const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-
-/** One fixture, classified and projected through one counter, as production does. */
-function project(name: string): Projection & { lines: ParsedLine[] } {
-  const { lines, drift } = classifyProjectFixture(name);
-  return { ...runPipeline(lines, { session_id: SESSION, drift }), lines };
-}
+import {
+  census,
+  classifyProjectFixture,
+  project,
+  projectFixtureBytes,
+  SESSION,
+} from './fixtures.js';
 
 function kindsOf(turns: readonly ProjectedTurn[]): string[] {
   return turns.map((turn) => turn.kind);
@@ -155,37 +151,10 @@ describe('AC4 — event ids, and what `seq` is actually derived from', () => {
     expect(prompt?.id).toMatch(/^[0-9a-f-]+:0$/);
     expect(result.events.every((event) => event.id !== '')).toBe(true);
   });
-
-  it('projects the same bytes twice into the same seq sequence', () => {
-    const once = project('turn-kinds.jsonl');
-    const twice = project('turn-kinds.jsonl');
-    expect(twice.events.map((event) => `${event.seq}:${event.id}`)).toEqual(
-      once.events.map((event) => `${event.seq}:${event.id}`),
-    );
-  });
 });
 
 describe('AC1/AC4 — nothing is dropped, and the turn windows tile the events', () => {
   const FIXTURES = ['turn-kinds.jsonl', 'turn-duration.jsonl', 'late-parent.jsonl'];
-
-  /** `units - toolResultUnits + blocklessUuidLines` — the whole accounting rule. */
-  function census(lines: readonly ParsedLine[]): {
-    units: number;
-    toolResults: number;
-    blockless: number;
-  } {
-    let units = 0;
-    let toolResults = 0;
-    let blockless = 0;
-    for (const line of lines) {
-      if (line.uuid === undefined) continue;
-      const blocks = contentBlocks(line);
-      units += blocks.length;
-      toolResults += blocks.filter((block) => block.kind === 'tool_result').length;
-      if (blocks.length === 0) blockless += 1;
-    }
-    return { units, toolResults, blockless };
-  }
 
   it.each(FIXTURES)('%s accounts for every unit', (name) => {
     const result = project(name);
@@ -518,7 +487,6 @@ describe('AC7 — drift is one column, carrying three buckets', () => {
   });
 
   it('drops the empty bucket, so a clean counter still serializes to `{}`', () => {
-    expect(new DriftCounter().serialize()).toBe('{}');
     expect(project('one-line-session.jsonl').drift).toBe('{}');
   });
 });

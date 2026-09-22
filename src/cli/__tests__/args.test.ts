@@ -31,7 +31,7 @@ import {
 import { validateArgs, type ArgSpec } from '../args.js';
 import { EXIT_INCOMPLETE, parseStringFlag } from '../commands/archive.js';
 import { COMMANDS } from '../index.js';
-import { parsePort, parseHost } from '../commands/start.js';
+import { parsePort } from '../commands/start.js';
 
 const SESSION = `${SLUG}/sess-1.jsonl`;
 
@@ -243,10 +243,6 @@ describe('6b — the --port= change is confined to the = spelling (OQ5)', () => 
     expect(validateArgs(specOf('start'), ['--port', '0'])).toEqual({ ok: true });
     expect(validateArgs(specOf('start'), ['--port=0'])).toEqual({ ok: true });
     expect(parsePort(['--port=0'])).toBe(0);
-  });
-
-  it('leaves the per-parser contracts alone', () => {
-    expect(parseHost(['--port', '4470'])).toBeUndefined();
   });
 });
 

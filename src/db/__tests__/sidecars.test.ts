@@ -5,10 +5,10 @@
 // wrapped in a counter, so every arm that asserts "it did not open that" is
 // asserting about production code rather than about a stub.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { createArchiveReader, type ArchiveReader } from '../../archive/read.js';
 import { classifyLine, foldSessionEnvelope } from '../../transcript/line.js';
 import { DriftCounter } from '../../transcript/drift.js';
@@ -32,17 +32,7 @@ import {
   type ReaderLog,
 } from './fixtures/index.js';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox !== undefined) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 const TS = (seconds: number): string =>
   new Date(Date.UTC(2026, 7, 14, 9, 0, seconds)).toISOString();

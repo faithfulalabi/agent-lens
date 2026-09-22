@@ -1,7 +1,7 @@
 // The acceptance criteria. Fixtures are synthesized in temp dirs; nothing here
 // reads a real transcript root.
 
-import { afterEach, describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -21,9 +21,7 @@ import { canonicalizeTranscriptPath } from '../paths.js';
 import {
   archivePath,
   bytesEqual,
-  cleanup,
   jsonLines,
-  makeSandbox,
   readBytes,
   SLUG,
   snapshotTree,
@@ -33,18 +31,9 @@ import {
   type Sandbox,
   type TreeEntry,
 } from './fixtures.js';
+import { useSandbox } from './use-sandbox.js';
 
-let sandbox: Sandbox | undefined;
-
-function sb(): Sandbox {
-  sandbox ??= makeSandbox();
-  return sandbox;
-}
-
-afterEach(() => {
-  if (sandbox) cleanup(sandbox);
-  sandbox = undefined;
-});
+const sb = useSandbox();
 
 function pass(extra: { verify?: boolean } = {}) {
   const s = sb();

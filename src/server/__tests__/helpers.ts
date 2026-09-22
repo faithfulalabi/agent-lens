@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { readToken, TOKEN_HEADER } from '../../shared/index.js';
 import { CACHE_DB_FILE } from '../../db/open.js';
 import { startServer, type ServerHandle } from '../start.js';
+import type { WarmQueue } from '../warm.js';
 
 /** A booted test server plus its temp data dir and convenience accessors. */
 export interface TestServer {
@@ -128,6 +129,23 @@ export function openTestDb(dataDir: string): DatabaseSync {
 /** Delete a temp data dir tree. */
 export function cleanupDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * A warm queue that starts nothing. For a file that never POSTs `/api/warm`
+ * through the middleware, where a real queue would only race `db.close()` in
+ * `afterEach`.
+ */
+export function stubWarm(): WarmQueue {
+  return { start: () => 0, close: () => undefined };
+}
+
+/** The ids `GET /api/sessions` lists, in served order. */
+export async function listedIds(s: TestServer): Promise<string[]> {
+  const body = (await (
+    await fetch(s.url('/api/sessions'), { headers: { [TOKEN_HEADER]: s.token } })
+  ).json()) as { items: { id: string }[] };
+  return body.items.map((item) => item.id);
 }
 
 // --- Raw HTTP, and reading the served page ---------------------------------

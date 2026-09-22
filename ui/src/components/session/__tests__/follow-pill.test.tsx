@@ -10,16 +10,10 @@ import { FollowPill } from '../FollowPill';
  */
 
 describe('the follow pill draws only while paused (AC3)', () => {
-  it('renders nothing at all while following', () => {
-    expect(
-      renderToStaticMarkup(<FollowPill label={pillLabel({ following: true, pending: 0 })} />),
-    ).toBe('');
-  });
-
-  it('renders nothing while paused with an empty backlog', () => {
-    expect(
-      renderToStaticMarkup(<FollowPill label={pillLabel({ following: false, pending: 0 })} />),
-    ).toBe('');
+  it.each([true, false])('renders nothing with an empty backlog (following: %s)', (following) => {
+    expect(renderToStaticMarkup(<FollowPill label={pillLabel({ following, pending: 0 })} />)).toBe(
+      '',
+    );
   });
 
   it('spells the backlog, and carries the slot the render gate drives', () => {

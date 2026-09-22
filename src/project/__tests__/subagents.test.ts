@@ -11,20 +11,17 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentMeta } from '../../transcript/agents.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import { runPipeline, type ProjectedEvent, type Projection } from '../pipeline.js';
 import {
   linkSubagents,
   type SidecarDescriptor,
   type SidecarEnvelope,
   type SidecarSessionRow,
 } from '../subagents.js';
-import { classifyProjectFixture } from './fixtures.js';
+import { callAt, project, SESSION } from './fixtures.js';
 
 const PROJECT_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const SRC_DIR = dirname(PROJECT_DIR);
 const SUBAGENTS_SOURCE = readFileSync(join(PROJECT_DIR, 'subagents.ts'), 'utf8');
-
-const SESSION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 
 /** Every non-test `.ts` under one tree — the same filter the standing guards use. */
 function sources(tree: string): string[] {
@@ -53,17 +50,6 @@ function scanTrees(pattern: RegExp): string[] {
     [...sources(join(SRC_DIR, 'transcript')), ...sources(join(SRC_DIR, 'project'))],
     pattern,
   );
-}
-
-function project(name: string, session = SESSION): Projection & { drifter: DriftCounter } {
-  const { lines, drift } = classifyProjectFixture(name);
-  return { ...runPipeline(lines, { session_id: session, drift }), drifter: drift };
-}
-
-function callAt(result: Projection, id: string): ProjectedEvent {
-  const event = result.events.find((candidate) => candidate.id === id);
-  if (event === undefined) throw new Error(`no tool call ${id}`);
-  return event;
 }
 
 /** One resolved sidecar. Every arm below varies exactly one field of this. */
@@ -295,10 +281,6 @@ describe('AC2 — the agent id is a cross-check, never a gate', () => {
     const keys = Object.keys(JSON.parse(drift.serialize()) as Record<string, unknown>);
     expect(keys[0]).toBe('sidecar_agent_id_mismatch');
     expect(keys).toStrictEqual([...keys].sort());
-  });
-
-  it('a clean counter still serializes to exactly {}', () => {
-    expect(new DriftCounter().serialize()).toBe('{}');
   });
 });
 
