@@ -5,7 +5,7 @@
 // it, and the real-archive arms live in `corpus.test.ts` behind `runIt`.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
@@ -18,9 +18,13 @@ import { linkSubagents } from '../../project/subagents.js';
 import { DriftCounter } from '../../transcript/drift.js';
 import {
   countingReader,
+  humanLine,
   jsonl,
   newReaderLog,
   openCache,
+  spillMarker,
+  toolCallLine,
+  toolResultLine,
   type ReaderLog,
 } from '../../db/__tests__/fixtures/index.js';
 import {
@@ -42,7 +46,9 @@ import {
   sessionRecords,
   SLUG,
   writeSealedSession,
+  writeSession,
   writeSidecar,
+  writeToolResult,
   WF_DIR,
   type Sandbox,
 } from './fixtures.js';
@@ -663,5 +669,82 @@ describe('hand-off #1 — events.src_len is never NULL and never 0', () => {
       const slice = reader.read(archivePath, event.src_offset, event.src_len).toString('utf8');
       expect(() => JSON.parse(slice) as unknown).not.toThrow();
     }
+  });
+});
+
+describe('task 7.5 — wave 2 drains the spill index at its tail', () => {
+  const SPILLER = 'cccccccc-3333-4333-8333-cccccccccccc';
+
+  /** A top-level session with two spilled Bash results, both bodies mirrored. */
+  function plantSpiller(): string[] {
+    const at = (s: number): string => new Date(Date.UTC(2026, 7, 20, 11, 0, s)).toISOString();
+    writeSession(sandbox, SPILLER, [
+      humanLine('spill twice', at(0)),
+      toolCallLine('toolu_w0', 'Bash', at(1)),
+      toolResultLine('toolu_w0', spillMarker('/gone/tool-results/w0.txt'), at(2)),
+      toolCallLine('toolu_w1', 'Bash', at(3)),
+      toolResultLine('toolu_w1', spillMarker('/gone/tool-results/w1.txt'), at(4)),
+    ]);
+    return [
+      writeToolResult(sandbox, SPILLER, 'w0', 'zzwatchzero'),
+      writeToolResult(sandbox, SPILLER, 'w1', 'zzwatchone'),
+    ];
+  }
+
+  function indexedIds(): string[] {
+    return (
+      db.prepare('SELECT event_id FROM spill_fts ORDER BY event_id').all() as unknown as {
+        event_id: string;
+      }[]
+    ).map((entry) => entry.event_id);
+  }
+
+  it('indexes, reconciles and names skips on the report — outside the conservation sum', () => {
+    const bodies = plantSpiller();
+    const made = sweep();
+    made.wave1();
+
+    const first = made.wave2();
+    expect(first.spills_indexed).toBe(2);
+    expect(first.spills_removed).toBe(0);
+    expect(first.spills_skipped).toEqual([]);
+    expect(indexedIds()).toEqual(['toolu_w0', 'toolu_w1']);
+
+    // A warm pass is probes only.
+    expect(made.wave2()).toMatchObject({
+      spills_indexed: 0,
+      spills_removed: 0,
+      spills_skipped: [],
+    });
+
+    // The body goes: the reconcile removes the row, and the row it leaves behind
+    // is a candidate again, named by path until the body returns.
+    rmSync(bodies[0]!);
+    const gone = made.wave2();
+    expect(gone.spills_removed).toBe(1);
+    expect(gone.spills_skipped).toHaveLength(1);
+    expect(gone.spills_skipped[0]).toMatch(/w0\.txt$/);
+    expect(indexedIds()).toEqual(['toolu_w1']);
+
+    // `tick` carries the same fields, and conservation is untouched by them.
+    const report = made.tick();
+    const { walked, accounted } = conservationOf(report);
+    expect(accounted).toBe(walked);
+  });
+
+  it('shares wave 2`s deadline: one body per pass once it is blown, never zero', () => {
+    plantSpiller();
+    // Project everything first, with an ordinary clock.
+    const warm = sweep();
+    warm.wave1();
+    warm.wave2();
+    db.exec('DELETE FROM spill_fts');
+
+    let clock = 0;
+    const late = sweep({ wave2DeadlineMs: 10, now: () => (clock += 1000) });
+    expect(late.wave2().spills_indexed).toBe(1);
+    expect(late.wave2().spills_indexed).toBe(1);
+    expect(late.wave2().spills_indexed).toBe(0);
+    expect(indexedIds()).toEqual(['toolu_w0', 'toolu_w1']);
   });
 });

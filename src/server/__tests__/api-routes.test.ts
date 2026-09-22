@@ -10,7 +10,7 @@
 // the freshness gate and a gate over a fictional path proves nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Hono } from 'hono';
@@ -39,7 +39,8 @@ import {
   SESSION_ROW_KEYS as DB_SESSION_ROW_KEYS,
   TURN_ROW_KEYS,
 } from '../../db/__tests__/fixtures/shapes.js';
-import { emptyReport } from '../../corpus/watch.js';
+import { createCorpusSweep, emptyReport } from '../../corpus/watch.js';
+import { sealArchiveFile } from '../../archive/seal.js';
 import type { Page } from '../../shared/api.js';
 import {
   readEventArchivePath,
@@ -748,5 +749,75 @@ describe('10. GET /api/health (spec:394-396)', () => {
       headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
     });
     expect(((await res.json()) as HealthBody).files_indexed).toBe(42);
+  });
+});
+
+describe('task 7.5 — a token only in a spilled body is found by GET /api/search (AC1)', () => {
+  const SPILL_SESSION = 'cccccccc-7575-4757-8757-cccccccccccc';
+
+  /** A slugged session whose one Bash result spilled, the body really mirrored. */
+  function plantSpill(): string {
+    const dir = join(sandbox.archiveRoot, '-Users-dev-proj', SPILL_SESSION);
+    writeTranscript(`${dir}.jsonl`, [
+      humanLine('run the long build', '2026-08-14T10:00:00.000Z'),
+      toolCallLine('toolu_spilled', 'Bash', '2026-08-14T10:00:01.000Z'),
+      toolResultLine(
+        'toolu_spilled',
+        spillMarker('/gone/tool-results/spilled.txt'),
+        '2026-08-14T10:00:02.000Z',
+      ),
+    ]);
+    const body = join(dir, 'tool-results', 'spilled.txt');
+    mkdirSync(dirname(body), { recursive: true });
+    writeFileSync(body, 'line 1\nthe build log says zzspilltoken at the end\n');
+    return body;
+  }
+
+  /** One boot-style tick of the REAL sweep: wave 1, wave 2, and wave 2's spill tail. */
+  function tick(): void {
+    const sweep = createCorpusSweep({
+      db,
+      dataDir: sandbox.dataDir,
+      transcriptRoot: sandbox.sourceRoot,
+    });
+    try {
+      sweep.tick();
+    } finally {
+      sweep.close();
+    }
+  }
+
+  async function expectSpillHit(): Promise<void> {
+    const { status, body } = await getJson<SearchBody>('/api/search?q=zzspilltoken');
+    expect(status).toBe(200);
+    expect(body.items).toHaveLength(1);
+    const [hit] = body.items;
+    expectKeys(hit, SEARCH_HIT_KEYS);
+    expect(hit).toMatchObject({
+      event_id: 'toolu_spilled',
+      kind: 'tool_call',
+      session_id: SPILL_SESSION,
+    });
+    expect(hit!.snippet).toContain('<mark>zzspilltoken</mark>');
+  }
+
+  it('is found after one tick, and not before', async () => {
+    plantSpill();
+    expect((await getJson<SearchBody>('/api/search?q=zzspilltoken')).body.items).toEqual([]);
+
+    tick();
+
+    await expectSpillHit();
+  });
+
+  it('is found through a SEALED body too — the reader decompresses the .zst', async () => {
+    const body = plantSpill();
+    sealArchiveFile(body, sandbox.archiveRoot);
+    expect(existsSync(body)).toBe(false);
+    expect(existsSync(`${body}.zst`)).toBe(true);
+
+    tick();
+
+    await expectSpillHit();
   });
 });

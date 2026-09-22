@@ -14,9 +14,20 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { captureConsole, plantHeldLock, type Sandbox } from '../../archive/__tests__/fixtures.js';
 import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
-import { sessionRecords, writeSession, writeSidecar } from '../../corpus/__tests__/fixtures.js';
+import {
+  sessionRecords,
+  writeSession,
+  writeSidecar,
+  writeToolResult,
+} from '../../corpus/__tests__/fixtures.js';
+import {
+  humanLine,
+  spillMarker,
+  toolCallLine,
+  toolResultLine,
+} from '../../db/__tests__/fixtures/index.js';
 import { CACHE_LOCK_FILE, openDb } from '../../db/open.js';
-import { countUnprojected, readHealthCounts } from '../../db/read.js';
+import { countUnprojected, readHealthCounts, searchEvents } from '../../db/read.js';
 import { EXIT_INCOMPLETE, EXIT_OK } from '../commands/archive.js';
 import { printingHub, warm } from '../commands/warm.js';
 
@@ -185,5 +196,38 @@ describe('13 — teardown, and the lock a running server holds (AC3)', () => {
 
     expect(code).toBe(EXIT_INCOMPLETE);
     expect(lines.join('\n')).toContain('POST /api/warm');
+  });
+});
+
+describe('task 7.5 — warm drains the spill index once, after the fixed point', () => {
+  it('indexes a spilled body, says so once, and exits 0', async () => {
+    const s = sb();
+    const id = 'aaaaaaaa-1111-4111-8111-wm0000000075';
+    writeSession(s, id, [
+      humanLine('spill it', START),
+      toolCallLine('toolu_cli', 'Bash', START),
+      toolResultLine('toolu_cli', spillMarker('/gone/tool-results/cli.txt'), END),
+    ]);
+    writeToolResult(s, id, 'cli', 'the warm command found zzclitoken');
+
+    const { code, lines } = await runWarm(argsFor(s));
+
+    expect(code).toBe(EXIT_OK);
+    expect(lines.filter((line) => line.includes('spilled output(s) indexed'))).toHaveLength(1);
+    expect(lines.at(-1)).toContain('; 1 spilled output(s) indexed');
+
+    const opened = openDb({ dataDir: s.dataDir });
+    try {
+      expect(
+        searchEvents(opened.db, { q: 'zzclitoken', limit: 50 }).map((hit) => hit.event_id),
+      ).toEqual(['toolu_cli']);
+    } finally {
+      opened.close();
+    }
+
+    // A second warm has nothing to index and does not claim otherwise.
+    const second = await runWarm(argsFor(s));
+    expect(second.code).toBe(EXIT_OK);
+    expect(second.lines.at(-1)).not.toContain('spilled output');
   });
 });
