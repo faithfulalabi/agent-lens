@@ -365,3 +365,17 @@ export function createContentResolver(
 ): (row: EventContentRow, field: ContentField) => ResolvedContent {
   return (row, field) => resolveContent(row, field, archivePathOf(row.session_id), env);
 }
+
+/**
+ * Bind the probe-only half of the spill arm: where a row's spill body is
+ * readable NOW, or `undefined`. The same {@link spillSource} the detail screen
+ * serves through — archive mirror first, then the contained recorded path — so
+ * the spill index (`db/spill-index.ts`) asks exactly the question the screen
+ * asks. Two existence probes per call; it reads no bytes and never decompresses.
+ */
+export function createSpillLocator(
+  archivePathOf: (session_id: string) => string | undefined,
+  env: ContentEnv,
+): (row: EventContentRow) => string | undefined {
+  return (row) => spillSource(row, archivePathOf(row.session_id), env);
+}

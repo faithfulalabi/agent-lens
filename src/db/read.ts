@@ -523,7 +523,8 @@ export function readEventsByIds(
 
 // --- Event content ---------------------------------------------------------
 
-const EVENT_CONTENT_COLUMNS = `id, session_id, block_index, input, input_bytes, input_storage,
+/** The columns `resolveContent()` dispatches on. Shared with `spill-index.ts`. */
+export const EVENT_CONTENT_COLUMNS = `id, session_id, block_index, input, input_bytes, input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
      src_offset, src_len, result_offset, result_len, result_block`;
 
@@ -571,33 +572,64 @@ export interface SearchQuery {
 // null snippet, so the search result shows no context at all.
 const SNIPPET = `snippet(events_fts, -1, '<mark>', '</mark>', '…', 12)`;
 
+// `spill_fts` column 3 is the body; the other four are UNINDEXED and never match.
+const SPILL_SNIPPET = `snippet(spill_fts, 3, '<mark>', '</mark>', '…', 12)`;
+
 /** `q` as one FTS5 string literal. Doubling `"` is FTS5's own escape. */
 function ftsPhrase(q: string): string {
   return `"${q.replaceAll('"', '""')}"`;
 }
 
 /**
- * FTS5 over `events.text` and `events.input`. `session` scopes to one session;
- * without it this searches every PROJECTED session, which is what
- * {@link countUnprojected} reports the honest denominator for.
+ * The two arms of {@link searchEvents}. `scoped` appends the session clause to
+ * BOTH, and only then: node:sqlite throws `Unknown named parameter` for a bound
+ * key the SQL lacks, so the SQL and the bind object are built from one flag.
  */
-export function searchEvents(db: DatabaseSync, query: SearchQuery): SearchHit[] {
-  const where: string[] = ['events_fts MATCH ?'];
-  const rest: SqlParam[] = [];
-  if (query.session !== undefined) {
-    where.push('e.session_id = ?');
-    rest.push(query.session);
-  }
-  const sql =
+function searchSql(scoped: boolean): string {
+  const scope = scoped ? ' AND e.session_id = :session' : '';
+  const events =
     `SELECT e.session_id AS session_id, s.title AS session_title, s.project_path AS project_path,` +
     ` e.turn_id AS turn_id, e.id AS event_id, e.seq AS seq, e.kind AS kind, e.name AS name,` +
-    ` e.ts AS ts, ${SNIPPET} AS snippet` +
+    ` e.ts AS ts, ${SNIPPET} AS snippet, rank AS score` +
     ` FROM events_fts JOIN events e ON e.rowid = events_fts.rowid` +
     ` JOIN sessions s ON s.id = e.session_id` +
-    ` WHERE ${where.join(' AND ')} ORDER BY rank LIMIT ?`;
-  rest.push(query.limit);
-  const run = (match: string): SearchHit[] =>
-    db.prepare(sql).all(match, ...rest) as unknown as SearchHit[];
+    ` WHERE events_fts MATCH :q${scope}`;
+  // Joined back on the LIVE pointer, so a row the reconcile has not reached yet
+  // (its event reprojected to a different pointer, or gone) never surfaces.
+  const spills =
+    `SELECT e.session_id, s.title, s.project_path, e.turn_id, e.id, e.seq, e.kind, e.name,` +
+    ` e.ts, ${SPILL_SNIPPET}, rank` +
+    ` FROM spill_fts JOIN events e ON e.id = spill_fts.event_id` +
+    ` AND e.output_storage = 'spill' AND e.spill_path = spill_fts.spill_path` +
+    ` JOIN sessions s ON s.id = e.session_id` +
+    ` WHERE spill_fts MATCH :q${scope}`;
+  return (
+    `SELECT session_id, session_title, project_path, turn_id, event_id, seq, kind, name, ts,` +
+    ` snippet FROM (${events} UNION ALL ${spills}) ORDER BY score LIMIT :limit`
+  );
+}
+
+/**
+ * FTS5 over `events.text`, `events.input` and the spilled bodies in `spill_fts`.
+ * `session` scopes to one session; without it this searches every PROJECTED
+ * session, which is what {@link countUnprojected} reports the honest denominator
+ * for.
+ *
+ * No dedup across the arms: a spill row keeps `text` NULL (`write.ts`), so it
+ * can never match in `events_fts`. bm25 scores from the two tables are ordered
+ * together; they are close enough for a result list, not strictly comparable.
+ */
+export function searchEvents(db: DatabaseSync, query: SearchQuery): SearchHit[] {
+  const scoped = query.session !== undefined;
+  const sql = searchSql(scoped);
+  const run = (q: string): SearchHit[] =>
+    db
+      .prepare(sql)
+      .all({
+        q,
+        limit: query.limit,
+        ...(scoped && { session: query.session }),
+      }) as unknown as SearchHit[];
 
   try {
     return run(query.q);

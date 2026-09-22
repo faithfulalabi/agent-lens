@@ -13,7 +13,7 @@
 // archive: a bump here makes `openDb` remove the file and re-sweep.
 
 /** Bumping this makes `openDb` remove cache.db and recreate it. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 --
@@ -37,7 +37,7 @@ export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = OFF;    -- projections are dropped wholesale, per session, by hand
-PRAGMA user_version = 1;      -- SCHEMA_VERSION; mismatch => unlink + recreate
+PRAGMA user_version = 2;      -- SCHEMA_VERSION; mismatch => unlink + recreate
 
 -- =====================================================================  sessions
 -- The file index AND the session-list row AND the projection freshness header,
@@ -309,4 +309,31 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 
 -- ========================================================================  meta
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- seeded: schema_version, projector_version, projects_root, index_built_at`;
+-- seeded: schema_version, projector_version, projects_root, index_built_at
+
+-- ===================================================================  spill_fts
+-- Added by task 7.5 (SCHEMA_VERSION 2). The bodies of SPILLED tool output, which
+-- events_fts cannot see: a spill row keeps text NULL by contract (db/write.ts), so
+-- the body never reaches events.text. A PLAIN FTS5 table, not external-content: it
+-- stores the body once in spill_fts_content, so a plain DELETE is legal here and the
+-- events_fts 'delete' idiom hazard does not exist.
+--
+-- Tier-B-ADJACENT, BUT NOT DROPPED BY deleteSessionProjection. A reprojection keeps
+-- the same event id (the tool-call id), so a row outlives the projection that made
+-- it and a body is decompressed once, not once per reprojection. Its rows are
+-- written AND reconciled by db/spill-index.ts and nowhere else: every pass re-probes
+-- each row and deletes it once its events row, its spill pointer or its file is gone.
+--
+-- (event_id, spill_path) is the identity; there is no PRIMARY KEY, the drain is the
+-- sole writer. input is always NULL and UNINDEXED: it exists only so an input:
+-- column filter still parses on the UNION ALL that searchEvents runs over both tables.
+CREATE VIRTUAL TABLE spill_fts USING fts5(
+  event_id UNINDEXED,
+  session_id UNINDEXED,
+  spill_path UNINDEXED,
+  text,
+  input UNINDEXED,
+  tokenize='unicode61 remove_diacritics 2'
+);
+-- The drain's candidate scan, O(spills) at 1 Hz rather than a scan over every event.
+CREATE INDEX idx_events_spill ON events(session_id) WHERE output_storage = 'spill';`;

@@ -23,6 +23,12 @@
 // coalesces a late `setInterval` fire, so an overrun delays the next tick rather
 // than stacking ticks.
 //
+// ★ WAVE 2'S TAIL DRAINS THE SPILL INDEX (`db/spill-index.ts`), under wave 2's
+// OWN deadline rather than a second budget, so the tick bound becomes
+// `deadline + one tree + one body`. It is the one synchronous place that runs
+// after every kind of projection on a running server; on a warm corpus the tree
+// loop is empty and the drain is existence probes only.
+//
 // ★ NOTHING LEAVES THE SWEEP SILENTLY. Every walked file lands in exactly one
 // bucket of `SweepReport`, and anything the sweep declines to index is named by
 // PATH rather than counted. `conservationOf` states the invariant the tests
@@ -31,9 +37,11 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createArchiveReader, type ArchiveReader } from '../archive/read.js';
 import { resolveArchiveRoot, resolveTranscriptRoot } from '../archive/paths.js';
+import { createContentEnv, createContentResolver, createSpillLocator } from '../content/resolve.js';
 import { ensureProjected } from '../db/freshness.js';
-import { readChildSessionIds, readMeta, readTreeRoots } from '../db/read.js';
+import { readChildSessionIds, readEventArchivePath, readMeta, readTreeRoots } from '../db/read.js';
 import { readSessionEnvelope } from '../db/sidecars.js';
+import { indexSpills, type SpillIndexEnv } from '../db/spill-index.js';
 import {
   markRollupComplete,
   recomputeSubagentRollups,
@@ -90,6 +98,16 @@ export interface SweepReport {
   envelope_incomplete: string[];
   /** Wave 2 could not project this row. */
   projection_failed: string[];
+  /**
+   * The spill drain at wave 2's tail: bodies indexed, index rows reconciled
+   * away, and spill pointers left unindexed — by path. OUTSIDE `conservationOf`
+   * for `indexed_ids`' reason: a spill body is not a walked transcript (the walk
+   * counts `tool-results/` files as `ignored`), so adding these would count
+   * files against the walk that it never saw as units.
+   */
+  spills_indexed: number;
+  spills_removed: number;
+  spills_skipped: string[];
 }
 
 export function emptyReport(): SweepReport {
@@ -105,6 +123,29 @@ export function emptyReport(): SweepReport {
     unkeyable: [],
     envelope_incomplete: [],
     projection_failed: [],
+    spills_indexed: 0,
+    spills_removed: 0,
+    spills_skipped: [],
+  };
+}
+
+/**
+ * The spill index's env: the detail screen's own resolver and locator
+ * (`server/start.ts`'s pair), so the index holds exactly the bytes the screen
+ * serves and drops a row exactly when the screen would answer `missing`.
+ * `roots` are the F1 containment roots — the archive and the transcript tree.
+ */
+export function createSpillIndexEnv(
+  db: DatabaseSync,
+  reader: ArchiveReader,
+  roots: readonly string[],
+): SpillIndexEnv {
+  const archivePathOf = (id: string): string | undefined =>
+    readEventArchivePath(db, id)?.archive_path;
+  const env = createContentEnv(reader, roots);
+  return {
+    resolve: createContentResolver(archivePathOf, env),
+    locate: createSpillLocator(archivePathOf, env),
   };
 }
 
@@ -180,6 +221,9 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
   const sourceRoot = resolveTranscriptRoot(options.transcriptRoot);
   const reader = options.reader ?? createArchiveReader();
   const env = createProjectionEnv(reader, { archiveRoot, transcriptRoot: sourceRoot });
+  // Built here, never accepted as an option: an optional env would be a way to
+  // turn the spill index off silently.
+  const spillEnv = createSpillIndexEnv(db, reader, [archiveRoot, sourceRoot]);
 
   let last = emptyReport();
 
@@ -278,6 +322,11 @@ export function createCorpusSweep(options: SweepOptions): CorpusSweep & { bind()
       projectTree(root, report);
       processed += 1;
     }
+
+    const spills = indexSpills(db, spillEnv, { now, startedAt, deadlineMs });
+    report.spills_indexed += spills.indexed;
+    report.spills_removed += spills.removed;
+    report.spills_skipped.push(...spills.skipped);
   };
 
   const tick = (): SweepReport => {
