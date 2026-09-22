@@ -6,10 +6,12 @@
 // cannot be the witness for the path that exists because it was excluded.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
+import { createArchiveReader } from '../../archive/read.js';
+import { createSpillIndexEnv } from '../../corpus/watch.js';
 import { runPipeline } from '../../project/pipeline.js';
 import { DriftCounter } from '../../transcript/drift.js';
 import { PROJECTOR_VERSION } from '../../transcript/version.js';
@@ -46,8 +48,9 @@ import {
   upsertSessionIndex,
 } from '../write.js';
 import { estimateCost } from '../../shared/pricing.js';
-import { foldArchive } from '../freshness.js';
+import { ensureProjectedFold, foldArchive } from '../freshness.js';
 import { searchEvents } from '../read.js';
+import { indexSpills, type SpillIndexEnv } from '../spill-index.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../../project/tools.js';
 
 let sandbox: Sandbox | undefined;
@@ -83,6 +86,11 @@ function project(db: DatabaseSync, id: string, path: string, env = fileEnv()): s
 
 const TS = (seconds: number): string =>
   new Date(Date.UTC(2026, 7, 14, 9, 0, seconds)).toISOString();
+
+/** The production spill-index env over the sandbox roots. */
+function spillIndexEnv(db: DatabaseSync): SpillIndexEnv {
+  return createSpillIndexEnv(db, createArchiveReader(), [sb().archiveRoot, sb().sourceRoot]);
+}
 
 /** A session with one human turn and one answered tool call. */
 function simpleSession(callId = 'toolu_one'): readonly unknown[] {
@@ -1242,11 +1250,11 @@ describe('upsertSessionIndex is the Tier-A writer', () => {
 //
 // ★ AC2 IS NARROWED, AND THIS IS THE DURABLE RECORD OF WHERE. Measured over the
 // archive: 17,838 of 17,897 `tool_result` blocks inline whole, 59 spill, 0 land
-// over the preview cap. A spilled body is WHOLLY unsearchable and that is
-// deliberate at both ends — the projector cannot reach a filesystem and the
-// writer keeps `text` NULL on every spill row. The arms below assert what the
-// code does TODAY, so the day that policy changes this reds without the AC
-// moving. Indexing spilled bodies is filed as its own task.
+// over the preview cap. The PROJECTOR still cannot reach a spilled body and the
+// writer still keeps `text` NULL on every spill row — that line has not moved.
+// Task 7.5 made the body searchable anyway, from OUTSIDE the projection: the
+// spill drain (`db/spill-index.ts`) copies it into `spill_fts`. Arm (c) now
+// asserts both halves: nothing before the drain, the body after it.
 
 describe('AC2 — a token that appears only in tool output is found by q', () => {
   const INLINE_TOKEN = 'zzinlinetoken';
@@ -1304,7 +1312,7 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
     expect(find(db, TAIL_TOKEN)).toEqual([]);
   });
 
-  it('(c) spill: the body is on disk, the row keeps no text, and q finds nothing', () => {
+  it('(c) spill: the row keeps no text, projection alone finds nothing, and the spill pass finds the body', () => {
     const { db } = threeArms();
     const row = eventRow(db, 'toolu_spilled');
 
@@ -1313,8 +1321,15 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
     expect(row.spill_path).not.toBeNull();
     expect(row.text).toBeNull();
 
-    // The gap AC2 is narrowed around: the bytes exist and search cannot see them.
+    // The line still falls at the projector: the bytes exist and a projection
+    // alone does not put them in front of search.
     expect(find(db, SPILL_TOKEN)).toEqual([]);
+
+    // …and the spill pass, outside the projection, does.
+    expect(indexSpills(db, spillIndexEnv(db)).indexed).toBe(1);
+    const hits = searchEvents(db, { q: SPILL_TOKEN, limit: 50 });
+    expect(hits.map((hit) => hit.event_id)).toEqual(['toolu_spilled']);
+    expect(hits[0]!.snippet).toContain(`<mark>${SPILL_TOKEN}</mark>`);
   });
 
   it('non-vacuity: the three arms really did take three different clauses', () => {
@@ -1329,5 +1344,172 @@ describe('AC2 — a token that appears only in tool output is found by q', () =>
     ).map((r) => r.output_storage);
 
     expect(clauses).toEqual(['inline', 'line_ref', 'spill']);
+  });
+});
+
+// --- Task 7.5, AC3: deleting a spill file corrupts nothing ---------------------
+
+describe('AC3 — deleting a spill file corrupts no index and fails no projection', () => {
+  const TOKEN = 'zzkidtoken';
+
+  function spillIntegrityCheck(db: DatabaseSync): void {
+    db.exec(`INSERT INTO spill_fts(spill_fts, rank) VALUES('integrity-check', 1)`);
+  }
+
+  /**
+   * A parent that launched one sub-agent whose tool result SPILLED, with the body
+   * under the PARENT's `tool-results/` — where the harness mirrors it for every
+   * sidecar, and where 34 of 53 measured spill references point.
+   *
+   * Two planting traps, both avoided on purpose. (i) `fileEnv` anchors the spill
+   * ladder beside the transcript, which for a sidecar is a directory that does
+   * not exist, so a relative-looking marker would project `missing` and look like
+   * the hole. The marker carries the body's ABSOLUTE path, which the ladder's
+   * verbatim arm resolves. (ii) The body lives under the sandbox ARCHIVE only: a
+   * source copy inside the transcript root would rightly keep the row indexed
+   * after the archive copy goes, exactly as the detail screen would serve it.
+   */
+  function sidecarSpill(): { db: DatabaseSync; id: string; path: string; body: string } {
+    const db = cache();
+    const { path, dir } = plant('ac3-sidecar', [
+      humanLine('go', TS(0)),
+      toolCallLine('toolu_agent', 'Agent', TS(1)),
+      toolResultLine('toolu_agent', 'launched', TS(2)),
+    ]);
+    const body = writeFile(join(dir, 'tool-results', 'kid.txt'), `the kid printed ${TOKEN}`);
+    const subagents = join(dir, 'subagents');
+    writeSidecarTranscript(subagents, 'A1', [
+      humanLine('the brief', TS(10)),
+      toolCallLine('toolu_kid', 'Bash', TS(11)),
+      toolResultLine('toolu_kid', spillMarker(body), TS(12)),
+    ]);
+    writeSidecarMeta(subagents, 'A1', {
+      agentType: 'Explore',
+      toolUseId: 'toolu_agent',
+      spawnDepth: 1,
+    });
+
+    const id = seedIndexRow(db, path, { source_path: join(sb().sourceRoot, 'ac3-sidecar.jsonl') });
+    project(db, id, path);
+    project(db, 'A1', sessionRow(db, 'A1').archive_path as string);
+    return { db, id, path, body };
+  }
+
+  it('a sidecar spill leaves the index on the next pass, though the sidecar never reprojects', () => {
+    const { db, id, path, body } = sidecarSpill();
+    // Before indexing: this is a real spill row, not a `missing` one mistaken for the hole.
+    expect(eventRow(db, 'toolu_kid').output_storage).toBe('spill');
+    expect(eventRow(db, 'toolu_kid').text).toBeNull();
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      expect(indexSpills(db, spillIndexEnv(db)).indexed).toBe(1);
+      expect(searchEvents(db, { q: TOKEN, limit: 50 }).map((hit) => hit.event_id)).toEqual([
+        'toolu_kid',
+      ]);
+
+      rmSync(body);
+
+      // (i) The parent's fold moved, and its reprojection does not throw.
+      expect(() => project(db, id, path)).not.toThrow();
+      expect(sessionRow(db, id).projection_state).toBe('ready');
+
+      // (ii) THE HOLE, made visible: the sidecar's own gate is a hit, so nothing
+      // reprojects it and its row still says `spill` after the body is gone.
+      expect(ensureProjectedFold(db, 'A1', fileEnv()).outcome).toBe('hit');
+      expect(eventRow(db, 'toolu_kid').output_storage).toBe('spill');
+
+      // Mutation control: with the locator's verdict ignored the row and the hit stay.
+      const blind: SpillIndexEnv = { ...spillIndexEnv(db), locate: () => body };
+      expect(indexSpills(db, blind).removed).toBe(0);
+      expect(searchEvents(db, { q: TOKEN, limit: 50 })).toHaveLength(1);
+
+      // (iii) The reconcile's own probe closes it.
+      expect(indexSpills(db, spillIndexEnv(db)).removed).toBe(1);
+      expect(db.prepare('SELECT count(*) AS n FROM spill_fts').get()).toEqual({ n: 0 });
+      expect(searchEvents(db, { q: TOKEN, limit: 50 })).toEqual([]);
+
+      writeFile(body, `the kid printed ${TOKEN} again, cycle ${cycle}`);
+    }
+
+    expect(() => spillIntegrityCheck(db)).not.toThrow();
+    expect(() => ftsIntegrityCheck(db)).not.toThrow();
+  });
+
+  it('a top-level spill flips to missing on reprojection, and the index follows', () => {
+    const db = cache();
+    const { path, dir } = plant('ac3-top', [
+      humanLine('go', TS(0)),
+      toolCallLine('toolu_top', 'Bash', TS(1)),
+      toolResultLine('toolu_top', spillMarker('/gone/tool-results/top.txt'), TS(2)),
+    ]);
+    const body = writeFile(join(dir, 'tool-results', 'top.txt'), `top says ${TOKEN}`);
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+    expect(indexSpills(db, spillIndexEnv(db)).indexed).toBe(1);
+
+    rmSync(body);
+    // The owning transcript's fold moved, so its gate reprojects — and succeeds.
+    expect(ensureProjectedFold(db, id, fileEnv()).outcome).toBe('projected');
+    expect(sessionRow(db, id).projection_state).toBe('ready');
+    expect(eventRow(db, 'toolu_top').output_storage).toBe('missing');
+    expect(JSON.parse(String(sessionRow(db, id).drift_json))).toMatchObject({
+      unresolved_spills: 1,
+    });
+
+    expect(indexSpills(db, spillIndexEnv(db))).toEqual({ indexed: 0, removed: 1, skipped: [] });
+    expect(searchEvents(db, { q: TOKEN, limit: 50 })).toEqual([]);
+    expect(() => spillIntegrityCheck(db)).not.toThrow();
+  });
+});
+
+// --- Task 7.5, AC4: projectSession reads no spill bytes -----------------------
+//
+// ★ THE GUARD 7.1 RECORDED AS MISSING. `live.test.ts`'s byte-identity compares
+// two projections over the same bytes at the same time, so a projector that
+// read spill bodies consistently on both sides would pass it. These two arms
+// would not: one has no body to read, the other changes the body between runs.
+
+describe('AC4 — projectSession stays time-invariant over spill bodies', () => {
+  it('(a) projects a spill row with NO body on disk — nothing could have read it', () => {
+    const db = cache();
+    const ghost = join(sb().root, 'nowhere', 'tool-results', 'ghost.txt');
+    const { path } = plant('ac4-ghost', [
+      humanLine('spill', TS(0)),
+      toolCallLine('toolu_ghost', 'Bash', TS(1)),
+      toolResultLine('toolu_ghost', spillMarker(ghost), TS(2)),
+    ]);
+    expect(existsSync(ghost)).toBe(false);
+
+    const id = seedIndexRow(db, path);
+    project(db, id, path, fileEnv({ exists: () => true }));
+
+    const row = eventRow(db, 'toolu_ghost');
+    expect(sessionRow(db, id).projection_state).toBe('ready');
+    expect(row.output_storage).toBe('spill');
+    expect(row.spill_path).not.toBeNull();
+    expect(row.text).toBeNull();
+  });
+
+  it('(b) rewriting the body between two projections changes no events row', () => {
+    const db = cache();
+    const { path, dir } = plant('ac4-rewrite', [
+      humanLine('spill', TS(0)),
+      toolCallLine('toolu_rw', 'Bash', TS(1)),
+      toolResultLine('toolu_rw', spillMarker('/gone/tool-results/rw.txt'), TS(2)),
+    ]);
+    const body = writeFile(join(dir, 'tool-results', 'rw.txt'), 'short');
+    const id = seedIndexRow(db, path);
+    const all = (): unknown[] => db.prepare('SELECT * FROM events ORDER BY seq').all();
+
+    project(db, id, path);
+    const before = all();
+    expect(eventRow(db, 'toolu_rw').output_storage).toBe('spill');
+
+    writeFile(body, 'a much longer body with entirely different bytes in it '.repeat(40));
+    project(db, id, path);
+
+    // `text` and `text_bytes` are where a reader would show; `spill_bytes` is the
+    // DECLARED size, so it cannot move with the file either.
+    expect(all()).toEqual(before);
   });
 });

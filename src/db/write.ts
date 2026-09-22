@@ -411,7 +411,8 @@ function insertEvents(
       // NULL on every spill row, resolved and missing alike. Filling it would
       // mean opening the spill file, which the boolean-probe contract forbids
       // and which would make the projection time-varying. `spill_path` IS the
-      // body's address; the content resolver dereferences it on demand.
+      // body's address; the content resolver dereferences it on demand, and the
+      // body is indexed by `db/spill-index.ts`, outside this transaction.
       event.text ?? null,
       event.text_bytes ?? null,
       output.output_storage,
