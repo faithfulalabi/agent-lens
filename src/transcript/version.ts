@@ -8,4 +8,4 @@
  * mechanically changes the hash — the two edits cannot be made independently in the
  * bump-but-forget-to-rehash direction.
  */
-export const PROJECTOR_VERSION = 8;
+export const PROJECTOR_VERSION = 9;
