@@ -1,9 +1,25 @@
 {
   "name": "agent-lens",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Local-first agentic tracing platform: inspect everything your agent did in a session.",
   "type": "module",
   "license": "MIT",
+  "author": "Faithful Alabi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faithfulalabi/agent-lens.git"
+  },
+  "homepage": "https://github.com/faithfulalabi/agent-lens#readme",
+  "bugs": "https://github.com/faithfulalabi/agent-lens/issues",
+  "keywords": [
+    "claude-code",
+    "agent",
+    "tracing",
+    "observability",
+    "transcripts",
+    "local-first",
+    "cli"
+  ],
   "engines": {
     "node": ">=24"
   },
@@ -25,6 +41,7 @@
     "smoke:pack": "node --import tsx scripts/pack-smoke.mjs",
     "smoke:ui": "playwright test",
     "lint": "eslint .",
+    "prepublishOnly": "npm run build",
     "format": "prettier --write .",
     "prepare": "npm --prefix ui install"
   },

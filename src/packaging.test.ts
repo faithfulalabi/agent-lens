@@ -19,6 +19,8 @@ function read(...rel: string[]): string {
 }
 
 interface Manifest {
+  version: string;
+  repository: { type: string; url: string };
   files: string[];
   engines: Record<string, string>;
   bin: Record<string, string>;
@@ -204,6 +206,29 @@ describe('the MIT license is on record and consistent (task 1.1)', () => {
 
   it('keeps the declared license field in agreement with the text', () => {
     expect(MANIFEST.license).toBe('MIT');
+  });
+});
+
+describe('the publish metadata names a real release (task 8.4)', () => {
+  it('carries a release version, not the 0.0.0 placeholder', () => {
+    // 0.0.0 is what the manifest was scaffolded with; publishing it would
+    // claim the name with a version nobody meant. `npm version --no-git-tag-version`
+    // is the only sanctioned way to move this, and the tag stays the founder's.
+    expect(MANIFEST.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(MANIFEST.version).not.toBe('0.0.0');
+  });
+
+  it('points the registry listing at the public repository', () => {
+    expect(MANIFEST.repository.type).toBe('git');
+    expect(MANIFEST.repository.url).toContain('faithfulalabi/agent-lens');
+  });
+
+  it('rebuilds dist before every publish', () => {
+    // `dist/` is gitignored and nothing else builds it on the publish path, so
+    // without this hook a publish ships whatever `dist/` last happened to hold.
+    // `prepublishOnly` never fires on `npm pack`, so `smoke:pack`'s own
+    // build-then-pack path is untouched.
+    expect(MANIFEST.scripts['prepublishOnly']).toContain('run build');
   });
 });
 
