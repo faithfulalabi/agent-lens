@@ -16,6 +16,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
 import { SCHEMA_DDL, SCHEMA_VERSION } from '../schema.js';
+import { SPILL_FTS_COLUMNS } from './fixtures/shapes.js';
 
 let sandbox: Sandbox | undefined;
 let db: DatabaseSync | undefined;
@@ -51,6 +52,13 @@ const EXPECTED_TABLES = [
   'events_fts_idx',
   'meta',
   'sessions',
+  // A PLAIN FTS5 table, so a fifth shadow table (`_content`) too.
+  'spill_fts',
+  'spill_fts_config',
+  'spill_fts_content',
+  'spill_fts_data',
+  'spill_fts_docsize',
+  'spill_fts_idx',
   'turns',
 ];
 
@@ -58,6 +66,7 @@ const EXPECTED_INDEXES = [
   'idx_events_child',
   'idx_events_session_seq',
   'idx_events_slow',
+  'idx_events_spill',
   'idx_events_turn',
   'idx_sessions_parent',
   'idx_sessions_project',
@@ -231,12 +240,14 @@ describe('the v2 DDL survives the transport (AC1)', () => {
   });
 });
 
-describe('★ the full column set of all four tables, as SET EQUALITY (AC2)', () => {
+describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => {
   it.each([
     ['sessions', SESSIONS_COLUMNS, 51],
     ['turns', TURNS_COLUMNS, 19],
     ['events', EVENTS_COLUMNS, 37],
     ['meta', META_COLUMNS, 2],
+    // `PRAGMA table_info` lists an FTS5 table's DECLARED columns.
+    ['spill_fts', SPILL_FTS_COLUMNS, 5],
   ])('%s has exactly its declared columns', (table, expected, count) => {
     const columns = columnNames(freshDb(), table);
 
@@ -422,6 +433,29 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
+// Kept SEPARATE so the d5c66d1 oracle above stays byte-for-byte the pre-0.12 claim.
+const STATEMENTS_ADDED_AT_7_5 = `
+CREATE VIRTUAL TABLE spill_fts USING fts5(
+  event_id UNINDEXED,
+  session_id UNINDEXED,
+  spill_path UNINDEXED,
+  text,
+  input UNINDEXED,
+  tokenize='unicode61 remove_diacritics 2'
+);
+CREATE INDEX idx_events_spill ON events(session_id) WHERE output_storage = 'spill';
+`;
+
+function statementsAt75(): string {
+  const bumped = STATEMENTS_AT_D5C66D1.replace(
+    'PRAGMA user_version = 1;',
+    'PRAGMA user_version = 2;',
+  );
+  // Non-vacuity: a replace that matched nothing would compare the OLD version.
+  expect(bumped).not.toBe(STATEMENTS_AT_D5C66D1);
+  return bumped + STATEMENTS_ADDED_AT_7_5;
+}
+
 /** Drops every `--` comment, collapses whitespace. No `--` exists in a literal. */
 function withoutComments(ddl: string): string {
   return ddl
@@ -469,9 +503,15 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
   ['events', 'agent_status'],
 ];
 
-describe('task 0.12 audited comments only — the statements did not move (AC5)', () => {
-  it('the DDL, stripped of comments, equals main @ d5c66d1 exactly', () => {
-    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(STATEMENTS_AT_D5C66D1));
+describe('task 0.12 audited comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
+  it('the DDL, stripped of comments, equals main @ d5c66d1 plus the 7.5 statements exactly', () => {
+    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt75()));
+  });
+
+  it('the version bump is SCHEMA_VERSION itself, so the two sites cannot drift', () => {
+    // A mismatch between the two sites would recreate cache.db on every open.
+    expect(SCHEMA_DDL).toContain(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    expect(SCHEMA_VERSION).toBe(2);
   });
 });
 

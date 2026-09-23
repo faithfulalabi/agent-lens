@@ -13,7 +13,7 @@
 // archive: a bump here makes `openDb` remove the file and re-sweep.
 
 /** Bumping this makes `openDb` remove cache.db and recreate it. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 --
@@ -37,7 +37,7 @@ export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = OFF;    -- projections are dropped wholesale, per session, by hand
-PRAGMA user_version = 1;      -- SCHEMA_VERSION; mismatch => unlink + recreate
+PRAGMA user_version = 2;      -- SCHEMA_VERSION; mismatch => unlink + recreate
 
 -- =====================================================================  sessions
 -- The file index AND the session-list row AND the projection freshness header,
@@ -309,4 +309,20 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 
 -- ========================================================================  meta
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- seeded: schema_version, projector_version, projects_root, index_built_at`;
+-- seeded: schema_version, projector_version, projects_root, index_built_at
+
+-- ===================================================================  spill_fts
+-- Spilled tool-output bodies, which events_fts cannot see (a spill row keeps text
+-- NULL). PLAIN FTS5, so a plain DELETE is legal here, unlike events_fts. NOT dropped
+-- by deleteSessionProjection: rows are written and reconciled by db/spill-index.ts
+-- alone. input is always NULL; it exists so an input: filter parses on the UNION ALL.
+CREATE VIRTUAL TABLE spill_fts USING fts5(
+  event_id UNINDEXED,
+  session_id UNINDEXED,
+  spill_path UNINDEXED,
+  text,
+  input UNINDEXED,
+  tokenize='unicode61 remove_diacritics 2'
+);
+-- The drain's candidate scan: O(spills) at 1 Hz, not a scan of every event.
+CREATE INDEX idx_events_spill ON events(session_id) WHERE output_storage = 'spill';`;

@@ -5,7 +5,7 @@
 // it, and the real-archive arms live in `corpus.test.ts` behind `runIt`.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
@@ -18,9 +18,13 @@ import { linkSubagents } from '../../project/subagents.js';
 import { DriftCounter } from '../../transcript/drift.js';
 import {
   countingReader,
+  humanLine,
   jsonl,
   newReaderLog,
   openCache,
+  spillMarker,
+  toolCallLine,
+  toolResultLine,
   type ReaderLog,
 } from '../../db/__tests__/fixtures/index.js';
 import {
@@ -42,7 +46,9 @@ import {
   sessionRecords,
   SLUG,
   writeSealedSession,
+  writeSession,
   writeSidecar,
+  writeToolResult,
   WF_DIR,
   type Sandbox,
 } from './fixtures.js';
@@ -663,5 +669,66 @@ describe('hand-off #1 — events.src_len is never NULL and never 0', () => {
       const slice = reader.read(archivePath, event.src_offset, event.src_len).toString('utf8');
       expect(() => JSON.parse(slice) as unknown).not.toThrow();
     }
+  });
+});
+
+describe('task 7.5 — wave 2 drains the spill index at its tail', () => {
+  const SPILLER = 'cccccccc-3333-4333-8333-cccccccccccc';
+
+  /** A top-level session with two spilled Bash results, both bodies mirrored. */
+  function plantSpiller(): string[] {
+    const at = (s: number): string => new Date(Date.UTC(2026, 7, 20, 11, 0, s)).toISOString();
+    writeSession(sandbox, SPILLER, [
+      humanLine('spill twice', at(0)),
+      ...['w0', 'w1'].flatMap((name, i) => [
+        toolCallLine(`toolu_${name}`, 'Bash', at(1 + 2 * i)),
+        toolResultLine(
+          `toolu_${name}`,
+          spillMarker(`/gone/tool-results/${name}.txt`),
+          at(2 + 2 * i),
+        ),
+      ]),
+    ]);
+    return [
+      writeToolResult(sandbox, SPILLER, 'w0', 'zzwatchzero'),
+      writeToolResult(sandbox, SPILLER, 'w1', 'zzwatchone'),
+    ];
+  }
+
+  const spillCount = (): unknown => db.prepare('SELECT count(*) AS n FROM spill_fts').get();
+
+  it('reports indexed, removed and skipped-by-path — outside the conservation sum', () => {
+    const bodies = plantSpiller();
+    const made = sweep();
+    made.wave1();
+    expect(made.wave2()).toMatchObject({
+      spills_indexed: 2,
+      spills_removed: 0,
+      spills_skipped: [],
+    });
+
+    rmSync(bodies[0]!);
+    expect(made.wave2()).toMatchObject({
+      spills_indexed: 0,
+      spills_removed: 1,
+      spills_skipped: [expect.stringMatching(/w0\.txt$/)],
+    });
+    expect(spillCount()).toEqual({ n: 1 });
+
+    const { walked, accounted } = conservationOf(made.tick());
+    expect(accounted).toBe(walked);
+  });
+
+  it("shares wave 2's deadline: one body per pass once it is blown, never zero", () => {
+    plantSpiller();
+    const warm = sweep();
+    warm.wave1();
+    warm.wave2();
+    db.exec('DELETE FROM spill_fts');
+
+    let clock = 0;
+    const late = sweep({ wave2DeadlineMs: 10, now: () => (clock += 1000) });
+    expect([1, 2, 3].map(() => late.wave2().spills_indexed)).toEqual([1, 1, 0]);
+    expect(spillCount()).toEqual({ n: 2 });
   });
 });

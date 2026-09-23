@@ -104,3 +104,6 @@ export const SEARCH_HIT_KEYS = [
   'ts',
   'snippet',
 ].sort();
+
+/** `spill_fts`'s declared columns, hand-listed like the rest. */
+export const SPILL_FTS_COLUMNS = ['event_id', 'session_id', 'spill_path', 'text', 'input'];

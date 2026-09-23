@@ -46,6 +46,7 @@ import { clampRange, type ContentResolver } from '../../server/api.js';
 import {
   createContentEnv,
   createContentResolver,
+  createSpillLocator,
   resolveContent,
   type ContentEnv,
   type ContentField,
@@ -555,6 +556,19 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     const naive = join(flat.slice(0, -'.jsonl'.length), 'tool-results', SPILL_NAME);
     expect(existsSync(naive)).toBe(false);
     expect(mirror).not.toBe(naive);
+  });
+
+  it('12b. createSpillLocator answers the mirror first without reading, then undefined once it is gone', () => {
+    const { db, path, mirror } = spillSession();
+    const content = contentRow(db, 'toolu_spill');
+    const log: Trace[] = [];
+    const locate = createSpillLocator(() => path, tracingEnv(log));
+
+    expect(locate(content)).toBe(mirror);
+    expect(log).toEqual([]);
+    rmSync(mirror);
+    expect(locate(content)).toBeUndefined();
+    expect(locate(row())).toBeUndefined();
   });
 });
 

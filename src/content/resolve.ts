@@ -365,3 +365,11 @@ export function createContentResolver(
 ): (row: EventContentRow, field: ContentField) => ResolvedContent {
   return (row, field) => resolveContent(row, field, archivePathOf(row.session_id), env);
 }
+
+/** The probe-only half of the spill arm: where the body is readable now. Reads no bytes. */
+export function createSpillLocator(
+  archivePathOf: (session_id: string) => string | undefined,
+  env: ContentEnv,
+): (row: EventContentRow) => string | undefined {
+  return (row) => spillSource(row, archivePathOf(row.session_id), env);
+}

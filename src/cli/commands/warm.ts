@@ -16,9 +16,10 @@
 import { resolveArchiveRoot, resolveDataDir, resolveTranscriptRoot } from '../../archive/index.js';
 import { createArchiveReader } from '../../archive/read.js';
 import { createProjectionEnv } from '../../corpus/env.js';
-import { createCorpusSweep } from '../../corpus/watch.js';
+import { createCorpusSweep, createSpillIndexEnv } from '../../corpus/watch.js';
 import { DbLockedError, openDb } from '../../db/open.js';
 import { readWarmableIds } from '../../db/read.js';
+import { indexSpills, type SpillIndexReport } from '../../db/spill-index.js';
 import type { WarmProgressFrame } from '../../shared/api.js';
 // Deep imports, never the `server/index.js` barrel: the barrel loads the HTTP
 // server, and this command binds no socket.
@@ -79,25 +80,33 @@ async function waitForFrames(hub: PrintingHub, target: number): Promise<void> {
  * corpus drained — a summary that read the same either way would report success
  * over sessions that never projected.
  */
-function summarize(perPass: readonly number[], residual: number): string {
+function summarize(perPass: readonly number[], residual: number, spills: SpillIndexReport): string {
   const total = perPass.reduce((sum, n) => sum + n, 0);
+  // Counted, not named: the server's sweep report names skipped spills by path.
+  const spillTail =
+    spills.indexed === 0 && spills.skipped.length === 0
+      ? ''
+      : `; ${spills.indexed} spilled output(s) indexed` +
+        (spills.skipped.length === 0 ? '' : `, ${spills.skipped.length} skipped`);
   if (total === 0 && residual === 0) {
-    return 'agent-lens warm: nothing to warm — every indexed session is already projected';
+    return `agent-lens warm: nothing to warm — every indexed session is already projected${spillTail}`;
   }
   const tail = residual === 0 ? '' : `; ${residual} still unprojected — see \`agent-lens doctor\``;
   // The per-pass list is printed because a GROWING count is the expected shape,
   // and a reader who does not see the passes reads it as a bug.
-  return `agent-lens warm: ${total} warmed over ${perPass.length} pass(es) [${perPass.join(', ')}]${tail}`;
+  return `agent-lens warm: ${total} warmed over ${perPass.length} pass(es) [${perPass.join(', ')}]${tail}${spillTail}`;
 }
 
 /** Drives the queue to its fixed point, then tears down in the one safe order. */
 async function drainCorpus(dataDir: string, transcriptRoot: string | undefined): Promise<number> {
   const opened = openDb({ dataDir });
   const hub = printingHub();
-  const env = createProjectionEnv(createArchiveReader(), {
+  const reader = createArchiveReader();
+  const roots = {
     archiveRoot: resolveArchiveRoot(dataDir),
     transcriptRoot: resolveTranscriptRoot(transcriptRoot),
-  });
+  };
+  const env = createProjectionEnv(reader, roots);
   const queue = createWarmQueue({ db: opened.db, env, hub });
   try {
     // WAVE 1 FIRST. `readWarmableIds` reads `sessions` rows and only the boot
@@ -123,9 +132,15 @@ async function drainCorpus(dataDir: string, transcriptRoot: string | undefined):
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
+    // Once, unbudgeted: no sweep tick runs here to drain it.
+    const spills = indexSpills(
+      opened.db,
+      createSpillIndexEnv(opened.db, reader, [roots.archiveRoot, roots.transcriptRoot]),
+    );
+
     // A residual reports rather than pages, the same ruling `commands/archive.ts:1`
     // makes for a coverage gap: a permanently red cron is a muted one.
-    console.log(summarize(perPass, readWarmableIds(opened.db).length));
+    console.log(summarize(perPass, readWarmableIds(opened.db).length, spills));
     return EXIT_OK;
   } finally {
     // ORDER IS LOAD-BEARING (`warm.test.ts:196-212`): the queue stops before the
