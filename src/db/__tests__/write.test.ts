@@ -781,13 +781,13 @@ describe('mixed-model pricing: the session is the sum of its parts (Task 0.14)',
 
     project(db, id, path);
 
-    // Haiku: 1M input × $1/1M = $1. Sonnet: 1M output × $15/1M = $15.
-    expect(sessionRow(db, id).est_cost).toBe(16);
+    // Haiku: 1M input × $1/1M = $1. Sonnet: 1M output × $10/1M = $10.
+    expect(sessionRow(db, id).est_cost).toBe(11);
     // The fixture is chosen so BOTH single-model answers provably differ:
-    // haiku over the whole total is $6 (1M×1 + 1M×5), sonnet is $18 (1M×3 +
-    // 1M×15). A single-model fixture passes under either implementation.
+    // haiku over the whole total is $6 (1M×1 + 1M×5), sonnet is $12 (1M×2 +
+    // 1M×10). A single-model fixture passes under either implementation.
     expect(sessionRow(db, id).est_cost).not.toBe(6);
-    expect(sessionRow(db, id).est_cost).not.toBe(18);
+    expect(sessionRow(db, id).est_cost).not.toBe(12);
     // Task 0.13's folded model is untouched — informational, no longer priced.
     expect(sessionRow(db, id).model).not.toBeNull();
   });
@@ -807,7 +807,7 @@ describe('mixed-model pricing: the session is the sum of its parts (Task 0.14)',
       .all(id) as { model: string; est_cost: number }[];
     expect(events).toEqual([
       { model: 'claude-haiku-4-5', est_cost: 1 },
-      { model: 'claude-sonnet-5', est_cost: 15 },
+      { model: 'claude-sonnet-5', est_cost: 10 },
     ]);
     // …and on no other row: the stamp is the token stamp, first of group only.
     const priced = db
@@ -818,7 +818,7 @@ describe('mixed-model pricing: the session is the sum of its parts (Task 0.14)',
     const turns = db
       .prepare('SELECT est_cost FROM turns WHERE session_id = ? ORDER BY seq')
       .all(id) as { est_cost: number | null }[];
-    expect(turns).toEqual([{ est_cost: 1 }, { est_cost: 15 }]);
+    expect(turns).toEqual([{ est_cost: 1 }, { est_cost: 10 }]);
   });
 
   it('★ a real-but-unpriceable part makes the roll-up NULL, never a low number (AC3)', () => {
