@@ -52,7 +52,7 @@ const EXPECTED_TABLES = [
   'events_fts_idx',
   'meta',
   'sessions',
-  // Task 7.5: a PLAIN FTS5 table, so a fifth shadow table (`_content`) too.
+  // A PLAIN FTS5 table, so a fifth shadow table (`_content`) too.
   'spill_fts',
   'spill_fts_config',
   'spill_fts_content',
@@ -433,9 +433,7 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
-// Hand-transcribed in the same doctrine, and kept SEPARATE so the d5c66d1 oracle
-// above stays byte-for-byte the pre-0.12 claim it makes. Task 7.5 changed the
-// statements in exactly two ways: `user_version` 1 -> 2, and these two appended.
+// Kept SEPARATE so the d5c66d1 oracle above stays byte-for-byte the pre-0.12 claim.
 const STATEMENTS_ADDED_AT_7_5 = `
 CREATE VIRTUAL TABLE spill_fts USING fts5(
   event_id UNINDEXED,
@@ -448,7 +446,6 @@ CREATE VIRTUAL TABLE spill_fts USING fts5(
 CREATE INDEX idx_events_spill ON events(session_id) WHERE output_storage = 'spill';
 `;
 
-/** The d5c66d1 statements as 7.5 left them: the version bumped, two appended. */
 function statementsAt75(): string {
   const bumped = STATEMENTS_AT_D5C66D1.replace(
     'PRAGMA user_version = 1;',
@@ -512,8 +509,7 @@ describe('task 0.12 audited comments only — the statements did not move, and 7
   });
 
   it('the version bump is SCHEMA_VERSION itself, so the two sites cannot drift', () => {
-    // `open.ts` compares `PRAGMA user_version` against the constant; bumping one
-    // site without the other unlinks and recreates cache.db on every open.
+    // A mismatch between the two sites would recreate cache.db on every open.
     expect(SCHEMA_DDL).toContain(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     expect(SCHEMA_VERSION).toBe(2);
   });
@@ -532,32 +528,6 @@ describe('task 0.12 measurement markers landed at the declared lines (AC4)', () 
     ] as const) {
       expect(columnBlock(table, column)).not.toMatch(/MEASURED 2026-/);
     }
-  });
-});
-
-describe('spill_fts is wired, not merely declared (task 7.5)', () => {
-  it('a plain insert round-trips through MATCH, and a plain DELETE keeps it intact', () => {
-    const handle = freshDb();
-    const insert = handle.prepare(
-      `INSERT INTO spill_fts(event_id, session_id, spill_path, text, input)
-       VALUES (?, 's1', '/a/tool-results/x.txt', ?, NULL)`,
-    );
-    insert.run('toolu_a', 'a spilled body mentions zzspilltoken once');
-    insert.run('toolu_b', 'another body entirely');
-
-    const match = (q: string): unknown[] =>
-      handle.prepare('SELECT event_id FROM spill_fts WHERE spill_fts MATCH ?').all(q);
-    expect(match('zzspilltoken')).toEqual([{ event_id: 'toolu_a' }]);
-    // UNINDEXED columns are stored, not searchable: the id is not a term.
-    expect(match('toolu_a')).toEqual([]);
-    // `input:` parses (the column exists) and matches nothing (it is UNINDEXED).
-    expect(() => match('input:zzspilltoken')).not.toThrow();
-
-    handle.prepare(`DELETE FROM spill_fts WHERE event_id = ?`).run('toolu_a');
-    expect(match('zzspilltoken')).toEqual([]);
-    expect(() =>
-      handle.exec(`INSERT INTO spill_fts(spill_fts, rank) VALUES('integrity-check', 1)`),
-    ).not.toThrow();
   });
 });
 

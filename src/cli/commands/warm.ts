@@ -82,8 +82,7 @@ async function waitForFrames(hub: PrintingHub, target: number): Promise<void> {
  */
 function summarize(perPass: readonly number[], residual: number, spills: SpillIndexReport): string {
   const total = perPass.reduce((sum, n) => sum + n, 0);
-  // Skipped spills are counted here and named by the running server's sweep
-  // report; one line per path would bury the summary on a large corpus.
+  // Counted, not named: the server's sweep report names skipped spills by path.
   const spillTail =
     spills.indexed === 0 && spills.skipped.length === 0
       ? ''
@@ -133,8 +132,7 @@ async function drainCorpus(dataDir: string, transcriptRoot: string | undefined):
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
-    // The spill index, once, unbudgeted. This command runs no sweep tick, so
-    // nothing else would drain it before the server next starts.
+    // Once, unbudgeted: no sweep tick runs here to drain it.
     const spills = indexSpills(
       opened.db,
       createSpillIndexEnv(opened.db, reader, [roots.archiveRoot, roots.transcriptRoot]),

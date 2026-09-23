@@ -105,8 +105,5 @@ export const SEARCH_HIT_KEYS = [
   'snippet',
 ].sort();
 
-/**
- * `spill_fts`'s declared columns (task 7.5). Hand-listed, per the doctrine at
- * `schema.test.ts:68-69`: deriving it from the DDL would compare it to itself.
- */
+/** `spill_fts`'s declared columns, hand-listed like the rest. */
 export const SPILL_FTS_COLUMNS = ['event_id', 'session_id', 'spill_path', 'text', 'input'];

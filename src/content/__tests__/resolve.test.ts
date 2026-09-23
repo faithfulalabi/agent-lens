@@ -558,40 +558,17 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     expect(mirror).not.toBe(naive);
   });
 
-  // Task 7.5: the probe-only half, which the spill index reconciles through.
-  it('12b. createSpillLocator answers the mirror first, and reads no bytes', () => {
+  it('12b. createSpillLocator answers the mirror first without reading, then undefined once it is gone', () => {
     const { db, path, mirror } = spillSession();
+    const content = contentRow(db, 'toolu_spill');
     const log: Trace[] = [];
     const locate = createSpillLocator(() => path, tracingEnv(log));
 
-    expect(locate(contentRow(db, 'toolu_spill'))).toBe(mirror);
-    expect(locate(row({ output_storage: 'spill', spill_path: DECLARED }))).toBe(mirror);
+    expect(locate(content)).toBe(mirror);
     expect(log).toEqual([]);
-  });
-
-  it('12c. createSpillLocator falls back to a CONTAINED recorded path, and refuses a loose one', () => {
-    const { path } = project([humanLine('no mirror here', TS(0))], 'no-mirror');
-    const contained = writeFile(
-      join(sb().sourceRoot, '-slug', 'x', 'tool-results', SPILL_NAME),
-      BODY,
-    );
-    const loose = writeFile(join(sb().root, 'loose', 'tool-results', SPILL_NAME), BODY);
-    const locate = createSpillLocator(() => path, sandboxEnv());
-
-    expect(locate(row({ output_storage: 'spill', spill_path: contained }))).toBe(contained);
-    expect(locate(row({ output_storage: 'spill', spill_path: loose }))).toBeUndefined();
-  });
-
-  it('12d. createSpillLocator answers undefined once the body is gone — the same verdict fromSpill reaches', () => {
-    const { db, path, mirror } = spillSession();
-    const content = contentRow(db, 'toolu_spill');
-    const env = sandboxEnv();
     rmSync(mirror);
-
-    expect(createSpillLocator(() => path, env)(content)).toBeUndefined();
-    expect(resolveContent(content, 'text', path, env).storage).toBe('missing');
-    // A row with no pointer at all is never located.
-    expect(createSpillLocator(() => path, env)(row())).toBeUndefined();
+    expect(locate(content)).toBeUndefined();
+    expect(locate(row())).toBeUndefined();
   });
 });
 

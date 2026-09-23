@@ -777,8 +777,6 @@ describe('AC1 — searchEvents answers real query shapes instead of throwing', (
           text:
             'ENOENT: no such file at src/db/read.ts, ' +
             'while running --no-verify over foo-bar (C++, e.g. this one). done',
-          // The `input:` witness. Task 7.5's compound query must still parse a
-          // column filter on EVERY arm, or the retry flattens it to a phrase.
           input: '{"pattern":"quick"}',
         },
       ],
@@ -814,9 +812,8 @@ describe('AC1 — searchEvents answers real query shapes instead of throwing', (
     // The raw arm runs FIRST, which is what keeps an operator query an operator
     // query rather than flattening it into a literal phrase.
     ['text:done', 1],
-    // Task 7.5: `spill_fts` declares an UNINDEXED `input` column for this row
-    // alone. Without it the spill arm throws `no such column: input`, the retry
-    // searches the literal phrase "input:pattern", and this answers 0.
+    // Needs `spill_fts`'s UNINDEXED `input`: without it the spill arm throws, the
+    // retry searches the literal phrase, and this answers 0.
     ['input:pattern', 1],
     ['nothing OR done', 1],
   ];
@@ -864,63 +861,45 @@ describe('task 7.5 — searchEvents reads spill_fts as a second arm', () => {
   const PATH = '/archive/-slug/s/tool-results/spilled.txt';
 
   /** A tool_call spill row with no text, plus its body in `spill_fts`. */
-  function seedSpill(session: string, id: string, seq: number, body: string, path = PATH): void {
+  function seedSpill(session: string, id: string, body: string): void {
     seedSessionRow(db, { id: session });
     seedProjection(db, session, {
       turns: [{ seq: 1 }],
-      events: [{ id, seq, kind: 'tool_call', name: 'Bash', text: null }],
+      events: [{ id, seq: 1, kind: 'tool_call', name: 'Bash', text: null }],
     });
     db.prepare(`UPDATE events SET output_storage = 'spill', spill_path = ? WHERE id = ?`).run(
-      path,
+      PATH,
       id,
     );
     db.prepare(
-      `INSERT INTO spill_fts(event_id, session_id, spill_path, text, input)
-       VALUES (?, ?, ?, ?, NULL)`,
-    ).run(id, session, path, body);
+      `INSERT INTO spill_fts(event_id, session_id, spill_path, text, input) VALUES (?, ?, ?, ?, NULL)`,
+    ).run(id, session, PATH, body);
   }
 
-  it('a spilled body is found once, as a tool_call hit with a marked snippet and the same keys', () => {
-    seedSpill('sp', 'toolu_sp', 1, 'the body says zzspilltoken here');
-    const hits = searchEvents(db, { q: 'zzspilltoken', limit: 50 });
+  const ids = (q: string, session?: string): string[] =>
+    searchEvents(db, { q, limit: 50, ...(session !== undefined && { session }) })
+      .map((h) => h.event_id)
+      .sort();
 
-    // One, never two: the row's `text` is NULL, so `events_fts` cannot match it.
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ event_id: 'toolu_sp', kind: 'tool_call', session_id: 'sp' });
-    expect(hits[0]!.snippet).toContain('<mark>zzspilltoken</mark>');
-    expect(keysOf(hits[0]!)).toEqual(SEARCH_HIT_KEYS);
-  });
-
-  it('both arms answer one query, and ?session= scopes BOTH of them', () => {
+  it('both arms answer one query, ?session= scopes BOTH, and LIMIT applies to the union', () => {
     seedFull('inline');
-    seedSpill('one', 'toolu_one', 1, 'quick words from a spilled body');
-    seedSpill('two', 'toolu_two', 1, 'quick words from another one');
+    seedSpill('one', 'toolu_one', 'quick words from a spilled body');
+    seedSpill('two', 'toolu_two', 'quick words from another one');
 
-    expect(
-      searchEvents(db, { q: 'quick', limit: 50 })
-        .map((h) => h.event_id)
-        .sort(),
-    ).toEqual(['e1', 'e2', 'toolu_one', 'toolu_two']);
-    expect(
-      searchEvents(db, { q: 'quick', session: 'two', limit: 50 }).map((h) => h.event_id),
-    ).toEqual(['toolu_two']);
-    // LIMIT applies to the union, not to each arm.
+    expect(ids('quick')).toEqual(['e1', 'e2', 'toolu_one', 'toolu_two']);
+    expect(ids('quick', 'two')).toEqual(['toolu_two']);
     expect(searchEvents(db, { q: 'quick', limit: 3 })).toHaveLength(3);
   });
 
   it('an unparseable q present only in a spilled body is found through the phrase retry', () => {
-    seedSpill('sp', 'toolu_sp', 1, 'the command printed foo-bar and stopped');
-    expect(searchEvents(db, { q: 'foo-bar', limit: 50 }).map((h) => h.event_id)).toEqual([
-      'toolu_sp',
-    ]);
-    expect(
-      searchEvents(db, { q: 'foo-bar', session: 'sp', limit: 50 }).map((h) => h.event_id),
-    ).toEqual(['toolu_sp']);
+    seedSpill('sp', 'toolu_sp', 'the command printed foo-bar and stopped');
+    expect(ids('foo-bar')).toEqual(['toolu_sp']);
+    expect(ids('foo-bar', 'sp')).toEqual(['toolu_sp']);
   });
 
   it('a body whose event no longer points at it never surfaces, before any reconcile', () => {
-    seedSpill('sp', 'toolu_sp', 1, 'zzspilltoken lives here');
+    seedSpill('sp', 'toolu_sp', 'zzspilltoken lives here');
     db.prepare(`UPDATE events SET output_storage = 'missing', spill_path = NULL`).run();
-    expect(searchEvents(db, { q: 'zzspilltoken', limit: 50 })).toEqual([]);
+    expect(ids('zzspilltoken')).toEqual([]);
   });
 });

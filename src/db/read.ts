@@ -523,7 +523,6 @@ export function readEventsByIds(
 
 // --- Event content ---------------------------------------------------------
 
-/** The columns `resolveContent()` dispatches on. Shared with `spill-index.ts`. */
 export const EVENT_CONTENT_COLUMNS = `id, session_id, block_index, input, input_bytes, input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
      src_offset, src_len, result_offset, result_len, result_block`;
@@ -580,11 +579,8 @@ function ftsPhrase(q: string): string {
   return `"${q.replaceAll('"', '""')}"`;
 }
 
-/**
- * The two arms of {@link searchEvents}. `scoped` appends the session clause to
- * BOTH, and only then: node:sqlite throws `Unknown named parameter` for a bound
- * key the SQL lacks, so the SQL and the bind object are built from one flag.
- */
+// The session clause goes on BOTH arms or neither: node:sqlite throws on a bound
+// key the SQL lacks, so the SQL and the bind object come from one flag.
 function searchSql(scoped: boolean): string {
   const scope = scoped ? ' AND e.session_id = :session' : '';
   const events =
@@ -594,8 +590,7 @@ function searchSql(scoped: boolean): string {
     ` FROM events_fts JOIN events e ON e.rowid = events_fts.rowid` +
     ` JOIN sessions s ON s.id = e.session_id` +
     ` WHERE events_fts MATCH :q${scope}`;
-  // Joined back on the LIVE pointer, so a row the reconcile has not reached yet
-  // (its event reprojected to a different pointer, or gone) never surfaces.
+  // Joined on the LIVE pointer, so a row the reconcile has not reached never surfaces.
   const spills =
     `SELECT e.session_id, s.title, s.project_path, e.turn_id, e.id, e.seq, e.kind, e.name,` +
     ` e.ts, ${SPILL_SNIPPET}, rank` +
@@ -613,23 +608,17 @@ function searchSql(scoped: boolean): string {
  * FTS5 over `events.text`, `events.input` and the spilled bodies in `spill_fts`.
  * `session` scopes to one session; without it this searches every PROJECTED
  * session, which is what {@link countUnprojected} reports the honest denominator
- * for.
- *
- * No dedup across the arms: a spill row keeps `text` NULL (`write.ts`), so it
- * can never match in `events_fts`. bm25 scores from the two tables are ordered
- * together; they are close enough for a result list, not strictly comparable.
+ * for. No dedup: a spill row's `text` is NULL, so it never matches `events_fts`.
  */
 export function searchEvents(db: DatabaseSync, query: SearchQuery): SearchHit[] {
   const scoped = query.session !== undefined;
   const sql = searchSql(scoped);
   const run = (q: string): SearchHit[] =>
-    db
-      .prepare(sql)
-      .all({
-        q,
-        limit: query.limit,
-        ...(scoped && { session: query.session }),
-      }) as unknown as SearchHit[];
+    db.prepare(sql).all({
+      q,
+      limit: query.limit,
+      ...(scoped && { session: query.session }),
+    }) as unknown as SearchHit[];
 
   try {
     return run(query.q);

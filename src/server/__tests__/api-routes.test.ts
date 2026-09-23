@@ -753,11 +753,9 @@ describe('10. GET /api/health (spec:394-396)', () => {
 });
 
 describe('task 7.5 — a token only in a spilled body is found by GET /api/search (AC1)', () => {
-  const SPILL_SESSION = 'cccccccc-7575-4757-8757-cccccccccccc';
-
-  /** A slugged session whose one Bash result spilled, the body really mirrored. */
-  function plantSpill(): string {
-    const dir = join(sandbox.archiveRoot, '-Users-dev-proj', SPILL_SESSION);
+  it('is found after one real sweep tick, and not before — through a SEALED body', async () => {
+    const session = 'cccccccc-7575-4757-8757-cccccccccccc';
+    const dir = join(sandbox.archiveRoot, '-Users-dev-proj', session);
     writeTranscript(`${dir}.jsonl`, [
       humanLine('run the long build', '2026-08-14T10:00:00.000Z'),
       toolCallLine('toolu_spilled', 'Bash', '2026-08-14T10:00:01.000Z'),
@@ -770,11 +768,13 @@ describe('task 7.5 — a token only in a spilled body is found by GET /api/searc
     const body = join(dir, 'tool-results', 'spilled.txt');
     mkdirSync(dirname(body), { recursive: true });
     writeFileSync(body, 'line 1\nthe build log says zzspilltoken at the end\n');
-    return body;
-  }
+    sealArchiveFile(body, sandbox.archiveRoot);
+    expect(existsSync(`${body}.zst`)).toBe(true);
 
-  /** One boot-style tick of the REAL sweep: wave 1, wave 2, and wave 2's spill tail. */
-  function tick(): void {
+    const search = (): Promise<{ status: number; body: SearchBody }> =>
+      getJson<SearchBody>('/api/search?q=zzspilltoken');
+    expect((await search()).body.items).toEqual([]);
+
     const sweep = createCorpusSweep({
       db,
       dataDir: sandbox.dataDir,
@@ -785,39 +785,17 @@ describe('task 7.5 — a token only in a spilled body is found by GET /api/searc
     } finally {
       sweep.close();
     }
-  }
 
-  async function expectSpillHit(): Promise<void> {
-    const { status, body } = await getJson<SearchBody>('/api/search?q=zzspilltoken');
+    const { status, body: page } = await search();
     expect(status).toBe(200);
-    expect(body.items).toHaveLength(1);
-    const [hit] = body.items;
+    expect(page.items).toHaveLength(1);
+    const [hit] = page.items;
     expectKeys(hit, SEARCH_HIT_KEYS);
     expect(hit).toMatchObject({
       event_id: 'toolu_spilled',
       kind: 'tool_call',
-      session_id: SPILL_SESSION,
+      session_id: session,
     });
     expect(hit!.snippet).toContain('<mark>zzspilltoken</mark>');
-  }
-
-  it('is found after one tick, and not before', async () => {
-    plantSpill();
-    expect((await getJson<SearchBody>('/api/search?q=zzspilltoken')).body.items).toEqual([]);
-
-    tick();
-
-    await expectSpillHit();
-  });
-
-  it('is found through a SEALED body too — the reader decompresses the .zst', async () => {
-    const body = plantSpill();
-    sealArchiveFile(body, sandbox.archiveRoot);
-    expect(existsSync(body)).toBe(false);
-    expect(existsSync(`${body}.zst`)).toBe(true);
-
-    tick();
-
-    await expectSpillHit();
   });
 });

@@ -285,9 +285,10 @@ export function seedIndexRow(
   return id;
 }
 
-/** `integrity-check` at rank 1 — the SOLE detector of a desynchronised index. */
+/** `integrity-check` at rank 1 — the SOLE detector of a desynchronised index. Both FTS tables. */
 export function ftsIntegrityCheck(db: DatabaseSync): void {
   db.exec(`INSERT INTO events_fts(events_fts, rank) VALUES('integrity-check', 1)`);
+  db.exec(`INSERT INTO spill_fts(spill_fts, rank) VALUES('integrity-check', 1)`);
 }
 
 export function countOf(db: DatabaseSync, table: string, id: string): number {
