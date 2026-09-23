@@ -654,6 +654,30 @@ describe('recomputeSessionRollups (AC8)', () => {
     project(db, id, path);
     expect(typeof sessionRow(db, id).est_cost).toBe('number');
   });
+
+  it('a claude-opus-5 session is priced, and at the published rate (Task 0.8b)', () => {
+    const db = cache();
+    const { path } = plant('opus5', [
+      humanLine('go', TS(0)),
+      toolCallLine('toolu_o5', 'Grep', TS(1), 'claude-opus-5', {
+        input_tokens: 1000,
+        output_tokens: 2000,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 8000,
+      }),
+      toolResultLine('toolu_o5', 'ok', TS(2)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    // $5 in / $25 out / $0.50 cache read / $6.25 cache write per MTok:
+    // (1000*5 + 2000*25 + 4000*0.5 + 8000*6.25) / 1e6 = 0.107
+    const cost = sessionRow(db, id).est_cost as number | null;
+    expect(cost).not.toBeNull();
+    expect(cost).toBeGreaterThan(0);
+    expect(cost).toBeCloseTo(0.107, 10);
+  });
 });
 
 describe('the folded model reaches the row (Task 0.13)', () => {

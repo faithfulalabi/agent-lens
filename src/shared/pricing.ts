@@ -12,8 +12,18 @@
 //
 // `PRICING_VERSION` is DERIVED from a hash of the table, not declared, so any
 // rate edit changes the version automatically and a stale estimate can never
-// masquerade as a current one. It is stamped into `spans.attrs` per
-// `data-model.md:269`, which survives a mid-database pricing bump.
+// masquerade as a current one. It is NOT stamped onto stored rows in v2
+// (`data-model.md:269` describes a `spans.attrs` stamp that `db/write.ts` never
+// implemented); the only row-level key that says which rates priced a row is
+// `projector_version`.
+//
+// REPROJECT POLICY: `est_cost` is stored at projection time and nothing
+// re-derives it on read, while this file sits OUTSIDE the `PROJECTOR_VERSION`
+// hashed trees (`projector-version.test.ts`), so a rate edit invalidates no
+// cached row on its own. A rate edit that changes stored `est_cost` — any edit
+// to a family a stored row uses — must bump `PROJECTOR_VERSION`
+// (`transcript/version.ts`) in the same diff so every install reprojects
+// through the freshness gate. Task 0.8b set the precedent (8 -> 9).
 
 import { createHash } from 'node:crypto';
 
@@ -69,10 +79,30 @@ export interface TokenUsage {
  * documented 5-minute-TTL ephemeral multipliers), not quoted independently.
  * Nothing consumes `est_cost` until Task 3.2, and PRICING_VERSION makes any
  * staleness auditable, so a correction is a one-line edit with no migration.
+ * Only `claude-opus-5` was verified on 2026-09-22; the rest still carry the
+ * caveat above.
+ *
+ * DELIBERATELY ABSENT (Task 0.8b ruling, 2026-09-22):
+ * - `opus` — unpriced. No published rate exists under that string, and
+ *   {@link normalizeModelKey} has no family fallback by design ("unknown
+ *   families stay loud"). A session with an `opus` event carrying tokens rolls
+ *   up NULL and the UI names it; that is the honest answer, not a gap.
+ * - `<synthetic>` — excluded, not "unknown". It is the harness's zero-token
+ *   placeholder (auth expiry, etc.); it did no billable work. The fold skips it
+ *   for `sessions.model` (`transcript/line.ts`) and the roll-up ignores
+ *   zero-token unpriced parts (`db/write.ts`, ROLLUP_TURN_COST_SQL), so no row
+ *   or sum is ever blocked by it. Pricing it would over-promise that a rate
+ *   could help.
  */
 export const PRICING_TABLE: Readonly<Record<string, ModelPrice>> = Object.freeze({
   'claude-fable-5': { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
   'claude-mythos-5': { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
+  // Source: Anthropic public pricing page, read 2026-09-22 — $5 in / $25 out /
+  // $0.50 cache read / $6.25 5-minute cache write per MTok. The 1-hour cache
+  // write rate ($10) has no column: the corpus's `cache_write` counter does not
+  // distinguish TTLs, so the 5-minute figure applies, matching the table's
+  // 1.25x convention. (Task 0.8b.)
+  'claude-opus-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-8': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-7': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
@@ -83,12 +113,14 @@ export const PRICING_TABLE: Readonly<Record<string, ModelPrice>> = Object.freeze
 });
 
 /** Human half of the version stamp — hand-bumped when rates are re-checked. */
-export const PRICING_TABLE_DATE = '2026-07-26';
+export const PRICING_TABLE_DATE = '2026-09-22';
 
 /**
  * `{date}+{first 8 hex of sha256(canonical table)}`. Derived rather than
- * declared: editing a rate without touching this constant is impossible, so a
- * `pricing_version` stamped on a span always identifies the exact rates used.
+ * declared: editing a rate without touching this constant is impossible, so the
+ * value always identifies the exact rates in this build. It is not stamped on
+ * stored rows (see the header); `projector_version` is the row-level key, which
+ * is why a rate edit that changes stored `est_cost` bumps `PROJECTOR_VERSION`.
  */
 export const PRICING_VERSION = `${PRICING_TABLE_DATE}+${createHash('sha256')
   .update(canonicalJson(PRICING_TABLE), 'utf8')
@@ -129,10 +161,7 @@ export function normalizeModelKey(model: string): string | undefined {
  * under-report every trace total. Zero tokens on a *known* model does return
  * `0` — that is a real price, not a missing one.
  */
-export function estimateCost(
-  model: string | undefined,
-  usage: TokenUsage,
-): number | null {
+export function estimateCost(model: string | undefined, usage: TokenUsage): number | null {
   if (model === undefined || model === '') return null;
   const key = normalizeModelKey(model);
   if (key === undefined) return null;

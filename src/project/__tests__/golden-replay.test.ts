@@ -148,6 +148,21 @@ describe.each(fixtures)('golden replay — %s', (id) => {
   });
 });
 
+describe('the real corpus is priced (Task 0.8b)', () => {
+  // Independent of the snapshot bytes: the scrubbed corpus is 100% `claude-opus-5`,
+  // so a parent row whose cost comes back NULL means the rate is missing again
+  // — or a stored row was priced under a table that did not carry it.
+  it.each(fixtures)('%s: the parent session reports est_cost > 0', (id) => {
+    const snapshot = JSON.parse(replay(id)) as {
+      sessions: { id: string; est_cost: number | null }[];
+    };
+    const parent = snapshot.sessions.find((row) => row.id === id);
+    expect(parent, `no parent row for ${id}`).toBeDefined();
+    expect(parent!.est_cost).not.toBeNull();
+    expect(parent!.est_cost).toBeGreaterThan(0);
+  });
+});
+
 describe('the harness leaks no wall clock', () => {
   it('two replays milliseconds apart are byte-identical', () => {
     const before = replay('multi-turn');

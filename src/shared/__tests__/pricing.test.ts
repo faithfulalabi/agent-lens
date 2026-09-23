@@ -16,6 +16,10 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     ['us.anthropic.claude-haiku-4-5-20251001', 'claude-haiku-4-5'],
     // `-4-5` is part of the family key, not a `-YYYYMMDD` build stamp.
     ['claude-sonnet-4-5', 'claude-sonnet-4-5'],
+    // Task 0.8b: the undated first-party id, and its dated / vendor-prefixed forms.
+    ['claude-opus-5', 'claude-opus-5'],
+    ['claude-opus-5-20260901', 'claude-opus-5'],
+    ['us.anthropic.claude-opus-5', 'claude-opus-5'],
   ])('%s -> %s', (input, expected) => {
     expect(normalizeModelKey(input)).toBe(expected);
   });
@@ -25,6 +29,10 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     ['claude-opus-9-9'],
     ['claude-opus-9-9-20991231'],
     [''],
+    // Task 0.8b ruling: no family fallback, so the bare alias stays unpriced...
+    ['opus'],
+    // ...and the harness's zero-token placeholder is excluded, not priced.
+    ['<synthetic>'],
   ])('returns undefined for the unknown family %s', (input) => {
     expect(normalizeModelKey(input)).toBeUndefined();
   });
@@ -40,6 +48,19 @@ describe('estimateCost — AC2: unknown model is null, never zero', () => {
     expect(cost).toBeCloseTo(30, 10);
   });
 
+  it('carries claude-opus-5 at the four published rates (Task 0.8b)', () => {
+    // Anthropic public pricing page, read 2026-09-22: $5 / $25 / $0.50 / $6.25
+    // (5-minute cache write) per MTok.
+    expect(PRICING_TABLE['claude-opus-5']).toEqual({
+      input: 5,
+      output: 25,
+      cache_read: 0.5,
+      cache_write: 6.25,
+    });
+    const cost = estimateCost('claude-opus-5', { tokens_in: 1_000_000, tokens_out: 1_000_000 });
+    expect(cost).toBeCloseTo(30, 10);
+  });
+
   it('prices cache reads and writes separately from fresh input', () => {
     const rate = PRICING_TABLE['claude-opus-4-8']!;
     const cost = estimateCost('claude-opus-4-8', {
@@ -49,10 +70,7 @@ describe('estimateCost — AC2: unknown model is null, never zero', () => {
       cache_write: 8000,
     });
     const expected =
-      (1000 * rate.input +
-        2000 * rate.output +
-        4000 * rate.cache_read +
-        8000 * rate.cache_write) /
+      (1000 * rate.input + 2000 * rate.output + 4000 * rate.cache_read + 8000 * rate.cache_write) /
       1_000_000;
     expect(cost).toBeCloseTo(expected, 10);
   });
