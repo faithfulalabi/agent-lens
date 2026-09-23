@@ -73,14 +73,11 @@ export interface TokenUsage {
  * USD per 1M tokens, keyed by model FAMILY (no build-date suffix, no vendor
  * prefix — see {@link normalizeModelKey}).
  *
- * TODO(founder): rates unverified. These are best-guess list prices captured on
- * PRICING_TABLE_DATE and have not been reconciled against a billing statement.
- * `cache_read` is derived as 0.1x input and `cache_write` as 1.25x input (the
- * documented 5-minute-TTL ephemeral multipliers), not quoted independently.
- * Nothing consumes `est_cost` until Task 3.2, and PRICING_VERSION makes any
- * staleness auditable, so a correction is a one-line edit with no migration.
- * Only `claude-opus-5` was verified on 2026-09-22; the rest still carry the
- * caveat above.
+ * Source: Anthropic's public pricing table, supplied by the founder 2026-09-22.
+ * Every row is quoted, not derived. `cache_write` is the 5-minute write rate:
+ * the corpus's `cache_write` counter does not distinguish TTLs, so the 1-hour
+ * rate (1.6x the 5-minute one) has no column. `cache_read` is "cache hits and
+ * refreshes". Retired models are kept so old sessions still price.
  *
  * DELIBERATELY ABSENT (Task 0.8b ruling, 2026-09-22):
  * - `opus` — unpriced. No published rate exists under that string, and
@@ -95,21 +92,24 @@ export interface TokenUsage {
  *   could help.
  */
 export const PRICING_TABLE: Readonly<Record<string, ModelPrice>> = Object.freeze({
+  'claude-fable-5-1': { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 },
+  'claude-mythos-5-1': { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 },
   'claude-fable-5': { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
   'claude-mythos-5': { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
-  // Source: Anthropic public pricing page, read 2026-09-22 — $5 in / $25 out /
-  // $0.50 cache read / $6.25 5-minute cache write per MTok. The 1-hour cache
-  // write rate ($10) has no column: the corpus's `cache_write` counter does not
-  // distinguish TTLs, so the 5-minute figure applies, matching the table's
-  // 1.25x convention. (Task 0.8b.)
+  'claude-opus-5-5': { input: 4, output: 20, cache_read: 0.2, cache_write: 5 },
   'claude-opus-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-8': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-7': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
-  'claude-sonnet-5': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+  'claude-opus-4-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+  'claude-opus-4-1': { input: 15, output: 75, cache_read: 1.5, cache_write: 18.75 },
+  'claude-opus-4': { input: 15, output: 75, cache_read: 1.5, cache_write: 18.75 },
+  'claude-sonnet-5': { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
   'claude-sonnet-4-6': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
   'claude-sonnet-4-5': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+  'claude-sonnet-4': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
   'claude-haiku-4-5': { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
+  'claude-3-5-haiku': { input: 0.8, output: 4, cache_read: 0.08, cache_write: 1 },
 });
 
 /** Human half of the version stamp — hand-bumped when rates are re-checked. */
@@ -130,6 +130,9 @@ export const PRICING_VERSION = `${PRICING_TABLE_DATE}+${createHash('sha256')
 /** A trailing Claude build stamp: `-20250929`. Anchored, so `-4-5` is safe. */
 const BUILD_SUFFIX = /-\d{8}$/;
 
+/** A context-window variant tag the harness appends: `claude-opus-5-5[1m]`. Same rate. */
+const CONTEXT_TAG = /\[[^\]]*\]$/;
+
 /** Bedrock/Vertex-style vendor prefixes: `us.anthropic.`, `anthropic.`. */
 const VENDOR_PREFIX = /^(?:[a-z]{2,4}\.)?anthropic\./;
 
@@ -137,13 +140,14 @@ const VENDOR_PREFIX = /^(?:[a-z]{2,4}\.)?anthropic\./;
  * Fold a harness-reported model id onto a family key present in
  * {@link PRICING_TABLE}, or `undefined` if the family is genuinely unknown.
  *
- * The chain is exact match -> strip a trailing `-YYYYMMDD` build suffix -> strip
- * a vendor prefix -> both. Folding (rather than exact-match-only) is deliberate:
+ * A trailing context tag (`[1m]`) is dropped first. The chain is then exact match
+ * -> strip a trailing `-YYYYMMDD` build suffix -> strip a vendor prefix -> both. Folding (rather than exact-match-only) is deliberate:
  * every new Claude build id carries a fresh date stamp, and exact matching would
  * render "—" for the whole fleet the day a build ships. Unknown *families* still
  * return `undefined`, so real drift stays loud.
  */
-export function normalizeModelKey(model: string): string | undefined {
+export function normalizeModelKey(raw: string): string | undefined {
+  const model = raw.replace(CONTEXT_TAG, '');
   const withoutVendor = model.replace(VENDOR_PREFIX, '');
   const candidates = [
     model,

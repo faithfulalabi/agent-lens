@@ -20,6 +20,14 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     ['claude-opus-5', 'claude-opus-5'],
     ['claude-opus-5-20260901', 'claude-opus-5'],
     ['us.anthropic.claude-opus-5', 'claude-opus-5'],
+    // 2026-09-22 table: newer ids, the `[1m]` context tag, and dated retired ids.
+    ['claude-fable-5-1', 'claude-fable-5-1'],
+    ['claude-opus-5-5', 'claude-opus-5-5'],
+    ['claude-opus-5-5[1m]', 'claude-opus-5-5'],
+    ['claude-opus-4-1-20250805', 'claude-opus-4-1'],
+    ['claude-opus-4-20250514', 'claude-opus-4'],
+    ['claude-sonnet-4-20250514', 'claude-sonnet-4'],
+    ['claude-3-5-haiku-20241022', 'claude-3-5-haiku'],
   ])('%s -> %s', (input, expected) => {
     expect(normalizeModelKey(input)).toBe(expected);
   });
@@ -33,6 +41,8 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
     ['opus'],
     // ...and the harness's zero-token placeholder is excluded, not priced.
     ['<synthetic>'],
+    // The context tag is stripped, but an unknown family behind it stays unknown.
+    ['claude-opus-9-9[1m]'],
   ])('returns undefined for the unknown family %s', (input) => {
     expect(normalizeModelKey(input)).toBeUndefined();
   });
@@ -95,6 +105,17 @@ describe('estimateCost — AC2: unknown model is null, never zero', () => {
     // "priced at zero" and "unpriceable" are different facts.
     expect(estimateCost('claude-opus-4-8', {})).toBe(0);
     expect(estimateCost('claude-opus-4-8', { tokens_in: 0, tokens_out: 0 })).toBe(0);
+  });
+});
+
+describe('PRICING_TABLE — quoted rows from the 2026-09-22 public table', () => {
+  it.each([
+    ['claude-fable-5-1', { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 }],
+    ['claude-opus-5-5', { input: 4, output: 20, cache_read: 0.2, cache_write: 5 }],
+    // Was 3/15/0.3/3.75 until 2026-09-22; the public table says 2/10.
+    ['claude-sonnet-5', { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 }],
+  ])('%s', (key, rates) => {
+    expect(PRICING_TABLE[key]).toEqual(rates);
   });
 });
 
