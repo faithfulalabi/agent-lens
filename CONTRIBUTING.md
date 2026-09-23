@@ -5,12 +5,15 @@
 Node.js `>=24` is required, not preferred: the storage layer uses the built-in `node:sqlite`.
 
 ```bash
-npm install      # root + ui deps (ui installs via postinstall)
+npm install      # root + ui deps (ui installs via `prepare`)
 npm test         # the Vitest suite, node + ui projects
 npm run typecheck # TypeScript strict, src + ui
 npm run lint     # ESLint
 npm run format   # Prettier
 ```
+
+CI's `test` job needs a repository secret, so a pull request from a fork cannot go green on its
+own — a maintainer re-pushes the branch into this repo to run CI.
 
 `npm test` is the gate. Never weaken a test to get it green — a red test here is usually a real
 statement about the corpus, not a flaky one.
