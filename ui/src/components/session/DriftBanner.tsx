@@ -18,9 +18,8 @@ import { driftNotice, type DriftFacts } from '@/lib/session-data';
  * note; a session whose records this build could not name is louder, because
  * the reader may be looking at an incomplete account of their own work.
  *
- * The link goes to `/api/drift`, the aggregate itself. No phase-7 task builds a
- * screen for the report, so the JSON is the honest destination — and it costs
- * no entry in `route-match.ts`, which is under a standing do-not-touch rule.
+ * No link. It used to point at `/api/drift`, but a plain browser navigation
+ * carries no API token, so it always landed on a 401 page (task 0.16).
  *
  * The wording lives in `@/lib/session-data` beside `truncationNotes`, on the
  * same rule: copy in a pure function is copy a test can pin.
@@ -41,18 +40,12 @@ export function DriftBanner(facts: DriftBannerProps) {
     >
       <TriangleAlert size={12} aria-hidden="true" className="shrink-0" />
       <span className="min-w-0">{notice}</span>
-      <a
-        href="/api/drift"
-        className="ml-auto shrink-0 uppercase tracking-widest text-muted transition-colors hover:text-foreground"
-      >
-        Drift report
-      </a>
       <button
         type="button"
         aria-label="Dismiss unrecognized records notice"
         title="Dismiss until reload"
         onClick={dismiss}
-        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-raised hover:text-foreground"
+        className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-raised hover:text-foreground"
       >
         <X size={14} aria-hidden="true" />
       </button>

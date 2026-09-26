@@ -10,7 +10,7 @@ import { DriftBanner } from '../DriftBanner';
  */
 
 describe('the drift banner raises on the row it is given (AC2)', () => {
-  it('carries the slot the render gate drives, the copy, and the link to the aggregate', () => {
+  it('carries the slot the render gate drives and the copy, with no link to a raw API route', () => {
     const markup = renderToStaticMarkup(
       <DriftBanner sessionId="session-a" hasDrift harnessVersion="2.2.0" />,
     );
@@ -20,16 +20,15 @@ describe('the drift banner raises on the row it is given (AC2)', () => {
     expect(markup, 'louder than the truncation strip next door').toContain('role="alert"');
     expect(markup).toContain('Unrecognized records in this session.');
     expect(markup, 'the culprit release is the whole point of the alarm').toContain('2.2.0');
-    expect(markup, 'AC2 asks for a link to the aggregate, and that is the endpoint').toContain(
-      'href="/api/drift"',
-    );
+    // A browser navigation to /api/* carries no token and always 401s (task 0.16).
+    expect(markup).not.toContain('href="/api/');
   });
 
-  it('links to the aggregate even when the transcript named no version', () => {
+  it('still raises when the transcript named no version', () => {
     const markup = renderToStaticMarkup(
       <DriftBanner sessionId="session-a" hasDrift harnessVersion={null} />,
     );
-    expect(markup).toContain('href="/api/drift"');
+    expect(markup).toContain('data-slot="drift-banner"');
     expect(markup).not.toContain('null');
   });
 });
