@@ -125,13 +125,13 @@ auto-merge on each release PR, so it merges itself once its checks pass. It refu
 repository settings.
 
 **If a publish fails.** The tag and GitHub release stay in place on purpose: they describe a real
-commit. Open that commit's CI run and use "Re-run failed jobs"; `publish-check` sees the tag at that
-commit and the version missing from npm, and publishes the same tarball (kept for 30 days). A re-run
-of an already-published version is a no-op, and a `release` job that shows cancelled because several
-pushes landed at once is fixed the same way. Until it is fixed, `publish-check` on every later `main`
-push fails with `released but unpublished`, so a stuck release cannot go unnoticed. Past 30 days,
-check out the tag, run `SMOKE_KEEP_TGZ=/tmp/tgz npm run smoke:pack`, and publish that tarball from
-CI.
+commit. If the failure was transient (a registry outage, a cancelled job), use "Re-run failed jobs"
+on that commit's CI run; a re-run of an already-published version is a no-op. If the workflow itself
+was wrong, a re-run replays the same broken file, so fix the workflow in a PR instead. On the next
+`main` push, `publish-check` sees the newest tag missing from npm and, when no shipped file changed
+since that tag, publishes it from that run. If shipped files did change, it fails with
+`released but unpublished`; publish from the tag by hand (`git checkout vX.Y.Z && npm publish`).
+Either way a stuck release cannot go unnoticed.
 
 **The workflow filename is load-bearing.** npm's trusted-publisher entry names `ci.yml` and the
 `npm-publish` environment. Renaming the file, or moving the `publish` job into another workflow,
