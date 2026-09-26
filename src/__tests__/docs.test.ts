@@ -149,7 +149,7 @@ describe('the quickstart is zero-configuration (Test 5)', () => {
   const firstBlock = /```bash\n([\s\S]*?)```/.exec(readme);
 
   it('the first shell block in the README is the quickstart, and it is npx', () => {
-    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe('npx agent-lens');
+    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe('npx @faithfulalabi/agent-lens');
   });
 
   it('no setup command runs before it', () => {

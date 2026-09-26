@@ -19,6 +19,8 @@ function read(...rel: string[]): string {
 }
 
 interface Manifest {
+  name: string;
+  publishConfig: { access: string };
   version: string;
   repository: { type: string; url: string };
   files: string[];
@@ -210,6 +212,12 @@ describe('the MIT license is on record and consistent (task 1.1)', () => {
 });
 
 describe('the publish metadata names a real release (task 8.4)', () => {
+  it('publishes under the founder scope, publicly', () => {
+    // npm refused the unscoped `agent-lens` as too similar to `agentlens`.
+    expect(MANIFEST.name).toBe('@faithfulalabi/agent-lens');
+    expect(MANIFEST.publishConfig).toEqual({ access: 'public' });
+  });
+
   it('carries a release version, not the 0.0.0 placeholder', () => {
     // 0.0.0 is what the manifest was scaffolded with; publishing it would
     // claim the name with a version nobody meant. `npm version --no-git-tag-version`
