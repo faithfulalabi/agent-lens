@@ -495,6 +495,9 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
     // The ./ is load-bearing: a bare `pkg/x.tgz` is read as a GitHub owner/repo spec (v0.1.1).
     expect(publish).toContain('npm publish "./$(ls pkg/*.tgz)" --provenance --access public');
     expect(publish).not.toMatch(/npm publish "\$\(ls pkg/);
+    // Both OIDC failure modes are silent at npm's default loglevel (first live publish).
+    expect(publish).toContain('ACTIONS_ID_TOKEN_REQUEST_URL');
+    expect(publish).toContain('--loglevel verbose');
     expect(publish).toContain("if: needs.publish-check.outputs.publish == 'true'");
     expect(publish).toContain('check-latest: true');
     for (const name of JOBS.filter((n) => n !== 'publish')) {
