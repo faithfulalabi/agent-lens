@@ -10,7 +10,7 @@ harness and nothing to configure.
 ## Quickstart
 
 ```bash
-npx agent-lens
+npx @faithfulalabi/agent-lens
 ```
 
 That starts the local server and the UI and prints the URL. Open it. Sessions you have already run

@@ -236,7 +236,7 @@ function smoke(jail) {
   // directory the tarball does not contain — is really gone.
   run('npm', ['install', tgz, '--no-audit', '--no-fund'], { cwd: app, env: jailedEnv(jail) });
 
-  const installed = join(app, 'node_modules', 'agent-lens');
+  const installed = join(app, 'node_modules', '@faithfulalabi', 'agent-lens');
   requireIsolation(jail);
   ok('the install added no node_modules above the jail');
 
