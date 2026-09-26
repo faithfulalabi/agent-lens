@@ -207,6 +207,12 @@ jobs:
     outputs:
       publish: ${{ steps.facts.outputs.publish }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + history for the self-heal scope diff
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/download-artifact@v4
         with:
           name: package-tarball
@@ -228,15 +234,22 @@ jobs:
             else echo "v$VER is this commit and npm lacks it — publishing."; echo publish=true >>"$GITHUB_OUTPUT"; fi
             exit 0
           fi
-          echo "Not a release commit."; echo publish=false >>"$GITHUB_OUTPUT"
+          echo "Not a release commit."
           # Unpublished-release alarm: the newest tag must be on npm unless its own run is still going.
           LATEST=$(git ls-remote --tags --refs "https://github.com/$R" 'v*' | sed 's#.*refs/tags/v##' | sort -V | tail -1)
           if ! on_npm "$LATEST"; then
             LSHA=$(gh api "repos/$R/commits/v$LATEST" --jq .sha)
             LIVE=$(gh api "repos/$R/actions/runs?head_sha=$LSHA&event=push" --jq '[.workflow_runs[] | select(.status=="queued" or .status=="in_progress")] | length')
-            if [ "$LIVE" = "0" ]; then echo "::error::v$LATEST released but unpublished — re-run the run for $LSHA"; exit 1; fi
-            echo "::notice::v$LATEST not on npm yet; its run for $LSHA is still in flight."
+            if [ "$LIVE" != "0" ]; then echo "::notice::v$LATEST not on npm yet; its run for $LSHA is still in flight."; echo publish=false >>"$GITHUB_OUTPUT"; exit 0; fi
+            # Self-heal: a re-run replays the tagged commit's (possibly broken) workflow, so
+            # publish from here instead, but only if this tarball is that release's code.
+            if [ "$VER" = "$LATEST" ] && node scripts/release-scope.ts --base "v$LATEST" | grep -q '^decision: no-release'; then
+              echo "::notice::v$LATEST was never published and no shipped file changed since its tag — publishing it from this run."
+              echo publish=true >>"$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::error::v$LATEST released but unpublished, and shipped files changed since v$LATEST. Publish it from the tag by hand: git checkout v$LATEST && npm publish"; exit 1
           fi
+          echo publish=false >>"$GITHUB_OUTPUT"
 
   publish:
     name: publish
@@ -265,4 +278,5 @@ jobs:
       - name: Assert npm supports trusted publishing
         run: node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)"
       # A tarball publish never runs prepublishOnly: no rebuild, the tested bytes ship.
-      - run: npm publish "$(ls pkg/*.tgz)" --provenance --access public
+      # The ./ matters: npm reads a bare `pkg/x.tgz` as a GitHub owner/repo shorthand.
+      - run: npm publish "./$(ls pkg/*.tgz)" --provenance --access public

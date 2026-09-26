@@ -492,7 +492,9 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
     const publish = job('publish');
     expect(publish).toContain('id-token: write');
     expect(publish).toContain('environment: npm-publish');
-    expect(publish).toContain('npm publish "$(ls pkg/*.tgz)" --provenance --access public');
+    // The ./ is load-bearing: a bare `pkg/x.tgz` is read as a GitHub owner/repo spec (v0.1.1).
+    expect(publish).toContain('npm publish "./$(ls pkg/*.tgz)" --provenance --access public');
+    expect(publish).not.toMatch(/npm publish "\$\(ls pkg/);
     expect(publish).toContain("if: needs.publish-check.outputs.publish == 'true'");
     expect(publish).toContain('check-latest: true');
     for (const name of JOBS.filter((n) => n !== 'publish')) {
@@ -524,13 +526,18 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
     expect(read('scripts', 'pack-smoke.mjs')).toContain('process.env.SMOKE_KEEP_TGZ');
   });
 
-  it('decides from facts, idempotently, and alarms on an unpublished release', () => {
+  it('decides from facts, idempotently, and heals or alarms on an unpublished release', () => {
     const check = job('publish-check');
     expect(check).toContain("if: always() && needs.release.result == 'success'");
     expect(check).toContain('npm view');
     expect(check).toContain('E404');
     expect(check).toContain('released but unpublished');
     expect(check).toContain('actions/runs?head_sha=');
+    // Self-heal: a re-run replays the tagged commit's workflow, so an unpublished tag is
+    // published from a later run, but only when no shipped file changed since the tag.
+    expect(check).toContain('node scripts/release-scope.ts --base "v$LATEST"');
+    expect(check).toContain('[ "$VER" = "$LATEST" ]');
+    expect(check).not.toContain('re-run the run for');
     expect(check).not.toContain('release_created');
     expect(job('publish')).not.toContain('release_created');
   });
