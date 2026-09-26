@@ -140,9 +140,9 @@ jobs:
     concurrency:
       group: release-please
       cancel-in-progress: false
+    # Only the open release PR is exported (for automerge). Whether to publish
+    # is decided by publish-check from facts, never from release-please outputs.
     outputs:
-      release_created: ${{ steps.rp.outputs.release_created }}
-      version: ${{ steps.rp.outputs.version }}
       pr: ${{ steps.rp.outputs.pr }}
     steps:
       # An App token, not GITHUB_TOKEN: PRs and pushes made with GITHUB_TOKEN
