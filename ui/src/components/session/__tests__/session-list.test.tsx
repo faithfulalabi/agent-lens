@@ -202,6 +202,7 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     // Other metric headings explain their columns without implying sorting.
     for (const label of [
       'Status',
+      'Model',
       'Turns',
       'Subagents',
       'Errors',
@@ -415,6 +416,7 @@ describe('status, degradation and errors are visible, not just coloured', () => 
         'session',
         'active',
         'status',
+        'model',
         'turns',
         'subagents',
         'errors',
