@@ -586,7 +586,7 @@ type ModelCalls = [model: string, calls: number];
 // this module does not edit the hashed projector tree.
 const SYNTHETIC_MODEL = '<synthetic>';
 
-// `events.model` is stamped once per requestId (the pipeline's `modelAt` map),
+// `events.model` is stamped once per request group (the pipeline's `modelAt` map),
 // so `count(*)` is API calls per model. Ties go to the model seen first, the
 // same rule `foldSessionEnvelope` uses for `sessions.model`, which keeps
 // `models[0]` and `model` in agreement. The JSON is built in TS, not with
