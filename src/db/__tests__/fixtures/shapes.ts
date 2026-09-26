@@ -11,6 +11,7 @@ export const SESSION_ROW_KEYS = [
   'project_path',
   'git_branch',
   'model',
+  'models',
   'harness_version',
   'started_at',
   'last_activity_at',
@@ -30,6 +31,7 @@ export const SESSION_ROW_KEYS = [
   'sub_tokens_cache_read',
   'sub_tokens_cache_write',
   'sub_est_cost',
+  'sub_models',
   'rollup_state',
   'has_drift',
 ].sort();

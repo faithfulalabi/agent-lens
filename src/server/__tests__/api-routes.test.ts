@@ -224,6 +224,13 @@ describe('1. GET /api/sessions (spec:271-286)', () => {
     expectKeys(body, PAGE_KEYS);
     expect(body.items.length).toBeGreaterThan(0);
     for (const row of body.items) expectKeys(row, SESSION_ROW_KEYS);
+    // Task 0.17: the model lists are arrays of ids on the wire, never pairs.
+    for (const row of body.items) {
+      for (const list of [row.models, row.sub_models]) {
+        expect(Array.isArray(list)).toBe(true);
+        expect(list.every((id) => typeof id === 'string')).toBe(true);
+      }
+    }
     // `live` is stamped, never a column: historical fixtures are not live.
     expect(body.items.every((row) => row.live === false)).toBe(true);
   });

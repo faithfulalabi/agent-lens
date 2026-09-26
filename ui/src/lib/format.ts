@@ -19,6 +19,8 @@
  *     makes it assertable at all.
  */
 
+import { SYNTHETIC_MODEL, stripModelId } from '@shared/model-id.ts';
+
 /** What the design system renders in place of an unknown or absent number. */
 const NO_VALUE = '—';
 
@@ -134,6 +136,57 @@ export function costUnknownLabel(
   return model === null
     ? 'cost unknown — no model recorded'
     : `cost unknown — no rate for ${model}`;
+}
+
+/** `claude-opus-5-5` → family `opus`, version `5-5`. */
+const FAMILY_FIRST = /^claude-([a-z]+)-(\d+(?:-\d+)*)$/;
+
+/** The legacy order, `claude-3-5-haiku` → version `3-5`, family `haiku`. */
+const VERSION_FIRST = /^claude-(\d+(?:-\d+)*)-([a-z]+)$/;
+
+function familyVersion(family: string, version: string): string {
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version.replace(/-/g, '.')}`;
+}
+
+/**
+ * A short display name for a model id: `claude-fable-5-1` → `Fable 5.1`,
+ * `us.anthropic.claude-sonnet-4-5-20250929[1m]` → `Sonnet 4.5`. Recognises the
+ * id's SHAPE, not a known family list, so a new family names itself on day one.
+ * Anything else comes back verbatim — an unknown id is shown, never dropped.
+ */
+export function shortModelName(raw: string): string {
+  const bare = stripModelId(raw);
+  const familyFirst = FAMILY_FIRST.exec(bare);
+  if (familyFirst !== null) return familyVersion(familyFirst[1]!, familyFirst[2]!);
+  const versionFirst = VERSION_FIRST.exec(bare);
+  if (versionFirst !== null) return familyVersion(versionFirst[2]!, versionFirst[1]!);
+  return raw;
+}
+
+/**
+ * The session list's Model cell. The text is the main session's dominant model,
+ * plus `+N` for every other model the session or its sub-agents used; two ids
+ * that shorten to the same name count once. The title names every full id,
+ * sub-agent-only ones after a `sub-agents:` marker. No model at all is the em
+ * dash, the one spelling for an absent value.
+ */
+export function modelCell(
+  models: readonly string[],
+  sub_models: readonly string[],
+): { text: string; title: string | undefined } {
+  const own = [...new Set(models)].filter((id) => id !== SYNTHETIC_MODEL);
+  const subOnly = [...new Set(sub_models)].filter(
+    (id) => id !== SYNTHETIC_MODEL && !own.includes(id),
+  );
+  const names = [...new Set([...own, ...subOnly].map(shortModelName))];
+  if (names.length === 0) return { text: NO_VALUE, title: undefined };
+
+  const text = names.length === 1 ? names[0]! : `${names[0]!} +${names.length - 1}`;
+  const title = [
+    ...(own.length > 0 ? [own.join(', ')] : []),
+    ...(subOnly.length > 0 ? [`sub-agents: ${subOnly.join(', ')}`] : []),
+  ].join(' · ');
+  return { text, title };
 }
 
 /** A token count with thousands separators. `0` is a real answer, not a gap. */

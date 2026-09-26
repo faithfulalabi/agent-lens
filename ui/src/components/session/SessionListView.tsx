@@ -9,6 +9,7 @@ import {
   formatDuration,
   formatStartedAt,
   formatTokens,
+  modelCell,
 } from '@/lib/format';
 import type { SessionListRow } from '@/lib/api';
 import {
@@ -101,6 +102,10 @@ export function SessionListView({
               tokens are separate from the main session totals. A dash means no measured cost or an
               unavailable estimate; unavailable estimates include an explanation.
             </p>
+            <p>
+              Model shows the main session’s most-used model first; +N counts other models,
+              including sub-agents’. Hover for full ids.
+            </p>
           </div>
         </details>
         <span data-slot="session-list-count" className="shrink-0 text-2xs text-muted">
@@ -133,6 +138,7 @@ export function SessionListView({
             </button>
           ))}
           <span>Status</span>
+          <span>Model</span>
           <span className="text-right">Turns</span>
           <span className="text-right">Subagents</span>
           <span className="text-right">Errors</span>
@@ -167,6 +173,7 @@ function SessionRow({
   const active = formatStartedAt(row.last_activity_at, now);
   const pending = row.rollup_state === 'own';
   const unknownCost = costUnknownLabel(row.est_cost, row.model);
+  const model = modelCell(row.models, row.sub_models);
   const hasErrors = row.error_count > 0;
 
   return (
@@ -203,6 +210,14 @@ function SessionRow({
       <span data-column="status" className={cn('flex items-center gap-1', status.badge)}>
         <span aria-hidden="true" className={cn('size-1.5 rounded-md', status.dot)} />
         {status.label}
+      </span>
+      <span
+        data-column="model"
+        data-slot="session-model"
+        title={model.title}
+        className="min-w-0 truncate font-mono text-2xs text-muted"
+      >
+        {model.text}
       </span>
 
       <span

@@ -26,6 +26,7 @@
 // through the freshness gate. Task 0.8b set the precedent (8 -> 9).
 
 import { createHash } from 'node:crypto';
+import { BUILD_SUFFIX, CONTEXT_TAG, VENDOR_PREFIX } from './model-id.js';
 
 /**
  * Canonical JSON: recursively key-sorted, whitespace-free. `PRICING_VERSION`
@@ -126,15 +127,6 @@ export const PRICING_VERSION = `${PRICING_TABLE_DATE}+${createHash('sha256')
   .update(canonicalJson(PRICING_TABLE), 'utf8')
   .digest('hex')
   .slice(0, 8)}`;
-
-/** A trailing Claude build stamp: `-20250929`. Anchored, so `-4-5` is safe. */
-const BUILD_SUFFIX = /-\d{8}$/;
-
-/** A context-window variant tag the harness appends: `claude-opus-5-5[1m]`. Same rate. */
-const CONTEXT_TAG = /\[[^\]]*\]$/;
-
-/** Bedrock/Vertex-style vendor prefixes: `us.anthropic.`, `anthropic.`. */
-const VENDOR_PREFIX = /^(?:[a-z]{2,4}\.)?anthropic\./;
 
 /**
  * Fold a harness-reported model id onto a family key present in

@@ -29,6 +29,7 @@ import type { ParsedLine } from '../transcript/line.js';
 import { resolvePersistedOutput, type ResolveEnv, type SpillState } from '../transcript/spill.js';
 import { PROJECTOR_VERSION } from '../transcript/version.js';
 import { estimateCost } from '../shared/pricing.js';
+import { SYNTHETIC_MODEL } from '../shared/model-id.js';
 import type { ArchiveFold } from './freshness.js';
 
 /**
@@ -558,6 +559,9 @@ const ROLLUP_SQL = `UPDATE sessions SET
  * all any more: it is informational, and the cost no longer depends on which
  * single model the envelope fold happens to pick.
  *
+ * `models` is recomputed alongside: every distinct `events.model` with its call
+ * count, most calls first — see `OWN_MODELS_SQL`.
+ *
  * The `sub_*` columns and `rollup_state` stay at their DDL defaults here.
  * `recomputeSubagentRollups` below owns them, and the corpus sweep's second wave
  * calls it only after every child of `id` is projected — a parent's total means
@@ -567,7 +571,25 @@ export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
   // HUMAN turns only. The plain count is ~19x high: 101 human prompts against
   // 1,934 user lines in the measured session.
   db.prepare(ROLLUP_SQL).run({ id });
+  const rows = db.prepare(OWN_MODELS_SQL).all(id, SYNTHETIC_MODEL) as Array<{
+    model: string;
+    calls: number;
+  }>;
+  const models: ModelCalls[] = rows.map((row) => [row.model, row.calls]);
+  db.prepare('UPDATE sessions SET models = ? WHERE id = ?').run(JSON.stringify(models), id);
 }
+
+/** One `sessions.models` / `sub_models` entry: a model id and its API-call count. */
+type ModelCalls = [model: string, calls: number];
+
+// `events.model` is stamped once per request group (the pipeline's `modelAt` map),
+// so `count(*)` is API calls per model. Ties go to the model seen first, the
+// same rule `foldSessionEnvelope` uses for `sessions.model`, which keeps
+// `models[0]` and `model` in agreement. The JSON is built in TS, not with
+// JSON1, so no ordered-aggregate SQLite feature is assumed.
+const OWN_MODELS_SQL = `SELECT model, count(*) AS calls FROM events
+  WHERE session_id = ? AND model IS NOT NULL AND model <> ?
+  GROUP BY model ORDER BY calls DESC, min(seq) ASC`;
 
 // TRANSITIVE: every aggregate sums each child's OWN column plus that child's own
 // `sub_*`, so a depth-2 grandchild reaches the top-level total. A direct-children
@@ -614,6 +636,23 @@ const SUBAGENT_ROLLUP_SQL = `UPDATE sessions SET
  */
 export function recomputeSubagentRollups(db: DatabaseSync, id: string): void {
   db.prepare(SUBAGENT_ROLLUP_SQL).run({ id });
+
+  // `sub_models`, transitive the same way: each child's own `models` plus its
+  // own `sub_models`, summed per id. No cross-file `seq` exists, so ties break
+  // on the id.
+  const children = db
+    .prepare('SELECT models, sub_models FROM sessions WHERE parent_session_id = ?')
+    .all(id) as Array<{ models: string; sub_models: string }>;
+  const calls = new Map<string, number>();
+  for (const child of children) {
+    for (const column of [child.models, child.sub_models]) {
+      for (const [model, n] of JSON.parse(column) as ModelCalls[]) {
+        calls.set(model, (calls.get(model) ?? 0) + n);
+      }
+    }
+  }
+  const subModels = [...calls].sort(([a, an], [b, bn]) => bn - an || (a < b ? -1 : a > b ? 1 : 0));
+  db.prepare('UPDATE sessions SET sub_models = ? WHERE id = ?').run(JSON.stringify(subModels), id);
 }
 
 /**

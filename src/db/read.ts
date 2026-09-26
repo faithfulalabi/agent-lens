@@ -57,6 +57,8 @@ export interface SessionRow {
   project_path: string;
   git_branch: string | null;
   model: string | null;
+  /** Every model this file used, most API calls first. `<synthetic>` never appears. */
+  models: string[];
   harness_version: string | null;
   started_at: string;
   last_activity_at: string;
@@ -76,6 +78,8 @@ export interface SessionRow {
   sub_tokens_cache_read: number;
   sub_tokens_cache_write: number;
   sub_est_cost: number | null;
+  /** Every model the sidecar tree used, transitive, most calls first. `[]` until wave 2. */
+  sub_models: string[];
   rollup_state: 'own' | 'complete';
   has_drift: boolean;
 }
@@ -281,11 +285,11 @@ const SORT_EXPRESSIONS: Readonly<Record<SessionSort, string>> = {
  * The list columns, explicit. Never `SELECT *`: `schema.ts:8-10` records that a
  * silently dropped column is the exact failure this schema has already had.
  */
-const SESSION_LIST_COLUMNS = `id, title, preview, project_path, git_branch, model, harness_version,
+const SESSION_LIST_COLUMNS = `id, title, preview, project_path, git_branch, model, models, harness_version,
      started_at, last_activity_at, turn_count, tool_call_count, error_count,
      tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, est_cost,
      agent_count, sub_tool_call_count, sub_error_count, sub_tokens_in, sub_tokens_out,
-     sub_tokens_cache_read, sub_tokens_cache_write, sub_est_cost, rollup_state, drift_json`;
+     sub_tokens_cache_read, sub_tokens_cache_write, sub_est_cost, sub_models, rollup_state, drift_json`;
 
 /** Keeps sidecars — 65% of the corpus by bytes — out of every list scan. */
 const TOP_LEVEL_ONLY = 'parent_session_id IS NULL';
@@ -304,11 +308,25 @@ function likeContains(q: string): string {
   return `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 }
 
-type SessionListDbRow = Omit<SessionRow, 'has_drift'> & { drift_json: string };
+type SessionListDbRow = Omit<SessionRow, 'has_drift' | 'models' | 'sub_models'> & {
+  drift_json: string;
+  models: string;
+  sub_models: string;
+};
+
+/** The stored `[[id, calls]]` pairs, ids only: the counts stay in the cache. */
+function modelIdsOf(text: string): string[] {
+  return (JSON.parse(text) as Array<[string, number]>).map(([id]) => id);
+}
 
 function toSessionRow(row: SessionListDbRow): SessionRow {
-  const { drift_json, ...rest } = row;
-  return { ...rest, has_drift: drift_json !== NO_DRIFT };
+  const { drift_json, models, sub_models, ...rest } = row;
+  return {
+    ...rest,
+    models: modelIdsOf(models),
+    sub_models: modelIdsOf(sub_models),
+    has_drift: drift_json !== NO_DRIFT,
+  };
 }
 
 /**

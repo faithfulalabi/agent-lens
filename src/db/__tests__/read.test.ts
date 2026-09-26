@@ -108,6 +108,25 @@ describe('AC1 — the eight query families return the spec shapes', () => {
     expect(keysOf(page.items[0]!)).toEqual(SESSION_ROW_KEYS);
   });
 
+  it('1b. models and sub_models reach the wire as id arrays, never [id, calls] pairs (Task 0.17)', () => {
+    const parent = seedSessionRow(db, { id: 's1' });
+    db.prepare('UPDATE sessions SET models = ?, sub_models = ? WHERE id = ?').run(
+      '[["claude-opus-5-5",160],["claude-fable-5-1",67]]',
+      '[["claude-haiku-4-5",9]]',
+      parent,
+    );
+    seedSessionRow(db, { id: 's2' });
+
+    const byId = new Map(readSessionList(db, PAGE).items.map((row) => [row.id, row]));
+    expect(byId.get('s1')!.models).toEqual(['claude-opus-5-5', 'claude-fable-5-1']);
+    expect(byId.get('s1')!.sub_models).toEqual(['claude-haiku-4-5']);
+    // The DDL default, not a missing key: an unrolled session is an empty list.
+    expect(byId.get('s2')!.models).toEqual([]);
+    expect(byId.get('s2')!.sub_models).toEqual([]);
+    // The detail header shares the list's columns and its parser.
+    expect(readSessionHeader(db, parent)!.models).toEqual(['claude-opus-5-5', 'claude-fable-5-1']);
+  });
+
   it('2. readProjects returns { path, session_count, last_activity_at } (:288-290)', () => {
     seedSessionRow(db, { id: 's1', project_path: '/a' });
     seedSessionRow(db, { id: 's2', project_path: '/a' });

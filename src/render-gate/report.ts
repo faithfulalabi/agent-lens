@@ -237,6 +237,8 @@ export interface Observations {
   /** Verbatim, e.g. `"1,204+ sessions"` — the parse is checked against it. */
   sessionCountRaw: string;
   sessionCount: number;
+  /** The text of every `data-slot="session-model"` cell on the list, in row order. */
+  modelCells: string[];
   /** `data-slot="back-to-sessions"` anchors on the open session screen. */
   backLinks: number;
   spanRowCount: number;
@@ -437,6 +439,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       actual: `${result.sessionCount} (from ${quote(result.sessionCountRaw)})`,
       expected: '> 0',
     },
+    modelColumnAssertion(result.modelCells, result.sessionCount),
     {
       // AC-R1's second blocking reading. An open session with no way back to
       // the list is the defect task 5.1 was written to close.
@@ -533,6 +536,23 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     },
     ...result.shots.map(evaluateShot),
   ];
+}
+
+/**
+ * Task 0.17's AC-R1: every list row has a non-empty Model cell, and at least one
+ * names a model. The em dash alone is not enough — a wiped, unwarmed cache
+ * renders a dash in every row, which is exactly the failure this catches.
+ */
+function modelColumnAssertion(cells: readonly string[], sessionCount: number): AssertionRecord {
+  return {
+    name: 'session-model-column',
+    ok:
+      cells.length === sessionCount &&
+      cells.every((text) => text.length > 0) &&
+      cells.some((text) => text !== '—'),
+    actual: `${cells.length} cell(s): ${cells.slice(0, 5).map(quote).join(', ')}`,
+    expected: 'one non-empty Model cell per row, at least one populated',
+  };
 }
 
 /**

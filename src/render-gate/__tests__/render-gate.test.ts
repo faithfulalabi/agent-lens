@@ -84,6 +84,7 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
     sessionId: 'sess-1',
     sessionCountRaw: '8 sessions',
     sessionCount: 8,
+    modelCells: ['Opus 5.5 +1', 'Fable 5.1', '—', 'Opus 5', 'Sonnet 5', 'Haiku 4.5', '—', 'Opus 5'],
     backLinks: 1,
     spanRowCount: 4,
     turnGroupCount: 2,
@@ -837,6 +838,33 @@ describe('buildReport (AC5)', () => {
   });
 });
 
+describe('session-model-column (Task 0.17 AC-R1)', () => {
+  const modelColumn = (modelCells: string[], sessionCount = modelCells.length) =>
+    reportFor({
+      modelCells,
+      sessionCount,
+      sessionCountRaw: `${sessionCount} sessions`,
+    }).assertions.find((a) => a.name === 'session-model-column');
+
+  it('is green when every row has a cell and one names a model', () => {
+    const record = modelColumn(['Opus 5.5 +1', 'Fable 5.1']);
+    expect(record?.ok).toBe(true);
+    expect(record?.actual).toBe('2 cell(s): "Opus 5.5 +1", "Fable 5.1"');
+  });
+
+  it.each([
+    ['an empty cell', ['Opus 5', '']],
+    ['an all-dash list (a wiped, unwarmed cache)', ['—', '—']],
+    ['no cells at all', []],
+  ])('is red on %s', (_label, cells) => {
+    expect(modelColumn(cells, Math.max(cells.length, 1))?.ok).toBe(false);
+  });
+
+  it('is red when a row has no cell', () => {
+    expect(modelColumn(['Opus 5'], 2)?.ok).toBe(false);
+  });
+});
+
 describe('evaluateDetail (AC3) — the three-state transition', () => {
   const distinct = { t0: 'placeholder', t1: 'detail a', t2: 'detail b' };
 
@@ -993,15 +1021,18 @@ describe('the gate source itself (AC6)', () => {
      *   `search-scope`      — its text is READ and asserted to name the session
      *     scope.
      *
-     * ★ AND IT IS 13, NOT 14. `search-warm` gets no entry: `countUnprojected`
+     * ★ RAISED 13 -> 14 BY TASK 0.17: `session-model` is READ — every list
+     * row's Model cell text, asserted by `session-model-column`.
+     *
+     * ★ AND IT IS 14, NOT 15. `search-warm` gets no entry: `countUnprojected`
      * is 0 over the dev corpus (measured, 293 of 293 `ready`) and the gate
      * snapshot copies the same database, so the control cannot be driven at all
      * — which is precisely the vacuity above. The probe reads it as a raw
      * attribute selector and asserts its ABSENCE. Task 7.4's probe adds the
      * entry when it can drive the raise side.
      */
-    expect(values).toHaveLength(13);
-    expect(new Set(values).size).toBe(13);
+    expect(values).toHaveLength(14);
+    expect(new Set(values).size).toBe(14);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
