@@ -539,12 +539,6 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
 }
 
 /**
- * The payload cross-check, asserted ONLY when the window held something to
- * check. An absent row is a fact about the corpus, so it is reported as a
- * warning instead — the same shape task 5.1 gave `range-straddle: none in
- * corpus`, and for the same reason: a check that cannot fail is not a pass.
- */
-/**
  * Task 0.17's AC-R1: every list row has a non-empty Model cell, and at least one
  * names a model. The em dash alone is not enough — a wiped, unwarmed cache
  * renders a dash in every row, which is exactly the failure this catches.
@@ -561,6 +555,12 @@ function modelColumnAssertion(cells: readonly string[], sessionCount: number): A
   };
 }
 
+/**
+ * The payload cross-check, asserted ONLY when the window held something to
+ * check. An absent row is a fact about the corpus, so it is reported as a
+ * warning instead — the same shape task 5.1 gave `range-straddle: none in
+ * corpus`, and for the same reason: a check that cannot fail is not a pass.
+ */
 function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
   if (probe === null) return [];
   return [

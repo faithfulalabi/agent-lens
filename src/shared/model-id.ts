@@ -5,6 +5,13 @@
 // beside it imports `node:crypto`. Keep it that way — a Node import here would
 // drag a builtin into the UI.
 
+/**
+ * The harness's zero-token marker (auth expiry and the like). Never a model a
+ * session "used". Mirrors the unexported constant in `src/transcript/line.ts`,
+ * which cannot import from here without editing the hashed projector tree.
+ */
+export const SYNTHETIC_MODEL = '<synthetic>';
+
 /** A trailing Claude build stamp: `-20250929`. Anchored, so `-4-5` is safe. */
 export const BUILD_SUFFIX = /-\d{8}$/;
 

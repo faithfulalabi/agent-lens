@@ -19,7 +19,7 @@
  *     makes it assertable at all.
  */
 
-import { stripModelId } from '@shared/model-id.ts';
+import { SYNTHETIC_MODEL, stripModelId } from '@shared/model-id.ts';
 
 /** What the design system renders in place of an unknown or absent number. */
 const NO_VALUE = '—';
@@ -137,9 +137,6 @@ export function costUnknownLabel(
     ? 'cost unknown — no model recorded'
     : `cost unknown — no rate for ${model}`;
 }
-
-/** The harness's zero-token marker. Never a model a session "used". */
-const SYNTHETIC_MODEL = '<synthetic>';
 
 /** `claude-opus-5-5` → family `opus`, version `5-5`. */
 const FAMILY_FIRST = /^claude-([a-z]+)-(\d+(?:-\d+)*)$/;

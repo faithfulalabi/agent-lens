@@ -29,6 +29,7 @@ import type { ParsedLine } from '../transcript/line.js';
 import { resolvePersistedOutput, type ResolveEnv, type SpillState } from '../transcript/spill.js';
 import { PROJECTOR_VERSION } from '../transcript/version.js';
 import { estimateCost } from '../shared/pricing.js';
+import { SYNTHETIC_MODEL } from '../shared/model-id.js';
 import type { ArchiveFold } from './freshness.js';
 
 /**
@@ -580,11 +581,6 @@ export function recomputeSessionRollups(db: DatabaseSync, id: string): void {
 
 /** One `sessions.models` / `sub_models` entry: a model id and its API-call count. */
 type ModelCalls = [model: string, calls: number];
-
-// Mirrors the unexported `SYNTHETIC_MODEL` in `src/transcript/line.ts`: the
-// zero-token harness marker is never a model the session "used". Kept local so
-// this module does not edit the hashed projector tree.
-const SYNTHETIC_MODEL = '<synthetic>';
 
 // `events.model` is stamped once per request group (the pipeline's `modelAt` map),
 // so `count(*)` is API calls per model. Ties go to the model seen first, the
