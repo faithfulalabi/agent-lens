@@ -42,6 +42,7 @@ export function makeSessionRow(overrides: Partial<SessionListRow> = {}): Session
     project_path: '/tmp/agent-lens/project-0',
     git_branch: 'main',
     model: 'claude-sonnet-5',
+    models: ['claude-sonnet-5'],
     harness_version: '2.0.0',
     started_at: '2026-07-29T09:00:00.000Z',
     last_activity_at: '2026-07-29T09:30:00.000Z',
@@ -61,6 +62,7 @@ export function makeSessionRow(overrides: Partial<SessionListRow> = {}): Session
     sub_tokens_cache_read: 0,
     sub_tokens_cache_write: 0,
     sub_est_cost: 0,
+    sub_models: [],
     // The settled state. A row testing the skeleton opts into `own` explicitly,
     // so no unrelated fixture renders a loading placeholder by accident.
     rollup_state: 'complete',
