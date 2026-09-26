@@ -1,0 +1,22 @@
+# Task 8.5. main is squash-only, so a PR's title becomes the commit subject
+# release-please parses for the next version and the changelog. A separate
+# workflow so that retitling a PR re-runs only this check, not the whole CI.
+# The job name `pr-title` is a required-check context in the main ruleset.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }} # via env, never interpolated into the script
+        run: |
+          printf '%s' "$TITLE" | grep -Eq '^(feat|fix|perf|refactor|docs|test|chore|ci|build|revert|deps)(\([a-z0-9._/-]+\))?!?: \S' \
+            || { echo "::error::PR title must be a Conventional Commit subject — squash-merge makes it the commit release-please reads."; exit 1; }

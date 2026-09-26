@@ -11,6 +11,18 @@
 # Playwright/Chrome drive already runs inside `smoke:pack`. Cost of that
 # coverage: zero browser download — playwright.config.ts uses
 # `channel: 'chrome'`, and ubuntu-latest ships google-chrome-stable.
+#
+# It is also the release pipeline (Task 8.5; CONTRIBUTING.md "Releasing").
+# On a push to main, after lint/test/smoke pass on that exact commit:
+# `release` runs release-please (release PR upkeep, and the tag + GitHub
+# release when a release PR merges), `publish-check` decides from facts
+# (tag at this commit? version absent from npm?) and `publish` pushes the
+# tarball `smoke` built and drove to npm over OIDC with provenance.
+#
+# ★ THE FILENAME IS LOAD-BEARING. npm's trusted-publisher entry for
+# @faithfulalabi/agent-lens names `ci.yml` (and environment `npm-publish`).
+# Renaming this file, or moving `publish` into another workflow, breaks
+# publishing with an OIDC auth error until the npm-side entry is updated.
 name: CI
 
 on:
@@ -18,9 +30,15 @@ on:
   push:
     branches: [main]
 
-# Cancels a superseded run on the same ref; never retries a failed one.
+# Least privilege by default; jobs widen explicitly.
+permissions:
+  contents: read
+
+# Cancels a superseded PR run on the same ref; never retries a failed one.
+# Every main push gets its own group (its SHA), so a newer push can never
+# cancel a release or publish in flight.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -97,4 +115,154 @@ jobs:
       # `npm run build` here; the explicit build step lives in the test job,
       # where dist/ is a hard prerequisite. No spec secret either — the smoke
       # drives a synthetic corpus and never reads internal_docs.
+      # SMOKE_KEEP_TGZ keeps the tarball the smoke just installed and drove:
+      # on main it is the exact artifact `publish` ships.
       - run: npm run smoke:pack
+        env:
+          SMOKE_KEEP_TGZ: ${{ runner.temp }}/tgz
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-tarball
+          path: ${{ runner.temp }}/tgz/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true # a re-run attempt re-uploads under the same name
+
+  release:
+    name: release
+    # Skips (rather than fails) until the founder has created the release App
+    # and stored RELEASE_APP_CLIENT_ID — see CONTRIBUTING.md "Releasing".
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RELEASE_APP_CLIENT_ID != ''
+    needs: [lint, test, smoke]
+    runs-on: ubuntu-latest
+    # Race fix: never two release-please runs at once.
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    # Only the open release PR is exported (for automerge). Whether to publish
+    # is decided by publish-check from facts, never from release-please outputs.
+    outputs:
+      pr: ${{ steps.rp.outputs.pr }}
+    steps:
+      # An App token, not GITHUB_TOKEN: PRs and pushes made with GITHUB_TOKEN
+      # trigger no workflows, so the release PR would never get its checks.
+      - id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + history for the scope diff
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # The file-level shipped-path gate. release-please's exclude-paths only
+      # matches directory prefixes, so it cannot drop *.test.ts or root files.
+      - id: scope
+        run: node scripts/release-scope.ts --base "$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
+      - id: rp
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: ${{ steps.scope.outputs.shipped != 'true' }}
+
+  automerge:
+    name: automerge
+    # Off by default: the founder merging the release PR is the release act.
+    if: vars.RELEASE_AUTOMERGE == 'true' && needs.release.outputs.pr != ''
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - name: Refuse unless main has active required checks
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type=="required_status_checks")] | length' | grep -qv '^0$' \
+            || { echo "::error::RELEASE_AUTOMERGE is on but main has no active required_status_checks rule — apply the ruleset first."; exit 1; }
+      # App token: its merge fires the push run that tags and publishes.
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR_JSON: ${{ needs.release.outputs.pr }}
+        run: gh pr merge "$(jq -r .number <<<"$PR_JSON")" --auto --squash --repo "$GITHUB_REPOSITORY"
+
+  publish-check:
+    name: publish-check
+    # Every successful release job, not only release-created ones: whichever
+    # run owns the tagged commit publishes. Facts decide, not release-please's outputs.
+    if: always() && needs.release.result == 'success'
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # alarm: is the tagged commit's run still in flight?
+    outputs:
+      publish: ${{ steps.facts.outputs.publish }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-tarball
+          path: pkg
+      - id: facts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          R="$GITHUB_REPOSITORY"; PKG=@faithfulalabi/agent-lens
+          on_npm() { # 0 = published, 1 = E404, exit on any other error
+            if OUT=$(npm view "$PKG@$1" version 2>&1); then return 0; fi
+            grep -q E404 <<<"$OUT" && return 1; echo "$OUT"; exit 1; }
+          TGZ=$(ls pkg/*.tgz)
+          VER=$(tar -xOzf "$TGZ" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')
+          TAG_SHA=$(gh api "repos/$R/commits/v$VER" --jq .sha 2>/dev/null || true)
+          if [ "$TAG_SHA" = "$GITHUB_SHA" ]; then
+            if on_npm "$VER"; then echo "$PKG@$VER already on npm — no-op."; echo publish=false >>"$GITHUB_OUTPUT"
+            else echo "v$VER is this commit and npm lacks it — publishing."; echo publish=true >>"$GITHUB_OUTPUT"; fi
+            exit 0
+          fi
+          echo "Not a release commit."; echo publish=false >>"$GITHUB_OUTPUT"
+          # Unpublished-release alarm: the newest tag must be on npm unless its own run is still going.
+          LATEST=$(git ls-remote --tags --refs "https://github.com/$R" 'v*' | sed 's#.*refs/tags/v##' | sort -V | tail -1)
+          if ! on_npm "$LATEST"; then
+            LSHA=$(gh api "repos/$R/commits/v$LATEST" --jq .sha)
+            LIVE=$(gh api "repos/$R/actions/runs?head_sha=$LSHA&event=push" --jq '[.workflow_runs[] | select(.status=="queued" or .status=="in_progress")] | length')
+            if [ "$LIVE" = "0" ]; then echo "::error::v$LATEST released but unpublished — re-run the run for $LSHA"; exit 1; fi
+            echo "::notice::v$LATEST not on npm yet; its run for $LSHA is still in flight."
+          fi
+
+  publish:
+    name: publish
+    if: needs.publish-check.outputs.publish == 'true'
+    needs: [publish-check]
+    runs-on: ubuntu-latest
+    # Only real release commits reach this: one deployment record per release.
+    environment: npm-publish
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # OIDC for npm trusted publishing + provenance
+    steps:
+      # No registry configured here: setup-node would write a placeholder auth
+      # token into .npmrc that shadows OIDC.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-tarball
+          path: pkg
+      - name: Assert npm supports trusted publishing
+        run: node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)"
+      # A tarball publish never runs prepublishOnly: no rebuild, the tested bytes ship.
+      - run: npm publish "$(ls pkg/*.tgz)" --provenance --access public

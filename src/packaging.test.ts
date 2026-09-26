@@ -11,6 +11,12 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  NOT_SHIPPED_DIRS,
+  SHIPPED_DIRS,
+  SHIPPED_FILES,
+  isShipped,
+} from '../scripts/release-scope.js';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 
@@ -220,8 +226,9 @@ describe('the publish metadata names a real release (task 8.4)', () => {
 
   it('carries a release version, not the 0.0.0 placeholder', () => {
     // 0.0.0 is what the manifest was scaffolded with; publishing it would
-    // claim the name with a version nobody meant. `npm version --no-git-tag-version`
-    // is the only sanctioned way to move this, and the tag stays the founder's.
+    // claim the name with a version nobody meant. Since task 8.5 the version
+    // moves only through release-please's release PR, and the tag is created by
+    // CI when the founder merges that PR — never by hand.
     expect(MANIFEST.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(MANIFEST.version).not.toBe('0.0.0');
   });
@@ -251,5 +258,330 @@ describe('the smoke abstains from port 4470 (AC4)', () => {
       ...sourcesUnder('smoke').map((s) => s.text),
     ];
     for (const text of sources) expect(text).not.toContain('4470');
+  });
+});
+
+// Task 8.5 — the release pipeline. `scripts/release-scope.ts` is the one
+// definition of "shipped"; these tests hold it against the compiler, the
+// manifest and the ui build, and pin the workflow shape the release relies on.
+
+describe('the release scope predicate (task 8.5, AC1)', () => {
+  it.each([
+    'src/cli/index.ts',
+    'src/shared/x.ts',
+    'ui/src/App.tsx',
+    'ui/index.html',
+    'ui/package-lock.json',
+    'bin/agent-lens.js',
+    'README.md',
+    'package.json',
+    'tsconfig.build.json',
+  ])('ships %s', (path) => {
+    expect(isShipped(path)).toBe(true);
+  });
+
+  it.each([
+    'src/search/__tests__/a.test.ts',
+    'src/packaging.test.ts',
+    'ui/src/lib/__tests__/x.test.tsx',
+    'src/dev/server.ts',
+    'src/render-gate/index.ts',
+    'src/db/__tests__/__snapshots__/s.json',
+    '.github/workflows/ci.yml',
+    'scripts/pack-smoke.mjs',
+    'fixtures/set/manifest.json',
+    'smoke/cold-run.spec.ts',
+    'CONTRIBUTING.md',
+    'SECURITY.md',
+    'ui/src/assets/fonts/README.md',
+    'vitest.config.ts',
+    'ui/vitest.config.ts',
+    'eslint.config.js',
+    'package-lock.json',
+    'internal_docs/x.md',
+  ])('does not ship %s', (path) => {
+    expect(isShipped(path)).toBe(false);
+  });
+});
+
+/** JSONC with whole-line `//` comments, as tsconfig.build.json is written. */
+function readJsonc<T>(...rel: string[]): T {
+  const text = read(...rel)
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .join('\n');
+  return JSON.parse(text) as T;
+}
+
+describe('"what ships" and "what triggers a release" cannot drift (task 8.5, AC2)', () => {
+  it('agrees with the compiler on exactly which src files reach dist', () => {
+    const tsc = spawnSync(
+      process.execPath,
+      [
+        join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+        '-p',
+        join(REPO_ROOT, 'tsconfig.build.json'),
+        '--listFilesOnly',
+      ],
+      { encoding: 'utf8', cwd: REPO_ROOT },
+    );
+    expect(tsc.status).toBe(0);
+    const compiled = tsc.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((file) =>
+        file
+          .split('\\')
+          .join('/')
+          .replace(`${REPO_ROOT.split('\\').join('/')}/`, ''),
+      )
+      .filter((file) => !file.includes('node_modules/'))
+      .sort();
+
+    const tracked = spawnSync('git', ['ls-files', 'src'], { encoding: 'utf8', cwd: REPO_ROOT });
+    expect(tracked.status).toBe(0);
+    const predicted = tracked.stdout
+      .split('\n')
+      .filter((file) => file.endsWith('.ts') && isShipped(file))
+      .sort();
+
+    expect(predicted.length).toBeGreaterThan(0);
+    expect(compiled).toEqual(predicted);
+  }, 30_000);
+
+  it('maps every manifest `files` root onto shipped inputs, and nothing else', () => {
+    const tsconfigNode = readJsonc<{ include: string[] }>('tsconfig.node.json');
+    const inputsOf: Record<string, string[]> = {
+      bin: ['bin/'],
+      dist: tsconfigNode.include.map((dir) => `${dir}/`),
+      'ui/dist': ['ui/src/', 'ui/index.html', 'ui/vite.config.ts'],
+    };
+    expect(Object.keys(inputsOf).sort()).toEqual([...MANIFEST.files].sort());
+
+    const inputs = Object.values(inputsOf).flat();
+    for (const input of inputs) {
+      const probe = input.endsWith('/') ? `${input}probe.ts` : input;
+      expect(`${probe}: ${isShipped(probe)}`).toBe(`${probe}: true`);
+    }
+    // The reverse direction: no shipped dir the manifest does not account for.
+    for (const dir of SHIPPED_DIRS) expect(inputs).toContain(dir);
+    for (const file of SHIPPED_FILES.filter((f) => f.startsWith('ui/src/'))) {
+      expect(inputs).toContain(file);
+    }
+  });
+
+  it('covers every vite alias target, so a bundled import cannot sit outside the scope', () => {
+    const targets = [...read('ui', 'vite.config.ts').matchAll(/new URL\('([^']+)'/g)].map(
+      (m) => m[1]!,
+    );
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      const repoRel = new URL(target, 'file:///repo/ui/').pathname.replace('/repo/', '');
+      const probe = `${repoRel}/probe.ts`;
+      expect(`${probe}: ${isShipped(probe)}`).toBe(`${probe}: true`);
+    }
+  });
+
+  it("excludes exactly the build's non-glob src excludes", () => {
+    const build = readJsonc<{ exclude: string[] }>('tsconfig.build.json');
+    const srcExcludes = build.exclude
+      .filter((entry) => entry.startsWith('src/') && !entry.includes('*'))
+      .map((entry) => `${entry}/`)
+      .sort();
+    expect([...NOT_SHIPPED_DIRS].sort()).toEqual(srcExcludes);
+  });
+
+  it('runs under plain node with no tsx and prints its decision', () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(REPO_ROOT, 'scripts', 'release-scope.ts'), '--files', 'src/a.ts', 'src/a.test.ts'],
+      { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' } },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('SHIPPED  src/a.ts');
+    expect(result.stdout).toContain('skip  src/a.test.ts');
+    expect(result.stdout).toContain('decision: release-eligible');
+  });
+
+  it('exits 1, never 2, on a usage error', () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(REPO_ROOT, 'scripts', 'release-scope.ts'), '--nope'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(1);
+  });
+});
+
+const PR_TITLE_WORKFLOW = read('.github', 'workflows', 'pr-title.yml');
+const PR_TITLE_REGEX = new RegExp(/grep -Eq '([^']+)'/.exec(PR_TITLE_WORKFLOW)![1]!);
+
+describe('the PR title is the squash commit release-please reads (task 8.5, AC3)', () => {
+  it('checks the title in a job named pr-title, on every title edit', () => {
+    expect(PR_TITLE_WORKFLOW).toContain('  pr-title:\n    name: pr-title');
+    expect(PR_TITLE_WORKFLOW).toMatch(/types: \[[^\]]*\bedited\b[^\]]*\]/);
+    expect(PR_TITLE_WORKFLOW).toContain('TITLE: ${{ github.event.pull_request.title }}');
+    // The title reaches the script through env only — never interpolated into `run:`.
+    const run = PR_TITLE_WORKFLOW.slice(PR_TITLE_WORKFLOW.indexOf('run: |'));
+    expect(run).not.toContain('${{');
+  });
+
+  it.each(['fix(search): x', 'feat!: y', 'chore(release): 0.2.0', 'ci(release): automate'])(
+    'accepts %s',
+    (title) => {
+      expect(PR_TITLE_REGEX.test(title)).toBe(true);
+    },
+  );
+
+  it.each(['Merge pull request #1', 'Update README', 'fix:', 'Fix: capitalised'])(
+    'rejects %s',
+    (title) => {
+      expect(PR_TITLE_REGEX.test(title)).toBe(false);
+    },
+  );
+});
+
+describe('the version comes from release-please, not by hand (task 8.5, AC3)', () => {
+  const releaseManifest = JSON.parse(read('.release-please-manifest.json')) as Record<
+    string,
+    string
+  >;
+
+  it('keeps package.json, the lockfile and the release manifest on one version', () => {
+    const lock = JSON.parse(read('package-lock.json')) as {
+      version: string;
+      packages: Record<string, { version?: string }>;
+    };
+    expect(MANIFEST.version).toBe(releaseManifest['.']);
+    expect(lock.version).toBe(MANIFEST.version);
+    expect(lock.packages['']?.version).toBe(MANIFEST.version);
+  });
+
+  it('applies the 0.x bump policy to the root package', () => {
+    const config = JSON.parse(read('release-please-config.json')) as Record<string, unknown> & {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    expect(config['release-type']).toBe('node');
+    expect(config['include-component-in-tag']).toBe(false);
+    expect(config['bump-minor-pre-major']).toBe(true);
+    expect(config['bump-patch-for-minor-pre-major']).toBe(false);
+    expect(Object.keys(config.packages)).toEqual(['.']);
+    expect(config.packages['.']!['package-name']).toBe(MANIFEST.name);
+  });
+});
+
+const CI_WORKFLOW = read('.github', 'workflows', 'ci.yml');
+
+/** The text of one top-level job in ci.yml, up to the next job key. */
+function job(name: string): string {
+  const start = CI_WORKFLOW.indexOf(`\n  ${name}:\n`);
+  expect(start, `job ${name}`).toBeGreaterThan(-1);
+  const rest = CI_WORKFLOW.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[a-z-]+:\n/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
+describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC4-AC8)', () => {
+  const JOBS = ['lint', 'test', 'smoke', 'release', 'automerge', 'publish-check', 'publish'];
+
+  it('keeps the required-check job names lint, test and smoke', () => {
+    for (const name of ['lint', 'test', 'smoke']) expect(job(name)).toContain(`name: ${name}\n`);
+  });
+
+  it('publishes the artifact tarball with provenance, from the one OIDC job', () => {
+    const publish = job('publish');
+    expect(publish).toContain('id-token: write');
+    expect(publish).toContain('environment: npm-publish');
+    expect(publish).toContain('npm publish "$(ls pkg/*.tgz)" --provenance --access public');
+    expect(publish).toContain("if: needs.publish-check.outputs.publish == 'true'");
+    expect(publish).toContain('check-latest: true');
+    for (const name of JOBS.filter((n) => n !== 'publish')) {
+      expect(`${name}: ${job(name).includes('id-token')}`).toBe(`${name}: false`);
+      expect(`${name}: ${job(name).includes('environment:')}`).toBe(`${name}: false`);
+    }
+  });
+
+  it('never rebuilds, reinstalls or re-checks-out on the publish runner', () => {
+    const publish = job('publish');
+    expect(publish).not.toContain('registry-url');
+    expect(publish).not.toContain('npm run build');
+    expect(publish).not.toContain('npm ci');
+    expect(publish).not.toContain('actions/checkout');
+  });
+
+  it('gates the chain on green: lint/test/smoke → release → publish-check → publish', () => {
+    expect(job('release')).toContain('needs: [lint, test, smoke]');
+    expect(job('publish-check')).toContain('needs: [release]');
+    expect(job('publish')).toContain('needs: [publish-check]');
+  });
+
+  it('keeps the tarball smoke drove and hands it to publish', () => {
+    const smoke = job('smoke');
+    expect(smoke).toContain('SMOKE_KEEP_TGZ:');
+    expect(smoke).toContain('actions/upload-artifact@v4');
+    expect(smoke).toContain('name: package-tarball');
+    expect(smoke).toContain('overwrite: true');
+    expect(read('scripts', 'pack-smoke.mjs')).toContain('process.env.SMOKE_KEEP_TGZ');
+  });
+
+  it('decides from facts, idempotently, and alarms on an unpublished release', () => {
+    const check = job('publish-check');
+    expect(check).toContain("if: always() && needs.release.result == 'success'");
+    expect(check).toContain('npm view');
+    expect(check).toContain('E404');
+    expect(check).toContain('released but unpublished');
+    expect(check).toContain('actions/runs?head_sha=');
+    expect(check).not.toContain('release_created');
+    expect(job('publish')).not.toContain('release_created');
+  });
+
+  it('never lets a newer main push cancel a release or publish in flight', () => {
+    expect(CI_WORKFLOW).toContain(
+      "group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}",
+    );
+    expect(job('release')).toMatch(/group: release-please\n\s+cancel-in-progress: false/);
+    expect(job('publish')).toMatch(/group: npm-publish\n\s+cancel-in-progress: false/);
+  });
+
+  it('auto-merges only on opt-in, by squash, and only behind active required checks', () => {
+    const automerge = job('automerge');
+    expect(automerge).toContain("vars.RELEASE_AUTOMERGE == 'true'");
+    expect(automerge).toContain('rules/branches/main');
+    expect(automerge).toContain('--squash');
+    expect(automerge).not.toContain('--merge');
+  });
+
+  it('stores no npm token anywhere under .github', () => {
+    const root = join(REPO_ROOT, '.github');
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((name) =>
+      /\.(ya?ml|json)$/.test(name),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = readFileSync(join(root, file), 'utf8');
+      expect(`${file}: ${/NPM_TOKEN|NODE_AUTH_TOKEN/.test(text)}`).toBe(`${file}: false`);
+    }
+  });
+
+  it('pins the main ruleset payload the founder applies', () => {
+    const ruleset = JSON.parse(read('.github', 'ruleset-main.json')) as {
+      enforcement: string;
+      bypass_actors: unknown[];
+      conditions: { ref_name: { include: string[] } };
+      rules: { type: string; parameters?: Record<string, unknown> }[];
+    };
+    const rule = (type: string) => ruleset.rules.find((r) => r.type === type)?.parameters;
+    expect(ruleset.enforcement).toBe('active');
+    expect(ruleset.bypass_actors).toEqual([]);
+    expect(ruleset.conditions.ref_name.include).toEqual(['~DEFAULT_BRANCH']);
+    expect(rule('pull_request')?.['allowed_merge_methods']).toEqual(['squash']);
+    const checks = rule('required_status_checks')!;
+    expect(checks['strict_required_status_checks_policy']).toBe(false);
+    expect(checks['required_status_checks']).toEqual([
+      { context: 'lint' },
+      { context: 'test' },
+      { context: 'smoke' },
+      { context: 'pr-title' },
+    ]);
   });
 });
