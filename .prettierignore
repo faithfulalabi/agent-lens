@@ -22,3 +22,9 @@ ui/dist/
 package-lock.json
 test-results/
 playwright-report/
+
+# Release automation (Task 8.5): release-please writes CHANGELOG.md and rewrites
+# its manifest on every release PR; reformatting either would fight the bot.
+CHANGELOG.md
+.release-please-manifest.json
+release-please-config.json

@@ -21,6 +21,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -33,7 +34,7 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readConfig } from '../src/server/config.js';
 import { SLUG, sessionRecords, writeSession } from '../src/corpus/__tests__/fixtures.js';
@@ -161,13 +162,21 @@ async function main() {
 
   const jail = realpathSync(mkdtempSync(join(tmpdir(), 'agent-lens-pack-')));
   try {
-    await smoke(jail);
+    const tgz = await smoke(jail);
+    // Task 8.5: CI publishes THIS tarball — the one just installed and driven —
+    // rather than repacking on another runner. A no-op unless the variable is set.
+    const keep = process.env.SMOKE_KEEP_TGZ;
+    if (keep) {
+      mkdirSync(keep, { recursive: true });
+      copyFileSync(tgz, join(keep, basename(tgz)));
+      ok(`kept ${basename(tgz)} in ${keep}`);
+    }
   } finally {
     rmSync(jail, { recursive: true, force: true });
   }
 }
 
-function smoke(jail) {
+async function smoke(jail) {
   const app = join(jail, 'app');
   const dataDir = join(jail, 'data');
 
@@ -277,7 +286,8 @@ function smoke(jail) {
   }
   ok(`3 sessions under ${join(sandbox.archiveRoot, SLUG)}`);
 
-  return boot({ jail, app, dataDir });
+  await boot({ jail, app, dataDir });
+  return tgz;
 }
 
 async function boot({ jail, app, dataDir }) {
