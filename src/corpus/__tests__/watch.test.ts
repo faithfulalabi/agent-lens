@@ -622,13 +622,17 @@ describe('recomputeSubagentRollups is a recompute, not delta arithmetic', () => 
         db
           .prepare(
             `SELECT agent_count, sub_tool_call_count, sub_error_count, sub_tokens_in,
-                    sub_tokens_out, sub_tokens_cache_read, sub_tokens_cache_write, sub_est_cost
+                    sub_tokens_out, sub_tokens_cache_read, sub_tokens_cache_write, sub_est_cost,
+                    sub_models
                FROM sessions WHERE id = ?`,
           )
           .get(id),
       );
 
     const before = shape(PARENT);
+    // Non-vacuity: the child's model reached the parent, so the bytes compared
+    // below are a real list, not the '[]' default.
+    expect(before).toContain('claude-');
     recomputeSubagentRollups(db, PARENT);
     recomputeSubagentRollups(db, PARENT);
     recomputeSubagentRollups(db, PARENT);
