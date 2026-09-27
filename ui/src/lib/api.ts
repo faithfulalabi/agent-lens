@@ -57,6 +57,8 @@ export interface SessionListRow {
   project_path: string;
   git_branch: string | null;
   model: string | null;
+  /** The main session's models, most API calls first. `<synthetic>` never appears. */
+  models: string[];
   harness_version: string | null;
   started_at: string;
   last_activity_at: string;
@@ -76,6 +78,8 @@ export interface SessionListRow {
   sub_tokens_cache_read: number;
   sub_tokens_cache_write: number;
   sub_est_cost: number | null;
+  /** Sub-agents' models, transitive, most calls first. `[]` while `rollup_state === 'own'`. */
+  sub_models: string[];
   /** `own` means the sub-agent sweep has not folded the sidecars in yet. */
   rollup_state: 'own' | 'complete';
   has_drift: boolean;

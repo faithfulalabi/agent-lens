@@ -687,27 +687,27 @@ describe('recomputeSessionRollups (AC8)', () => {
   });
 });
 
-describe('the folded model reaches the row (Task 0.13)', () => {
-  /** The line the harness manufactures on an auth expiry. It names no model. */
-  function syntheticLine(ts: string): Record<string, unknown> {
-    return {
-      type: 'assistant',
-      uuid: nextUuid(),
-      timestamp: ts,
-      cwd: CWD,
-      gitBranch: 'main',
-      version: '2.1.212',
-      message: {
-        role: 'assistant',
-        model: '<synthetic>',
-        content: [{ type: 'text', text: 'Login expired · Please run /login' }],
-        usage: { input_tokens: 0, output_tokens: 0 },
-      },
-      error: 'authentication_failed',
-      isApiErrorMessage: true,
-    };
-  }
+/** The line the harness manufactures on an auth expiry. It names no model. */
+function syntheticLine(ts: string): Record<string, unknown> {
+  return {
+    type: 'assistant',
+    uuid: nextUuid(),
+    timestamp: ts,
+    cwd: CWD,
+    gitBranch: 'main',
+    version: '2.1.212',
+    message: {
+      role: 'assistant',
+      model: '<synthetic>',
+      content: [{ type: 'text', text: 'Login expired · Please run /login' }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+    error: 'authentication_failed',
+    isApiErrorMessage: true,
+  };
+}
 
+describe('the folded model reaches the row (Task 0.13)', () => {
   it('writes the model that did the work, not the marker on the last line', () => {
     const db = cache();
     const { path } = plant('lastsynthetic', [
@@ -738,6 +738,136 @@ describe('the folded model reaches the row (Task 0.13)', () => {
     expect(row.model).toBeNull();
     // NULL is "nothing priceable ran", and it is never 0 — see the column note.
     expect(row.est_cost).toBeNull();
+  });
+});
+
+describe('sessions.models: every model the file used, most calls first (Task 0.17)', () => {
+  const modelsOf = (db: DatabaseSync, id: string, column = 'models'): unknown =>
+    JSON.parse(sessionRow(db, id)[column] as string);
+
+  /** One answered request group under `model`. */
+  function call(callId: string, model: string, at: number): readonly unknown[] {
+    return [toolCallLine(callId, 'Grep', TS(at), model), toolResultLine(callId, 'ok', TS(at + 1))];
+  }
+
+  it('★ two models, dominant first by calls, <synthetic> absent, [0] agrees with model (AC2, AC3)', () => {
+    const db = cache();
+    const { path } = plant('twomodels', [
+      humanLine('go', TS(0)),
+      ...call('toolu_f1', 'claude-fable-5-1', 1),
+      ...call('toolu_o1', 'claude-opus-5-5', 3),
+      ...call('toolu_o2', 'claude-opus-5-5', 5),
+      ...call('toolu_o3', 'claude-opus-5-5', 7),
+      syntheticLine(TS(9)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    expect(project(db, id, path)).toBe('ready');
+
+    // Fable is seen FIRST, so a first-seen order would put it ahead: the
+    // count is what ranks opus.
+    expect(modelsOf(db, id)).toEqual([
+      ['claude-opus-5-5', 3],
+      ['claude-fable-5-1', 1],
+    ]);
+    expect(sessionRow(db, id).models).not.toContain('<synthetic>');
+    expect(sessionRow(db, id).model).toBe('claude-opus-5-5');
+  });
+
+  it('a tie goes to the model seen first, the fold rule', () => {
+    const db = cache();
+    const { path } = plant('tiedmodels', [
+      humanLine('go', TS(0)),
+      ...call('toolu_h', 'claude-haiku-4-5', 1),
+      ...call('toolu_s', 'claude-sonnet-5', 3),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+
+    expect(modelsOf(db, id)).toEqual([
+      ['claude-haiku-4-5', 1],
+      ['claude-sonnet-5', 1],
+    ]);
+    expect(sessionRow(db, id).model).toBe('claude-haiku-4-5');
+  });
+
+  it("a file that names only <synthetic> writes '[]', after a projection that ran (AC3)", () => {
+    const db = cache();
+    const { path } = plant('allsynthetic', [humanLine('go', TS(0)), syntheticLine(TS(1))]);
+    const id = seedIndexRow(db, path);
+
+    // `ready` first: '[]' is also the DDL default.
+    expect(project(db, id, path)).toBe('ready');
+
+    expect(sessionRow(db, id).models).toBe('[]');
+    expect(sessionRow(db, id).model).toBeNull();
+  });
+
+  it('is a recompute: a second projection writes identical bytes', () => {
+    const db = cache();
+    const { path } = plant('twice', [
+      humanLine('go', TS(0)),
+      ...call('toolu_a', 'claude-opus-5', 1),
+      ...call('toolu_b', 'claude-sonnet-5', 3),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+    const first = sessionRow(db, id).models;
+    recomputeSessionRollups(db, id);
+    project(db, id, path);
+
+    expect(first).toBe('[["claude-opus-5",1],["claude-sonnet-5",1]]');
+    expect(sessionRow(db, id).models).toBe(first);
+  });
+});
+
+describe('sessions.sub_models: transitive over sidecars, summed, kept apart from models (Task 0.17)', () => {
+  const setModels = (db: DatabaseSync, id: string, models: string): void => {
+    db.prepare('UPDATE sessions SET models = ? WHERE id = ?').run(models, id);
+  };
+
+  it('★ a grandchild reaches the top-level row, ranked by summed calls', () => {
+    const db = cache();
+    const parent = seedSessionRow(db, { id: 'parent-m' });
+    setModels(db, parent, '[["claude-opus-5-5",160]]');
+    const child = seedSidecarRow(db, parent, { id: 'kid-m' });
+    setModels(db, child, '[["claude-fable-5-1",4]]');
+    const grandchild = seedSidecarRow(db, child, { id: 'grandkid-m' });
+    setModels(db, grandchild, '[["claude-haiku-4-5",9],["claude-fable-5-1",1]]');
+
+    // Deepest first, as wave 2 runs it.
+    recomputeSubagentRollups(db, child);
+    recomputeSubagentRollups(db, parent);
+
+    expect(JSON.parse(sessionRow(db, parent).sub_models as string)).toEqual([
+      ['claude-haiku-4-5', 9],
+      ['claude-fable-5-1', 5],
+    ]);
+    // Own models are the other writer's; this one never touches them.
+    expect(sessionRow(db, parent).models).toBe('[["claude-opus-5-5",160]]');
+
+    const bytes = sessionRow(db, parent).sub_models;
+    recomputeSubagentRollups(db, parent);
+    expect(sessionRow(db, parent).sub_models).toBe(bytes);
+  });
+
+  it("a tie breaks on the id, and a session with no children stays '[]'", () => {
+    const db = cache();
+    const parent = seedSessionRow(db, { id: 'parent-t' });
+    setModels(db, seedSidecarRow(db, parent, { id: 'kid-z' }), '[["claude-sonnet-5",2]]');
+    setModels(db, seedSidecarRow(db, parent, { id: 'kid-a' }), '[["claude-haiku-4-5",2]]');
+    const lone = seedSessionRow(db, { id: 'parent-lone' });
+
+    recomputeSubagentRollups(db, parent);
+    recomputeSubagentRollups(db, lone);
+
+    expect(JSON.parse(sessionRow(db, parent).sub_models as string)).toEqual([
+      ['claude-haiku-4-5', 2],
+      ['claude-sonnet-5', 2],
+    ]);
+    expect(sessionRow(db, lone).sub_models).toBe('[]');
   });
 });
 

@@ -13,7 +13,7 @@
 // archive: a bump here makes `openDb` remove the file and re-sweep.
 
 /** Bumping this makes `openDb` remove cache.db and recreate it. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 --
@@ -37,7 +37,7 @@ export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = OFF;    -- projections are dropped wholesale, per session, by hand
-PRAGMA user_version = 2;      -- SCHEMA_VERSION; mismatch => unlink + recreate
+PRAGMA user_version = 3;      -- SCHEMA_VERSION; mismatch => unlink + recreate
 
 -- =====================================================================  sessions
 -- The file index AND the session-list row AND the projection freshness header,
@@ -89,6 +89,8 @@ CREATE TABLE sessions (
   project_path          TEXT NOT NULL,      -- cwd; the list groups and filters on it
   git_branch            TEXT,
   model                 TEXT,               -- the model named on the most lines; NOT the last
+  models                TEXT NOT NULL DEFAULT '[]', -- own-file distinct models, [[id, calls]], calls DESC,
+                                            -- first-seen tiebreak; <synthetic>/NULL excluded
   harness_version       TEXT,               -- \`version\`; transcript-only, groups the drift report
   title                 TEXT,               -- LAST type:'ai-title' line
   preview               TEXT,               -- first human prompt, 200 chars
@@ -118,6 +120,8 @@ CREATE TABLE sessions (
   sub_tokens_cache_read INTEGER NOT NULL DEFAULT 0,
   sub_tokens_cache_write INTEGER NOT NULL DEFAULT 0,
   sub_est_cost          REAL,
+  sub_models            TEXT NOT NULL DEFAULT '[]', -- transitive over sidecars, [[id, calls]], written by
+                                            -- recomputeSubagentRollups; '[]' until wave 2
   rollup_state          TEXT NOT NULL DEFAULT 'own', -- 'own' | 'complete'
 
   -- sidecar linkage (NULL on a top-level session)

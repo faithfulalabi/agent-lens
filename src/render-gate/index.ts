@@ -43,7 +43,7 @@ import {
 } from './report.js';
 
 /**
- * The thirteen `data-slot` values the gate drives. `data-slot` carries no styling
+ * The fourteen `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  *
@@ -64,6 +64,7 @@ import {
 export const SELECTORS = {
   sessionCount: 'session-list-count',
   sessionRow: 'session-row',
+  sessionModel: 'session-model',
   backToSessions: 'back-to-sessions',
   traceRow: 'trace-group',
   traceExpand: 'trace-expand',
@@ -528,6 +529,10 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   const sessionCountRaw = (await page.locator(slot(SELECTORS.sessionCount)).innerText()).trim();
   // `formatRowCount` runs the number through `Intl.NumberFormat('en-US')`.
   const sessionCount = Number.parseInt(sessionCountRaw.replace(/,/g, ''), 10);
+  // Task 0.17: one Model cell per list row, read while the list is on screen.
+  const modelCells = (await page.locator(slot(SELECTORS.sessionModel)).allInnerTexts()).map(
+    (text) => text.trim(),
+  );
 
   const sessionId = await openFirstSession(page);
 
@@ -613,6 +618,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       sessionId,
       sessionCountRaw,
       sessionCount,
+      modelCells,
       backLinks,
       spanRowCount,
       turnGroupCount,

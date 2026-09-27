@@ -94,6 +94,7 @@ const SESSIONS_COLUMNS = [
   'project_path',
   'git_branch',
   'model',
+  'models',
   'harness_version',
   'title',
   'preview',
@@ -115,6 +116,7 @@ const SESSIONS_COLUMNS = [
   'sub_tokens_cache_read',
   'sub_tokens_cache_write',
   'sub_est_cost',
+  'sub_models',
   'rollup_state',
   'parent_session_id',
   'spawned_by_event_id',
@@ -242,7 +244,7 @@ describe('the v2 DDL survives the transport (AC1)', () => {
 
 describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => {
   it.each([
-    ['sessions', SESSIONS_COLUMNS, 51],
+    ['sessions', SESSIONS_COLUMNS, 53],
     ['turns', TURNS_COLUMNS, 19],
     ['events', EVENTS_COLUMNS, 37],
     ['meta', META_COLUMNS, 2],
@@ -265,7 +267,7 @@ describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => 
       eaten.exec(SCHEMA_DDL.replace(/\\\n/g, ''));
 
       const columns = columnNames(eaten, 'sessions');
-      expect(columns).toHaveLength(50);
+      expect(columns).toHaveLength(52);
       expect(columns).not.toContain('file_size');
       expect([...columns].sort()).not.toEqual([...SESSIONS_COLUMNS].sort());
 
@@ -456,6 +458,27 @@ function statementsAt75(): string {
   return bumped + STATEMENTS_ADDED_AT_7_5;
 }
 
+// Task 0.17: version 3 and the two model-list columns on `sessions`, applied as
+// replaces over the 7.5 oracle so the frozen constants above stay untouched.
+function statementsAt017(): string {
+  const at75 = statementsAt75();
+  const bumped = at75.replace('PRAGMA user_version = 2;', 'PRAGMA user_version = 3;');
+  expect(bumped).not.toBe(at75);
+  // `  model TEXT,\n` also occurs in `events`; replace() hits the FIRST, which is `sessions`.
+  const withModels = bumped.replace(
+    '  model TEXT,\n',
+    "  model TEXT,\n  models TEXT NOT NULL DEFAULT '[]',\n",
+  );
+  expect(withModels).not.toBe(bumped);
+  expect(withModels.match(/^ {2}models TEXT/gm)).toHaveLength(1);
+  const withSubModels = withModels.replace(
+    '  sub_est_cost REAL,\n',
+    "  sub_est_cost REAL,\n  sub_models TEXT NOT NULL DEFAULT '[]',\n",
+  );
+  expect(withSubModels).not.toBe(withModels);
+  return withSubModels;
+}
+
 /** Drops every `--` comment, collapses whitespace. No `--` exists in a literal. */
 function withoutComments(ddl: string): string {
   return ddl
@@ -505,13 +528,13 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
 
 describe('task 0.12 audited comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
   it('the DDL, stripped of comments, equals main @ d5c66d1 plus the 7.5 statements exactly', () => {
-    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt75()));
+    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt017()));
   });
 
   it('the version bump is SCHEMA_VERSION itself, so the two sites cannot drift', () => {
     // A mismatch between the two sites would recreate cache.db on every open.
     expect(SCHEMA_DDL).toContain(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
   });
 });
 
