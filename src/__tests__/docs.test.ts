@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDoctorReport } from '../archive/index.js';
 import { COVERAGE_GAP_STATEMENT, DURABILITY_STATEMENT } from '../cli/commands/doctor.js';
+import { LINGER_CAVEAT } from '../cli/commands/schedule.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -63,6 +64,9 @@ describe('the README quotes the product, not a paraphrase of it (Test 1)', () =>
   it.each([
     ['DURABILITY_STATEMENT', DURABILITY_STATEMENT],
     ['COVERAGE_GAP_STATEMENT', COVERAGE_GAP_STATEMENT],
+    // Same reason as the two above: a bound the mechanism cannot deliver is
+    // printed by the CLI and stated by the README, and the two must be one string.
+    ['LINGER_CAVEAT', LINGER_CAVEAT],
   ])('README carries %s verbatim', (_name, statement) => {
     expect(
       doc('README.md'),
@@ -149,7 +153,9 @@ describe('the quickstart is zero-configuration (Test 5)', () => {
   const firstBlock = /```bash\n([\s\S]*?)```/.exec(readme);
 
   it('the first shell block in the README is the quickstart, and it is npx', () => {
-    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe('npx @faithfulalabi/agent-lens');
+    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe(
+      'npx @faithfulalabi/agent-lens',
+    );
   });
 
   it('no setup command runs before it', () => {

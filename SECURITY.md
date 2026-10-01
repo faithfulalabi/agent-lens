@@ -82,6 +82,15 @@ supported. What is refused is any resolution that escapes the root, and in parti
 lands inside the transcript corpus: the pass refuses to write into `~/.claude/projects` even when
 `--dataDir` points at it (`src/archive/mirror.ts`).
 
+The recurring job is the one thing that writes outside the data dir, and it is worth naming exactly:
+`agent-lens schedule install` writes `~/Library/LaunchAgents/<label>.plist` on macOS and
+`~/.config/systemd/user/agent-lens-archive.service`, its matching `.timer` and that timer's
+`timers.target.wants` symlink on Linux. Every one of those is a **fixed** name built from the home
+directory the command was handed — never from a transcript path, never from a name in your corpus —
+and every one is guarded by the same refuse-inside-the-corpus assert as the writes above, so even
+`--dataDir ~/.claude/projects` refuses before a single file is created. The archive pass's own writes
+are unchanged by any of this: they still land under the data dir, exactly as described above.
+
 Two limits, stated rather than rounded up: a symlink planted in the window between a containment
 check and the create it guards is caught only at the final write, and a dangling symlinked ancestor
 is refused by the kernel's own error rather than by the guard. Node exposes no `openat`/`mkdirat`

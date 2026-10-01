@@ -1,5 +1,7 @@
-// Reader for the launchd wrapper's own per-pass log — the only artifact that
-// answers "did the archive job run". `archive.jsonl` cannot: `isQuiet` in
+// Reader for the generated wrapper's own per-pass log — the only artifact that
+// answers "did the archive job run". Platform-neutral on purpose: the launchd
+// agent and the systemd user timer run the SAME wrapper and append the same line,
+// so one reader serves both. `archive.jsonl` cannot: `isQuiet` in
 // `log.ts` suppresses most healthy passes, so days can pass between its lines
 // while the job fires every 15 minutes. An mtime cannot either: a quiet source
 // leaves the archive untouched while the job runs on schedule. Read-only, per

@@ -212,32 +212,32 @@ const WRITE_SITES: readonly ManifestEntry[] = [
   {
     key: 'cli/commands/schedule.ts#1',
     callee: 'mkdirSync',
-    why: 'ensureDirOutsideCorpus: creates the parent directory of a schedule artifact — <dataDir>/schedule for the generated wrapper, <dataDir>/logs for the launchd out/err logs, or ~/Library/LaunchAgents for the plist. The LaunchAgents target is OUTSIDE the data dir by design — launchd only reads per-user agents from there — and is a fixed name derived from the injected home dir, never from the corpus. Not a transcript root, and assertNotUnderRoot(dir, resolveTranscriptRoot(), …) runs before this mkdir so even `--dataDir ~/.claude/projects` cannot land a schedule directory inside the corpus. Lexical scope, like render-gate/index.ts#1: recursive mkdir traverses existing symlinked components; the assert-then-mkdir window is the same PERMANENT dirfd limit the archive rows record',
+    why: 'ensureDirOutsideCorpus: creates the parent directory of a schedule artifact — <dataDir>/schedule for the generated wrapper, <dataDir>/logs for the launchd out/err logs, ~/Library/LaunchAgents for the plist on macOS, or ~/.config/systemd/user for the two unit files on Linux (XDG_CONFIG_HOME when the injected configHome dep names an absolute one). Both of those last two are OUTSIDE the data dir by design — launchd and systemd only read per-user jobs from their own directory — and both are fixed names derived from the INJECTED home dir, never from the corpus. 0o700 is passed for the systemd unit dir and only takes effect on a directory this command creates: recursive mkdir does not change the mode of one that already exists. Not a transcript root, and assertNotUnderRoot(dir, resolveTranscriptRoot(), …) runs before this mkdir so even `--dataDir ~/.claude/projects` cannot land a schedule directory inside the corpus. Lexical scope, like render-gate/index.ts#1: recursive mkdir traverses existing symlinked components; the assert-then-mkdir window is the same PERMANENT dirfd limit the archive rows record',
   },
   {
     key: 'cli/commands/schedule.ts#2',
     callee: 'writeFileSync',
-    why: 'writes the temp half of the atomic wrapper/plist write. Two fixed targets, one call site: <dataDir>/schedule/archive.sh.tmp.<pid> and ~/Library/LaunchAgents/com.agent-lens.archive.plist.tmp.<pid>. The plist target is outside the data dir — honest scope, not rounded up — but never a transcript root, and the assertNotUnderRoot guard from #1 runs on the final path before the temp is written',
+    why: 'writes the temp half of the atomic wrapper/plist/unit write. Four fixed targets, one call site: <dataDir>/schedule/archive.sh.tmp.<pid>, ~/Library/LaunchAgents/com.agent-lens.archive.plist.tmp.<pid>, and on Linux ~/.config/systemd/user/agent-lens-archive.service.tmp.<pid> and .timer.tmp.<pid>. The plist and the two units are outside the data dir — honest scope, not rounded up — but none is ever a transcript root, and atomicWrite runs assertNotUnderRoot on the final path before the temp is written. On the systemd path EVERY destination is additionally asserted, and both unit texts built, before the first mkdir, so a refused turn-on leaves no temp file either',
   },
   {
     key: 'cli/commands/schedule.ts#3',
     callee: 'chmodSync',
-    why: 'forces the final mode on the temp file from #2 (0700 wrapper, 0644 plist — launchd reads the plist) since umask can mask the create-mode. Path-based, unlike the fd-based archive rows: the temp name is ours alone for the life of the write, created by #2 in the same call, so there is no fd to reuse and nothing racing to swap the leaf that #4 would not also lose to',
+    why: 'forces the final mode on the temp file from #2 (0700 wrapper; 0644 plist and 0644 for each systemd unit, because launchd and systemd read those themselves) since umask can mask the create-mode. Path-based, unlike the fd-based archive rows: the temp name is ours alone for the life of the write, created by #2 in the same call, so there is no fd to reuse and nothing racing to swap the leaf that #4 would not also lose to',
   },
   {
     key: 'cli/commands/schedule.ts#4',
     callee: 'renameSync',
-    why: 'atomically moves the temp file from #2 onto <dataDir>/schedule/archive.sh or ~/Library/LaunchAgents/com.agent-lens.archive.plist. rename(2) acts on the link itself, never a symlink target. Neither destination is a transcript root, and both were asserted not-under-the-corpus before the temp was written',
+    why: 'atomically moves the temp file from #2 onto one of four fixed destinations: <dataDir>/schedule/archive.sh, ~/Library/LaunchAgents/com.agent-lens.archive.plist, or ~/.config/systemd/user/agent-lens-archive.{service,timer}. rename(2) acts on the link itself, never a symlink target. None is a transcript root, and all were asserted not-under-the-corpus before the temp was written',
   },
   {
     key: 'cli/commands/schedule.ts#5',
     callee: 'unlinkSync',
-    why: "removeIfPresent: unlinks exactly four fixed names, all preceded by assertNotUnderRoot against the corpus — the two artifacts the turn-on created (<dataDir>/schedule/archive.sh and ~/Library/LaunchAgents/com.agent-lens.archive.plist, removed on turn-off) and the founder's two legacy hand-authored ones (~/Library/LaunchAgents/com.faithful.agent-lens.archive.plist and ~/.agent-lens/archive-cron.sh, removed once by the turn-on migration so two jobs never race). unlink removes the link itself, never a symlink target. cron.log and the archive are deliberately not on this list",
+    why: "removeIfPresent: unlinks exactly seven fixed names, all preceded by assertNotUnderRoot against the corpus — the macOS turn-on's two artifacts (<dataDir>/schedule/archive.sh and ~/Library/LaunchAgents/com.agent-lens.archive.plist), the Linux turn-on's three (~/.config/systemd/user/agent-lens-archive.service, the matching .timer, and ~/.config/systemd/user/timers.target.wants/agent-lens-archive.timer), and the founder's two legacy hand-authored ones (~/Library/LaunchAgents/com.faithful.agent-lens.archive.plist and ~/.agent-lens/archive-cron.sh, removed once by the turn-on migration so two jobs never race). The timers.target.wants entry is a SYMLINK and is outside the data dir by design: `systemctl --user enable` plants it there, and `disable` on a unit whose file is already gone exits 1 without cleaning it, so the turn-off names it explicitly or leaves a dangling link behind. unlink removes the link ITSELF and never its target, which is exactly why it is the right primitive for that one. cron.log and the archive are deliberately not on this list",
   },
   {
     key: 'cli/commands/schedule.ts#6',
     callee: 'rmdirSync',
-    why: 'removes <dataDir>/schedule itself on turn-off, inside a try/catch: rmdir(2) only ever deletes an EMPTY directory, so anything a user parked in there survives and the call degrades to a no-op. Fixed name under the data dir, never a transcript root',
+    why: 'removeEmptyDir: removes <dataDir>/schedule itself on turn-off, inside a try/catch: rmdir(2) only ever deletes an EMPTY directory, so anything a user parked in there survives and the call degrades to a no-op. Fixed name under the data dir, never a transcript root. Behind a private helper, removeEmptyDir, which ADDED the assertNotUnderRoot this write previously lacked — it was the one write in schedule.ts with no containment guard at all. The try/catch wraps the rmdir alone and never the assert: a non-empty directory is a tolerated no-op, a containment refusal is not. Scope is still ONLY <dataDir>/schedule: the systemd unit dir and its timers.target.wants are shared with every other user unit on the box and are deliberately never rmdir-ed',
   },
   {
     key: 'db/open.ts#1',
