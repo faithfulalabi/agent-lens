@@ -13,8 +13,19 @@
 // N lines out.
 //
 // Measured against the frozen archive on 2026-08-13: 14 top-level types over
-// 41,911 lines, harness 2.1.197 and 2.1.212. Two shapes a reader will expect and
-// not find:
+// 41,911 lines, harness 2.1.197 and 2.1.212.
+//
+// Re-measured against the LIVE corpus on 2026-09-30, harness 2.1.277-2.1.284:
+// 17 top-level types over 10,637 lines in 48 files. Three types are new since
+// the frozen archive — `atis-latch`, `cost-state` and `fork-context-ref` — and
+// all three are ABSENT from the 2.1.153-2.1.212 archive, so they arrived in the
+// ~80 patches between the two readings. All three are uuid-less, so they project
+// no event (`project/pipeline.ts:460-462`); absorbing them changes `drift_json`
+// and nothing else. Seventeen new top-level fields arrived with them, each one
+// measured on EXACTLY ONE owning type, which is why none of them is in
+// `ENVELOPE` — see the per-type lists below.
+//
+// Two shapes a reader will expect and not find:
 //   - `summary` is NOT a top-level type. Zero occurrences. The `"type":"summary"`
 //     hits in the corpus are all nested inside other payloads, which a top-level
 //     classifier never sees, so there is deliberately no branch for it.
@@ -130,6 +141,12 @@ export type ParsedLine =
   | Classified<'pr-link'>
   | Classified<'started'>
   | Classified<'result'>
+  // Measured 2026-09-30 on 2.1.277-2.1.284 and absent from the frozen archive.
+  // The kind name is the harness `type` VERBATIM, which is what keeps
+  // `project/pipeline.ts:314-317` (`rawTypeOf`) total without a second table.
+  | Classified<'atis-latch'>
+  | Classified<'cost-state'>
+  | Classified<'fork-context-ref'>
   | UnknownLine;
 
 /**
@@ -167,7 +184,7 @@ interface LineType {
 
 /**
  * Harness `type` -> our kind, plus the field inventory measured for it. ONE table
- * rather than a 14-arm `if` chain, so adding a harness type is a one-line diff and
+ * rather than a 17-arm `if` chain, so adding a harness type is a one-line diff and
  * the drift allowlist cannot fall out of step with the classifier: two
  * hand-maintained lists would diverge on the first harness update.
  *
@@ -189,6 +206,25 @@ const LINE_TYPES = new Map<string, LineType>([
         // Still sent, though every `subtype: 'api_error'` system line has expired.
         'isApiErrorMessage',
         'error',
+        // Measured 2026-09-30, 2.1.277-2.1.284: 8 names seen on `assistant` and
+        // on no other type, which is why they are here and not in `ENVELOPE`.
+        // Counts are an instant reading of a live corpus, so they are prose, not
+        // assertions — see `__tests__/line.test.ts:1-5`.
+        'perTurnEffort', // 3,688
+        'apiBlockIndex', // 3,684
+        'advisorModel', // 3,122
+        'serverClassifierRequest', // 2,340
+        // The wire form of the tool call: "what ran", where `tool_use.input` is
+        // "what the model asked for". 918 of 1,487 differ, always by an injected
+        // `cd <cwd> && ` prefix. Known-and-ignored HERE; the fidelity gap is
+        // filed as its own task rather than left as drift.
+        'wireToolInputs', // 1,903
+        'wireIngestContext', // 1,193
+        // Not rendered content: the user-visible text of a quota refusal is
+        // already in `message.content`, and the line still carries the known
+        // `error` / `isApiErrorMessage` pair.
+        'apiErrorStatus', // 4
+        'quotaLimits', // 3
       ]),
     },
   ],
@@ -211,6 +247,15 @@ const LINE_TYPES = new Map<string, LineType>([
         'toolEndsTurn',
         'toolDenialKind',
         'imagePasteIds',
+        // Measured 2026-09-30, 2.1.277-2.1.284: 5 names seen on `user` only.
+        'serverClassifierContext', // 959
+        // States `"human"` / `"sdk"` outright, where `human.ts:124-134` infers
+        // the same thing from `origin.kind`. A corroborator, not an authority —
+        // promoting it would move the `human-golden` fixtures.
+        'turnOrigin', // 107
+        'queueSkipAttachments', // 58
+        'turnPosition', // 13
+        'turnCompanion', // 5
       ]),
     },
   ],
@@ -239,13 +284,34 @@ const LINE_TYPES = new Map<string, LineType>([
       ]),
     },
   ],
-  ['attachment', { kind: 'attachment', knownFields: fields(ENVELOPE, ['attachment']) }],
+  [
+    'attachment',
+    {
+      kind: 'attachment',
+      knownFields: fields(ENVELOPE, [
+        'attachment',
+        // Measured 2026-09-30, 2.1.277-2.1.284: 2 names seen on `attachment` only.
+        //
+        // ★ `rendered` is the ONLY readable text an attachment line carries.
+        // Attachment lines DO carry a `uuid`, so `pipeline.ts:460-462` does not
+        // skip them: each projects one event with `kind:'unknown'` and no text,
+        // because `contentBlocks` reads `message.content` while these carry
+        // `attachment`. Classifying the name here is right for the CLASSIFIER —
+        // the text is harness-injected system-reminder boilerplate the user never
+        // wrote — but it removes the only signal those events are empty, so the
+        // hole is filed as its own task rather than silently absorbed.
+        'rendered', // 2,581
+        'renderedInHumanTurn', // 45
+      ]),
+    },
+  ],
   ['mode', { kind: 'mode', knownFields: fields(['type', 'mode', 'sessionId']) }],
   [
     'last-prompt',
     {
       kind: 'last-prompt',
-      knownFields: fields(['type', 'lastPrompt', 'leafUuid', 'sessionId']),
+      // `explicit`: measured 2026-09-30, 1 occurrence, on `last-prompt` only.
+      knownFields: fields(['type', 'lastPrompt', 'leafUuid', 'sessionId', 'explicit']),
     },
   ],
   [
@@ -281,7 +347,8 @@ const LINE_TYPES = new Map<string, LineType>([
     'queue-operation',
     {
       kind: 'queue-operation',
-      knownFields: fields(['type', 'operation', 'content', 'timestamp', 'sessionId']),
+      // `reason`: measured 2026-09-30, 50 occurrences, on `queue-operation` only.
+      knownFields: fields(['type', 'operation', 'content', 'timestamp', 'sessionId', 'reason']),
     },
   ],
   [
@@ -295,6 +362,55 @@ const LINE_TYPES = new Map<string, LineType>([
   // span pair, 12 each, paired 1:1.
   ['started', { kind: 'started', knownFields: fields(['type', 'key', 'agentId']) }],
   ['result', { kind: 'result', knownFields: fields(['type', 'key', 'agentId', 'result']) }],
+  // ---- measured 2026-09-30 on 2.1.277-2.1.284, absent from the frozen archive --
+  //
+  // All three are uuid-less, so none unions `ENVELOPE` and none projects an
+  // event. Each inventory is the UNION of every top-level key seen on that type,
+  // so absorbing the type does not merely move its drift from
+  // `unknown_line_types` into `unknown_top_level_fields`.
+  //
+  // Harness bookkeeping. 213 lines in 9 files; `atis` is an opaque latch token.
+  ['atis-latch', { kind: 'atis-latch', knownFields: fields(['type', 'atis', 'sessionId']) }],
+  // 14 lines in 7 files. Real content, and deliberately NOT a pricing source:
+  // agent-lens prices from `message.usage` x `shared/pricing.ts`, the line carries
+  // no uuid to hang an event on, and a second cost oracle that disagreed with the
+  // first would be worse than none. Filed as a follow-up, not left as drift.
+  [
+    'cost-state',
+    {
+      kind: 'cost-state',
+      knownFields: fields([
+        'type',
+        'sessionId',
+        'startTime',
+        'totalCostUSD',
+        'totalDuration',
+        'totalAPIDuration',
+        'totalAPIDurationWithoutRetries',
+        'totalToolDuration',
+        'totalLinesAdded',
+        'totalLinesRemoved',
+        'modelUsage',
+        'hasUnknownModelCost',
+      ]),
+    },
+  ],
+  // 4 lines in 4 files. Genuine lineage — `sessions.parent_session_id` exists
+  // (`db/schema.ts:128`) — but a second lineage source beside `project/subagents.ts`
+  // is a feature, not a classification. Filed as a follow-up.
+  [
+    'fork-context-ref',
+    {
+      kind: 'fork-context-ref',
+      knownFields: fields([
+        'type',
+        'agentId',
+        'parentSessionId',
+        'parentLastUuid',
+        'contextLength',
+      ]),
+    },
+  ],
 ]);
 
 /** Stands in for a line that was not a JSON object, so `raw` is always readable. */

@@ -205,6 +205,10 @@ describe('AC1 — raw-types.ts is documentation that compiles', () => {
       'RawFileHistorySnapshotLine',
       'RawAiTitleLine',
       'RawLastPromptLine',
+      // Measured 2026-09-30 on 2.1.277-2.1.284, absent from the frozen archive.
+      'RawAtisLatchLine',
+      'RawCostStateLine',
+      'RawForkContextRefLine',
       'RawMessage',
       'RawUsage',
       'RawOrigin',

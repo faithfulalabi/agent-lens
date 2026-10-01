@@ -12,6 +12,13 @@
 // 2.1.153 (0 of 42 user-text lines) — so a field appearing here means "observed
 // at least once", never "will be there".
 //
+// Extended 2026-09-30 from the LIVE corpus, 10,637 lines across 48 session
+// transcripts on 2.1.277-2.1.284: three new record types and 16 new field names,
+// every one measured on exactly one owning type. `queue-operation`'s new `reason`
+// has no home here because that type never had an interface — pre-existing debt,
+// deliberately not paid in this diff, and `src/transcript/line.ts` is where its
+// inventory is actually enforced.
+//
 // ## What these types do NOT do, stated plainly because a reviewer will assume
 // ## otherwise
 //
@@ -57,6 +64,13 @@ export interface RawUserLine {
   slug?: unknown;
   entrypoint?: unknown;
   permissionMode?: unknown;
+  /** The harness's own classifier context. Measured 2026-09-30 on 2.1.277+. */
+  serverClassifierContext?: unknown;
+  /** `"human"` / `"sdk"`, stated outright. A corroborator for `origin.kind`. */
+  turnOrigin?: unknown;
+  queueSkipAttachments?: unknown;
+  turnPosition?: unknown;
+  turnCompanion?: unknown;
 }
 
 /** `type: 'assistant'` — one model response, carrying usage and content blocks. */
@@ -79,6 +93,21 @@ export interface RawAssistantLine {
   gitBranch?: unknown;
   slug?: unknown;
   entrypoint?: unknown;
+  /** Measured 2026-09-30 on 2.1.277-2.1.284, on `assistant` and nothing else. */
+  perTurnEffort?: unknown;
+  apiBlockIndex?: unknown;
+  advisorModel?: unknown;
+  serverClassifierRequest?: unknown;
+  /**
+   * The wire form of this line's tool calls: "what ran". 918 of 1,487 measured
+   * lines differ from the model's own `tool_use.input`, always by an injected
+   * `cd <cwd> && ` prefix — so the rendered input is the REQUEST, not the command.
+   */
+  wireToolInputs?: unknown;
+  wireIngestContext?: unknown;
+  /** On a quota or outage refusal, beside the already-known `isApiErrorMessage`. */
+  apiErrorStatus?: unknown;
+  quotaLimits?: unknown;
 }
 
 /** `type: 'system'` — hooks, turn timings, compaction bookkeeping, notices. */
@@ -132,6 +161,13 @@ export interface RawAttachmentLine {
   gitBranch?: unknown;
   slug?: unknown;
   entrypoint?: unknown;
+  /**
+   * The ONLY readable text an attachment line carries, measured 2026-09-30 on
+   * 2,581 lines. `message.content` is absent on this type, so the projected event
+   * has no text at all; this field is where that text actually is.
+   */
+  rendered?: unknown;
+  renderedInHumanTurn?: unknown;
 }
 
 /** `type: 'mode'` — a mode switch. Carries no uuid and no timestamp. */
@@ -169,6 +205,57 @@ export interface RawLastPromptLine {
   lastPrompt?: unknown;
   leafUuid?: unknown;
   sessionId?: unknown;
+  /** Measured 2026-09-30: 1 occurrence on 2.1.277-2.1.284, on this type only. */
+  explicit?: unknown;
+}
+
+/**
+ * `type: 'atis-latch'` — harness bookkeeping. 213 lines in 9 of 48 files on
+ * 2026-09-30, and absent from the 2.1.153-2.1.212 archive. No uuid, no timestamp,
+ * and `atis` is an opaque token: nothing renderable.
+ */
+export interface RawAtisLatchLine {
+  type?: unknown;
+  atis?: unknown;
+  sessionId?: unknown;
+}
+
+/**
+ * `type: 'cost-state'` — the harness's own running cost tally. 14 lines in 7 of
+ * 48 files on 2026-09-30.
+ *
+ * Real content, and deliberately NOT a pricing source: agent-lens prices from
+ * `message.usage` x `src/shared/pricing.ts`, and this line carries no uuid to
+ * hang an event on.
+ */
+export interface RawCostStateLine {
+  type?: unknown;
+  sessionId?: unknown;
+  startTime?: unknown;
+  totalCostUSD?: unknown;
+  totalDuration?: unknown;
+  totalAPIDuration?: unknown;
+  totalAPIDurationWithoutRetries?: unknown;
+  totalToolDuration?: unknown;
+  totalLinesAdded?: unknown;
+  totalLinesRemoved?: unknown;
+  modelUsage?: unknown;
+  hasUnknownModelCost?: unknown;
+}
+
+/**
+ * `type: 'fork-context-ref'` — where a forked session was cut from. 4 lines in 4
+ * of 48 files on 2026-09-30.
+ *
+ * Genuine lineage, and a second source for it beside `src/project/subagents.ts`,
+ * which is why reading it is a feature rather than a classification.
+ */
+export interface RawForkContextRefLine {
+  type?: unknown;
+  agentId?: unknown;
+  parentSessionId?: unknown;
+  parentLastUuid?: unknown;
+  contextLength?: unknown;
 }
 
 /** `message` on a user or assistant line. `content` is a string OR a block array. */
