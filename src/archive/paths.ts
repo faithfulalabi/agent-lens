@@ -90,7 +90,8 @@ export function resolveLockPath(dataDir?: string): string {
 }
 
 /**
- * Where the launchd wrapper appends its per-pass line. The wrapper hardcodes
+ * Where the generated wrapper appends its per-pass line, on either backend — the
+ * launchd agent and the systemd timer run the same wrapper. The wrapper hardcodes
  * `$HOME/.agent-lens/logs/cron.log` in shell, outside the repo — the two are
  * manually synced, the same accepted duplication as the exit-code contract.
  */
@@ -106,6 +107,47 @@ export function resolveLaunchAgentsDir(homeDir: string = homedir()): string {
 /** The plist for `label`, under the per-user LaunchAgents dir. */
 export function resolvePlistPath(label: string, homeDir: string = homedir()): string {
   return join(resolveLaunchAgentsDir(homeDir), `${label}.plist`);
+}
+
+/**
+ * Where `systemctl --user` reads per-user units from. Outside the data dir by
+ * design, the same way `~/Library/LaunchAgents` is.
+ *
+ * `configHome` is the caller's `XDG_CONFIG_HOME`, passed in rather than read from
+ * `process.env` here: `schedule` carries it as an injected dep so no test can
+ * land a unit file in a real `~/.config/systemd/user`. A relative value is
+ * ignored, which is what the XDG spec says to do with one.
+ */
+export function resolveSystemdUserDir(homeDir: string = homedir(), configHome?: string): string {
+  const base =
+    configHome !== undefined && configHome !== '' && isAbsolute(configHome)
+      ? configHome
+      : join(homeDir, '.config');
+  return join(base, 'systemd', 'user');
+}
+
+/** One unit file by name, under the per-user systemd unit dir. */
+export function resolveSystemdUnitPath(
+  name: string,
+  homeDir?: string,
+  configHome?: string,
+): string {
+  return join(resolveSystemdUserDir(homeDir, configHome), name);
+}
+
+/**
+ * The symlink `systemctl --user enable` plants for a timer. Measured, not
+ * assumed: enabling `agent-lens-archive.timer` creates
+ * `~/.config/systemd/user/timers.target.wants/agent-lens-archive.timer` pointing
+ * at the unit, and `systemctl --user disable` on a unit whose file is already
+ * gone exits 1 without removing it — so turn-off has to name it explicitly.
+ */
+export function resolveSystemdWantsPath(
+  name: string,
+  homeDir?: string,
+  configHome?: string,
+): string {
+  return join(resolveSystemdUserDir(homeDir, configHome), 'timers.target.wants', name);
 }
 
 /** The wrapper `agent-lens schedule` generates; rewritten in full on every turn-on. */

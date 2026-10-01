@@ -55,14 +55,26 @@ only by the archive.
 agent-lens schedule install
 ```
 
-On macOS that sets up a launchd job that runs `agent-lens archive` every 15 minutes and logs each
-pass where `agent-lens doctor` reads it. Run it again any time — it replaces its own job rather
-than duplicating it. `agent-lens schedule status` reports the job and its last successful pass;
-`agent-lens schedule disable` turns it off cleanly, leaving the archive and its logs untouched. On
-other platforms, run `agent-lens archive` every ~15 minutes yourself via a systemd timer or cron.
+That sets up a recurring job that runs `agent-lens archive` every 15 minutes and logs each pass
+where `agent-lens doctor` reads it. Both supported platforms are handled for you: macOS gets a
+launchd agent, Linux gets a systemd **user** timer under `~/.config/systemd/user`. Run it again any
+time — it replaces its own job rather than duplicating it. `agent-lens schedule status` reports the
+job and its last successful pass; `agent-lens schedule disable` turns it off cleanly, leaving the
+archive and its logs untouched. On any other platform, run `agent-lens archive` every ~15 minutes
+yourself from whatever scheduler you have, such as a cron entry.
 
 One caveat worth knowing before you rely on an interval: a wall-clock schedule does not fire while
 the machine is asleep. Treat the interval as a bound on _wake_ time, not on elapsed time.
+
+One more on Linux, and it is the difference between a green report and a real archive:
+
+> **a systemd user timer does not run while you are logged out unless lingering is on for your user**
+
+`agent-lens schedule status` reports which state your user is in, and `schedule install` prints the
+one command that changes it — `loginctl enable-linger <uid>`. The command is printed and never run:
+it writes outside everything this tool owns. The two platforms also differ deliberately on catch-up.
+launchd runs a pass at load; the systemd timer uses `OnCalendar` with `Persistent=true`, so a slot
+missed while the machine was off runs once on resume.
 
 The pass is safe to run often: an advisory lock means a second concurrent pass copies nothing and
 exits 0, and an unchanged corpus copies zero bytes. When a source has been rewritten, the archived

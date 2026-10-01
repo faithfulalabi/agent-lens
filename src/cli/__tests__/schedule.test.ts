@@ -1,20 +1,48 @@
-// `agent-lens schedule` — the recurring archive job. Harness split follows
-// `args.test.ts`: pure builders get pure tests; argv rejection goes through
-// `runMain` (rejected BEFORE dispatch, so nothing loads); everything touching
-// disk drives `schedule()` directly with injected deps against `makeSandbox()`.
+// `agent-lens schedule` — the recurring archive job, on both backends. Harness
+// split follows `args.test.ts`: pure builders get pure tests; argv rejection goes
+// through `runMain` (rejected BEFORE dispatch, so nothing loads); everything
+// touching disk drives `schedule()` directly with injected deps against
+// `makeSandbox()`.
 //
-// ⚠️ NO test here may ever run a real `launchctl` or touch the real
-// `~/Library/LaunchAgents` — the runner is always the fake, and the home dir is
-// always inside the sandbox. The real launchd interaction is verified by manual
+// ⚠️ NO test here may ever run a real `launchctl`, `systemctl` or `loginctl`, or
+// touch the real `~/Library/LaunchAgents` or a real `~/.config/systemd/user`. All
+// three runners are always fakes; the home dir is always inside the sandbox; and
+// `configHome` is an injected DEP rather than an `XDG_CONFIG_HOME` read inside the
+// resolver, which is what makes a stray ambient env var unable to retarget a unit
+// write. The real launchd and systemd interactions are verified by manual
 // measurement on the founder's machine, exactly as the wrapper's predecessor was.
+//
+// ONE EXCEPTION, reasoned: describe 18's `it.runIf(process.platform === 'linux')`
+// drives `runMain` with REAL deps, because that is the only way to exercise the
+// throw→exit-1 mapping in `index.ts`. It is safe and it is guarded to Linux on
+// purpose — the systemd turn-on asserts every path BEFORE the first `mkdirSync`,
+// so a refused `--dataDir` returns 1 having written nothing and having run no
+// binary at all. On macOS the same call would `lstat` the founder's real
+// LaunchAgents dir and could run a real `launchctl bootout`, which the paragraph
+// above forbids absolutely. CI is Linux, so it runs there.
+//
+// Describe 17 pins that exception: a text grep over this file and `args.test.ts`
+// collects every `runMain` call whose argv names the schedule command, and
+// compares the set to an allow-list — so a NEW unguarded one reds the suite
+// instead of silently driving `realDeps()` against the machine running the tests.
+// Because that grep reads source text, prose in this file must never spell out a
+// call shape the grep would mistake for real code.
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   captureConsole,
+  pinSandboxEnv,
   runMain,
   snapshotTreeSafe,
   type Sandbox,
@@ -25,42 +53,74 @@ import {
   resolveCronLogPath,
   resolvePlistPath,
   resolveScheduleWrapperPath,
+  resolveSystemdUnitPath,
+  resolveSystemdUserDir,
+  resolveSystemdWantsPath,
 } from '../../archive/paths.js';
 import {
   buildPlist,
+  buildSystemdService,
+  buildSystemdTimer,
   buildWrapperScript,
   CRON_STAMP_FORMAT,
+  escapeUnitValue,
   LEGACY_LABEL,
+  LINGER_CAVEAT,
   parseScheduleAction,
   resolveArchiveInvocation,
   schedule,
   SCHEDULE_LABEL,
+  SYSTEMD_UNIT_BASE,
   WAKE_TIME_CAVEAT,
+  type CommandResult,
   type LaunchctlResult,
   type ScheduleDeps,
 } from '../commands/schedule.js';
 
 const NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
 
+const SERVICE_UNIT = `${SYSTEMD_UNIT_BASE}.service`;
+const TIMER_UNIT = `${SYSTEMD_UNIT_BASE}.timer`;
+
 const sb = useSandbox();
+
+/** A fake verdict per argv; `undefined` falls through to plain success. */
+type Handler = (args: string[]) => CommandResult | undefined;
+
+interface Fakes {
+  systemctl?: Handler;
+  loginctl?: Handler;
+}
 
 interface TestBed {
   deps: ScheduleDeps;
   /** Every launchctl argv the command asked for, in order. */
   calls: string[][];
+  /** The same, for the two Linux runners — the exact-array idiom, per binary. */
+  systemctlCalls: string[][];
+  loginctlCalls: string[][];
   homeDir: string;
   plistPath: string;
   wrapperPath: string;
+  unitDir: string;
+  servicePath: string;
+  timerPath: string;
+  wantsPath: string;
 }
 
 /**
- * Deps pinned entirely inside the sandbox: home dir, package root and the fake
- * runner. `handler` overrides individual launchctl verdicts; default is success.
+ * Deps pinned entirely inside the sandbox: home dir, package root and all three
+ * fake runners. `handler` overrides individual launchctl verdicts and `fakes`
+ * does the same for the two Linux binaries; every default is success.
+ *
+ * `configHome: undefined` is explicit and required — it is what sends the unit
+ * writes under the sandboxed `homeDir` instead of a real `XDG_CONFIG_HOME`.
  */
 function makeDeps(
   s: Sandbox,
   overrides: Partial<ScheduleDeps> = {},
   handler?: (args: string[]) => LaunchctlResult | undefined,
+  fakes: Fakes = {},
 ): TestBed {
   const homeDir = join(s.root, 'home');
   const pkgRoot = join(s.root, 'pkg');
@@ -68,6 +128,8 @@ function makeDeps(
   mkdirSync(pkgRoot, { recursive: true });
   writeFileSync(join(pkgRoot, 'package.json'), '{}');
   const calls: string[][] = [];
+  const systemctlCalls: string[][] = [];
+  const loginctlCalls: string[][] = [];
   const deps: ScheduleDeps = {
     platform: 'darwin',
     execPath: '/test/bin/node',
@@ -78,16 +140,45 @@ function makeDeps(
       calls.push(args);
       return handler?.(args) ?? { status: 0, stdout: '', stderr: '' };
     },
+    systemctl: (args) => {
+      systemctlCalls.push(args);
+      return fakes.systemctl?.(args) ?? { status: 0, stdout: '', stderr: '' };
+    },
+    // Default `Linger=no`, so the recommended "print the command" path is what
+    // the default bed exercises. The `yes` and `unknown` arms are explicit tests.
+    loginctl: (args) => {
+      loginctlCalls.push(args);
+      return fakes.loginctl?.(args) ?? { status: 0, stdout: 'Linger=no\n', stderr: '' };
+    },
+    configHome: undefined,
     now: () => NOW,
     ...overrides,
   };
+  const configHome = deps.configHome;
   return {
     deps,
     calls,
-    homeDir,
-    plistPath: resolvePlistPath(SCHEDULE_LABEL, homeDir),
+    systemctlCalls,
+    loginctlCalls,
+    homeDir: deps.homeDir,
+    plistPath: resolvePlistPath(SCHEDULE_LABEL, deps.homeDir),
     wrapperPath: resolveScheduleWrapperPath(s.dataDir),
+    unitDir: resolveSystemdUserDir(deps.homeDir, configHome),
+    servicePath: resolveSystemdUnitPath(SERVICE_UNIT, deps.homeDir, configHome),
+    timerPath: resolveSystemdUnitPath(TIMER_UNIT, deps.homeDir, configHome),
+    wantsPath: resolveSystemdWantsPath(TIMER_UNIT, deps.homeDir, configHome),
   };
+}
+
+/** `makeDeps` on the systemd backend. The bed default stays `darwin`, deliberately. */
+function linuxBed(s: Sandbox, overrides: Partial<ScheduleDeps> = {}, fakes: Fakes = {}): TestBed {
+  return makeDeps(s, { platform: 'linux', uid: 1000, ...overrides }, undefined, fakes);
+}
+
+/** What a real `enable` plants, so turn-off has a symlink to find. */
+function plantWantsSymlink(bed: TestBed): void {
+  mkdirSync(dirname(bed.wantsPath), { recursive: true });
+  symlinkSync(bed.timerPath, bed.wantsPath);
 }
 
 /** `schedule()` with both console channels captured, `runMain`'s shape. */
@@ -149,9 +240,9 @@ describe('2 — exit codes are 0 and 1 only, never 2, never 3 (AC7)', () => {
     },
   );
 
-  it('the non-macOS refusal is 1, not 2 and not 3', async () => {
+  it('the unsupported-platform refusal is 1, not 2 and not 3', async () => {
     const s = sb();
-    const { code } = await run(dataDirArgs(s, 'install'), makeDeps(s, { platform: 'linux' }).deps);
+    const { code } = await run(dataDirArgs(s, 'install'), makeDeps(s, { platform: 'win32' }).deps);
     expect(code).toBe(1);
     expect(code).not.toBe(2);
     expect(code).not.toBe(3);
@@ -402,10 +493,10 @@ describe('7 — status distinguishes the three states (AC3, AC4)', () => {
   });
 });
 
-describe('8 — non-macOS platforms get an honest pointer, never a silent no-op (AC5)', () => {
+describe('8 — a platform that is neither gets an honest pointer, never a silent no-op (AC5)', () => {
   it('turn-on refuses with the manual alternative, writes nothing, exits 1', async () => {
     const s = sb();
-    const bed = makeDeps(s, { platform: 'linux' });
+    const bed = makeDeps(s, { platform: 'win32' });
     const { code, err } = await run(dataDirArgs(s, 'install'), bed.deps);
     expect(code).toBe(1);
     expect(err).toContain('systemd');
@@ -417,7 +508,7 @@ describe('8 — non-macOS platforms get an honest pointer, never a silent no-op 
 
   it('turn-off refuses the same way, exits 1', async () => {
     const s = sb();
-    const bed = makeDeps(s, { platform: 'linux' });
+    const bed = makeDeps(s, { platform: 'win32' });
     const { code, err } = await run(dataDirArgs(s, 'disable'), bed.deps);
     expect(code).toBe(1);
     expect(err).toContain('Keeping the archive current');
@@ -426,7 +517,7 @@ describe('8 — non-macOS platforms get an honest pointer, never a silent no-op 
 
   it('status is a report: same pointer, caveat, exit 0', async () => {
     const s = sb();
-    const bed = makeDeps(s, { platform: 'linux' });
+    const bed = makeDeps(s, { platform: 'win32' });
     const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
     expect(code).toBe(0);
     expect(out).toContain('Keeping the archive current');
@@ -464,5 +555,826 @@ describe('9 — the legacy hand-authored job is migrated out, one-way (#83)', ()
     const bed = makeDeps(s);
     await run(dataDirArgs(s, 'install'), bed.deps);
     expect(bed.calls.some((args) => args.includes(`gui/501/${LEGACY_LABEL}`))).toBe(false);
+  });
+});
+
+describe('10 — the Linux turn-on writes both units and arms the timer (AC1)', () => {
+  it('writes timer, service and wrapper, and calls the four verbs in order', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+
+    const { code, out } = await run(dataDirArgs(s, 'install'), bed.deps);
+
+    expect(code).toBe(0);
+    expect(readFileSync(bed.timerPath, 'utf8')).toContain('[Timer]');
+    expect(readFileSync(bed.servicePath, 'utf8')).toContain('[Service]');
+    expect(readFileSync(bed.wrapperPath, 'utf8')).toContain('#!/bin/sh');
+    // `--user` spelled out at every call site, and the order is load-bearing:
+    // arm the timer, THEN run one pass immediately so a fresh turn-on does not
+    // wait out a whole 15-minute slot.
+    expect(bed.systemctlCalls).toEqual([
+      ['--user', 'daemon-reload'],
+      ['--user', 'enable', TIMER_UNIT],
+      ['--user', 'restart', TIMER_UNIT],
+      ['--user', 'start', '--no-block', SERVICE_UNIT],
+    ]);
+    expect(bed.calls).toEqual([]);
+    // One read-only linger query, against the INJECTED uid.
+    expect(bed.loginctlCalls).toEqual([['show-user', '1000', '--property=Linger']]);
+    expect(out).toContain(bed.timerPath);
+    expect(out).toContain(bed.servicePath);
+    expect(out).toContain(bed.wrapperPath);
+    expect(out).toContain(resolveCronLogPath(s.dataDir));
+    expect(out).toContain(`journalctl --user -u ${SERVICE_UNIT}`);
+    expect(out).toContain(WAKE_TIME_CAVEAT);
+    expect(out).toContain(LINGER_CAVEAT);
+    expect(out).toContain('loginctl enable-linger 1000');
+  });
+
+  it('the unit text carries every directive the design turns on', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    await run(dataDirArgs(s, 'install'), bed.deps);
+
+    const timer = readFileSync(bed.timerPath, 'utf8');
+    expect(timer).toContain('OnCalendar=*:0/15');
+    expect(timer).toContain('Persistent=true');
+    expect(timer).toContain('AccuracySec=1min');
+    expect(timer).toContain(`Unit=${SERVICE_UNIT}`);
+    expect(timer).toContain('WantedBy=timers.target');
+    // Deliberately absent: an OnUnitActiveSec timer reports an empty
+    // NextElapseUSecRealtime and so cannot satisfy AC2's "next trigger".
+    expect(timer).not.toContain('OnUnitActiveSec');
+
+    const service = readFileSync(bed.servicePath, 'utf8');
+    expect(service).toContain('Type=oneshot');
+    expect(service).toContain(`ExecStart=/bin/sh "${bed.wrapperPath}"`);
+    // The journal is the unit-level debug surface; no `append:` file mirroring.
+    expect(service).not.toContain('StandardOutput=');
+  });
+
+  it('modes: wrapper 0700 (ours to run), units 0644 (systemd reads them)', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    expect(statSync(bed.wrapperPath).mode & 0o777).toBe(0o700);
+    expect(statSync(bed.timerPath).mode & 0o777).toBe(0o644);
+    expect(statSync(bed.servicePath).mode & 0o777).toBe(0o644);
+    // 0o700 for a unit dir this command created.
+    expect(statSync(bed.unitDir).mode & 0o777).toBe(0o700);
+  });
+
+  it('lingering already on prints a confirmation, not homework', async () => {
+    const s = sb();
+    const bed = linuxBed(
+      s,
+      {},
+      { loginctl: () => ({ status: 0, stdout: 'Linger=yes\n', stderr: '' }) },
+    );
+    const { code, out } = await run(dataDirArgs(s, 'install'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain('lingering: on');
+    expect(out).not.toContain('enable-linger');
+  });
+});
+
+describe('11 — both backends share the wrapper and the cron.log contract', () => {
+  it('the wrapper the Linux turn-on writes is byte-identical to the macOS one', async () => {
+    const s = sb();
+    await run(dataDirArgs(s, 'install'), makeDeps(s).deps);
+    const fromLaunchd = readFileSync(resolveScheduleWrapperPath(s.dataDir), 'utf8');
+
+    await run(dataDirArgs(s, 'install'), linuxBed(s).deps);
+    const fromSystemd = readFileSync(resolveScheduleWrapperPath(s.dataDir), 'utf8');
+
+    // Not a paraphrase of equality — the actual bytes. A second log format would
+    // break `doctor`'s freshness report on one platform only.
+    expect(fromSystemd).toBe(fromLaunchd);
+  });
+
+  it('a real `date` stamp from the Linux-written wrapper parses as one found entry', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    const wrapper = readFileSync(bed.wrapperPath, 'utf8');
+    expect(wrapper).toContain(`date "${CRON_STAMP_FORMAT}"`);
+
+    const stamp = execFileSync('date', [CRON_STAMP_FORMAT], { encoding: 'utf8' }).trim();
+    const entries = parseCronLog(`${stamp} ok   agent-lens archive: 3 files\n`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.status).toBe('ok');
+  });
+});
+
+// ★ The byte pin AC5 asks for, which did not exist before this task: the existing
+// launchd assertions are all `toContain` property checks, so a shared-code change
+// could have altered a generated byte without reddening anything.
+//
+// Captured from `git show 96cbd39:src/cli/commands/schedule.ts` against the fixed
+// inputs this suite already uses. PLAIN STRING CONSTANTS, deliberately NOT
+// `toMatchInlineSnapshot`: `vitest -u` cannot rewrite these, which is
+// `CONTRIBUTING.md`'s "golden snapshots have no update script" applied. If one of
+// these reds, the launchd output changed — read the diff, do not retype the
+// constant.
+const WRAPPER_GOLDEN_96cbd39 = [
+  '#!/bin/sh',
+  '# agent-lens archive — unattended pass, invoked by the launchd agent',
+  '# com.agent-lens.archive every 15 minutes.',
+  '#',
+  '# GENERATED by `agent-lens schedule` — do not edit. Turning the job on again',
+  '# rewrites this file in full, which is what keeps it current with the package',
+  '# that shipped it.',
+  '#',
+  '# Coverage is wake-time-bounded: a wall-clock schedule does not fire while the machine is asleep — treat the interval as a bound on wake time, not on elapsed time.',
+  '#',
+  "# Exit codes are the archive command's own and are load-bearing:",
+  '#   0 = clean pass       1 = usage error / crash       3 = archive-side errors',
+  '#   2 is RESERVED product-wide and must never appear here.',
+  'set -u',
+  '',
+  "NODE='/test/bin/node'",
+  "ROOT='/pkg'",
+  "DATA_DIR='/data'",
+  "LOG='/data/logs/cron.log'",
+  'MAX_LINES=5000',
+  '',
+  '# launchd hands over a minimal PATH. The node binary is addressed absolutely so',
+  '# the pass cannot hit an `env: node` lookup failure, and the export keeps',
+  '# anything the pass shells out to on a sane PATH too.',
+  'PATH="$(dirname "$NODE"):/usr/bin:/bin:/usr/sbin:/sbin"',
+  'export PATH',
+  '',
+  'mkdir -p "$(dirname "$LOG")"',
+  '',
+  'stamp() { date "+%Y-%m-%dT%H:%M:%S%z"; }',
+  'say() { printf \'%s %s\\n\' "$(stamp)" "$1" >>"$LOG"; }',
+  '',
+  '# Preconditions are logged loudly rather than failing silently: a job that',
+  '# quietly does nothing is indistinguishable from one that is working.',
+  '[ -d "$ROOT" ]              || { say "FATAL package root missing: $ROOT"; exit 1; }',
+  '[ -x "$NODE" ]              || { say "FATAL node missing: $NODE"; exit 1; }',
+  '[ -e "$ROOT/src/cli/index.ts" ] || { say "FATAL entry missing: $ROOT/src/cli/index.ts"; exit 1; }',
+  '[ -d "$ROOT/node_modules" ] || { say "FATAL node_modules missing — run npm install in $ROOT"; exit 1; }',
+  '',
+  'cd "$ROOT" || { say "FATAL cannot cd to $ROOT"; exit 1; }',
+  '',
+  'OUT=$("$NODE" --import tsx "$ROOT/src/cli/index.ts" archive --dataDir "$DATA_DIR" 2>&1)',
+  'CODE=$?',
+  '',
+  'case "$CODE" in',
+  '  0) say "ok   $OUT" ;;',
+  '  3) say "ERR3 archive-side errors — $OUT" ;;',
+  '  2) say "BUG  exit 2 is reserved product-wide and must never come from archive — $OUT" ;;',
+  '  *) say "ERR$CODE $OUT" ;;',
+  'esac',
+  '',
+  '# Bounded log: keep the most recent MAX_LINES so months of 15-minute passes',
+  '# cannot fill the disk the archive depends on.',
+  'if [ -f "$LOG" ]; then',
+  '  LINES=$(wc -l <"$LOG" 2>/dev/null || echo 0)',
+  '  if [ "$LINES" -gt "$MAX_LINES" ]; then',
+  '    tail -n "$MAX_LINES" "$LOG" >"$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"',
+  '  fi',
+  'fi',
+  '',
+  'exit "$CODE"',
+  '',
+].join('\n');
+
+const PLIST_GOLDEN_96cbd39 = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">',
+  '<dict>',
+  '  <key>Label</key>',
+  '  <string>com.agent-lens.archive</string>',
+  '',
+  '  <!-- Coverage is wake-time-bounded: a wall-clock schedule does not fire while the machine is asleep — treat the interval as a bound on wake time, not on elapsed time. -->',
+  '',
+  '  <!-- /bin/sh rather than the script directly: launchd exec failures are then',
+  '       reported against a known-good binary, so a broken shebang or a lost',
+  '       +x bit shows up as a script error instead of a silent no-op. -->',
+  '  <key>ProgramArguments</key>',
+  '  <array>',
+  '    <string>/bin/sh</string>',
+  '    <string>/data/schedule/archive.sh</string>',
+  '  </array>',
+  '',
+  '  <key>StartInterval</key>',
+  '  <integer>900</integer>',
+  '',
+  '  <!-- Catch up immediately at login rather than waiting out the first interval:',
+  '       the gap after a reboot is exactly when expiry is most likely to have run. -->',
+  '  <key>RunAtLoad</key>',
+  '  <true/>',
+  '',
+  '  <!-- launchd-level failures ONLY (exec errors, Full Disk Access denials).',
+  "       The pass's own results go to logs/cron.log via the wrapper. -->",
+  '  <key>StandardOutPath</key>',
+  '  <string>/data/logs/launchd.out.log</string>',
+  '  <key>StandardErrorPath</key>',
+  '  <string>/data/logs/launchd.err.log</string>',
+  '',
+  '  <key>ProcessType</key>',
+  '  <string>Background</string>',
+  '',
+  '  <!-- Deliberately NOT set: KeepAlive. This is a periodic batch job, not a',
+  '       daemon; KeepAlive would restart it in a tight loop after every exit. -->',
+  '</dict>',
+  '</plist>',
+  '',
+].join('\n');
+
+describe('12 — the launchd bytes are pinned, so no shared-code change can drift them (AC5)', () => {
+  it('the wrapper is byte-for-byte what 96cbd39 generated', () => {
+    expect(
+      buildWrapperScript({
+        nodePath: '/test/bin/node',
+        invocation: { packageRoot: '/pkg', kind: 'source' },
+        dataDir: '/data',
+        cronLogPath: '/data/logs/cron.log',
+      }),
+    ).toBe(WRAPPER_GOLDEN_96cbd39);
+  });
+
+  it('the plist is byte-for-byte what 96cbd39 generated', () => {
+    expect(buildPlist({ wrapperPath: '/data/schedule/archive.sh', dataDir: '/data' })).toBe(
+      PLIST_GOLDEN_96cbd39,
+    );
+  });
+});
+
+describe('13 — Linux status is a report in every state, always 0 (AC2)', () => {
+  /** `show` output in the order systemd was MEASURED to reply in — not the asked order. */
+  const SHOW_REPLY =
+    'NextElapseUSecRealtime=Mon 2026-09-14 12:15:00 UTC\n' +
+    'ActiveState=active\n' +
+    'Result=success\n' +
+    'LastTriggerUSec=Mon 2026-09-14 12:00:00 UTC\n' +
+    'UnitFileState=enabled\n';
+
+  function showing(stdout: string, status = 0): Fakes {
+    return {
+      systemctl: (args) => (args.includes('show') ? { status, stdout, stderr: '' } : undefined),
+    };
+  }
+
+  it('nothing installed → the lstat gate answers, `show` is never asked (exit 0)', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain('not installed');
+    expect(out).toContain('agent-lens schedule install');
+    // Load-bearing: `show` on an absent unit was measured to exit 0 with every
+    // value empty, so it can never be the thing that decides "installed".
+    expect(bed.systemctlCalls).toEqual([]);
+    expect(out).toContain(WAKE_TIME_CAVEAT);
+  });
+
+  it('installed and active → both timestamps echo VERBATIM, keys read as a map', async () => {
+    const s = sb();
+    const bed = linuxBed(s, {}, showing(SHOW_REPLY));
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    plantCronLog(s, '2026-09-14T11:55:00+0000 ok   agent-lens archive: 1 files\n');
+
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+
+    expect(code).toBe(0);
+    expect(out).toContain(`installed — ${bed.timerPath}`);
+    expect(out).toContain('timer state: active');
+    expect(out).toContain('unit file: enabled');
+    // Verbatim, because nothing here parses a systemd-locale timestamp.
+    expect(out).toContain('next trigger: Mon 2026-09-14 12:15:00 UTC');
+    expect(out).toContain('last trigger: Mon 2026-09-14 12:00:00 UTC');
+    expect(out).toContain('last result: success');
+    // One `show`, asking for all five properties at once.
+    expect(bed.systemctlCalls.at(-1)).toEqual([
+      '--user',
+      'show',
+      TIMER_UNIT,
+      '--property=ActiveState,UnitFileState,NextElapseUSecRealtime,LastTriggerUSec,Result',
+    ]);
+    // The EXISTING freshness path, through formatLastPassSection.
+    expect(out).toContain('last successful pass: 5m ago');
+  });
+
+  it('installed but idle → reported as inactive, still exit 0', async () => {
+    const s = sb();
+    const bed = linuxBed(s, {}, showing('ActiveState=inactive\nUnitFileState=enabled\n'));
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain('timer state: inactive');
+    expect(out).toContain('next trigger: unknown');
+  });
+
+  it('an empty UnitFileState= is reported as unknown, never as a fact', async () => {
+    const s = sb();
+    const bed = linuxBed(s, {}, showing('ActiveState=inactive\nUnitFileState=\n'));
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain('unit file: unknown');
+    // The file IS on disk — the lstat said so — so "not installed" would be a lie.
+    expect(out).not.toContain('not installed');
+  });
+
+  it.each([
+    ['Linger=yes\n', 0, 'lingering: on'],
+    ['Linger=no\n', 0, 'lingering: off'],
+    // MEASURED: `loginctl show-user` with no argument exits 0 printing nothing.
+    // A naive parser reads that as "off"; it must read as unknown.
+    ['', 0, 'lingering: unknown'],
+    ['', 1, 'lingering: unknown'],
+  ])('loginctl %j (exit %i) → %s', async (stdout, status, expected) => {
+    const s = sb();
+    const bed = linuxBed(s, {}, { loginctl: () => ({ status, stdout, stderr: '' }) });
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain(expected);
+  });
+});
+
+describe('14 — the Linux turn-off removes exactly what the turn-on created (AC3)', () => {
+  it('removes both units, the wants symlink and the wrapper; leaves the rest', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    plantCronLog(s, '2026-09-14T11:55:00+0000 ok   fine\n');
+    mkdirSync(join(s.archiveRoot, '-slug'), { recursive: true });
+    writeFileSync(join(s.archiveRoot, '-slug', 'sess.jsonl'), '{}\n');
+
+    const beforeData = [...snapshotTreeSafe(s.dataDir).keys()].sort();
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    plantWantsSymlink(bed);
+    // A sibling unit, to prove the shared dirs are not swept.
+    writeFileSync(join(bed.unitDir, 'other.timer'), '[Timer]\n');
+
+    const off = await run(dataDirArgs(s, 'disable'), bed.deps);
+
+    expect(off.code).toBe(0);
+    for (const path of [bed.timerPath, bed.servicePath, bed.wantsPath, bed.wrapperPath]) {
+      expect(off.out).toContain(path);
+      expect(snapshotTreeSafe(dirname(path)).has(basename(path))).toBe(false);
+    }
+    // cron.log and the archive are untouched: the data dir is back to its
+    // pre-turn-on shape, `<dataDir>/schedule` included.
+    expect([...snapshotTreeSafe(s.dataDir).keys()].sort()).toEqual(beforeData);
+    // The SHARED dirs stay, and so does the sibling unit — `removeEmptyDir` is
+    // deliberately pointed only at `<dataDir>/schedule`.
+    expect(readdirSync(bed.unitDir).sort()).toEqual(['other.timer', 'timers.target.wants']);
+    expect(statSync(dirname(bed.wantsPath)).isDirectory()).toBe(true);
+    // Two verbs, not `disable --now`, then a reload once the files are gone.
+    expect(bed.systemctlCalls.slice(-3)).toEqual([
+      ['--user', 'stop', TIMER_UNIT],
+      ['--user', 'disable', TIMER_UNIT],
+      ['--user', 'daemon-reload'],
+    ]);
+  });
+
+  it('a refused `disable` still clears the dangling symlink, warns, and exits 0', async () => {
+    const s = sb();
+    // The MEASURED failure: `disable` on a unit whose file is gone exits 1 and
+    // leaves `timers.target.wants/<timer>` behind as a dangling link.
+    const bed = linuxBed(
+      s,
+      {},
+      {
+        systemctl: (args) =>
+          args.includes('disable') || args.includes('stop')
+            ? { status: 1, stdout: '', stderr: `Unit file ${TIMER_UNIT} does not exist.` }
+            : undefined,
+      },
+    );
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    plantWantsSymlink(bed);
+
+    const { code, out } = await run(dataDirArgs(s, 'disable'), bed.deps);
+
+    expect(code).toBe(0);
+    expect(readdirSync(dirname(bed.wantsPath))).toEqual([]);
+    expect(out).toContain('warning:');
+    expect(out).toContain('does not exist.');
+    expect(out).toContain('removed anyway');
+  });
+
+  it('turn-off with nothing on is a clean 0, says so, and warns about nothing', async () => {
+    const s = sb();
+    const bed = linuxBed(
+      s,
+      {},
+      {
+        systemctl: (args) =>
+          args.includes('stop') ? { status: 1, stdout: '', stderr: 'no such unit' } : undefined,
+      },
+    );
+    const { code, out } = await run(dataDirArgs(s, 'disable'), bed.deps);
+    expect(code).toBe(0);
+    expect(out).toContain('nothing to remove');
+    // Nothing was installed, so a refusal is not worth a warning.
+    expect(out).not.toContain('warning:');
+  });
+});
+
+describe('15 — two Linux turn-ons leave exactly one timer and one service (AC4)', () => {
+  it('byte-stable, no temp residue, and nothing is asserted about pass count', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+
+    expect((await run(dataDirArgs(s, 'install'), bed.deps)).code).toBe(0);
+    const timer1 = readFileSync(bed.timerPath, 'utf8');
+    const service1 = readFileSync(bed.servicePath, 'utf8');
+    const wrapper1 = readFileSync(bed.wrapperPath, 'utf8');
+    plantWantsSymlink(bed);
+
+    expect((await run(dataDirArgs(s, 'install'), bed.deps)).code).toBe(0);
+
+    expect(readFileSync(bed.timerPath, 'utf8')).toBe(timer1);
+    expect(readFileSync(bed.servicePath, 'utf8')).toBe(service1);
+    expect(readFileSync(bed.wrapperPath, 'utf8')).toBe(wrapper1);
+    // Exactly one of each, plus the symlink dir a real `enable` makes. No
+    // `.tmp.<pid>` residue from the atomic writes.
+    expect(readdirSync(bed.unitDir).sort()).toEqual([
+      SERVICE_UNIT,
+      TIMER_UNIT,
+      'timers.target.wants',
+    ]);
+    expect(readdirSync(dirname(bed.wrapperPath))).toEqual(['archive.sh']);
+    // NOT asserted: how many archive passes ran. `restart` on a Persistent timer
+    // more than one slot after the first turn-on can itself fire a catch-up, so a
+    // second turn-on may launch two passes. Benign — a second concurrent pass
+    // copies nothing and exits 0 — and counting them would pin systemd internals.
+  });
+});
+
+describe('16 — macOS is untouched, and a third platform still gets a pointer (AC5, AC6)', () => {
+  it('platform darwin still takes the launchd path and no new binary is called', async () => {
+    const s = sb();
+    const bed = makeDeps(s);
+    const { code } = await run(dataDirArgs(s, 'install'), bed.deps);
+    expect(code).toBe(0);
+    expect(readFileSync(bed.plistPath, 'utf8')).toContain('<plist version="1.0">');
+    expect(bed.calls).toEqual([
+      ['bootout', `gui/501/${SCHEDULE_LABEL}`],
+      ['bootstrap', 'gui/501', bed.plistPath],
+    ]);
+    expect(bed.systemctlCalls).toEqual([]);
+    expect(bed.loginctlCalls).toEqual([]);
+    // No systemd artifact anywhere near a macOS turn-on.
+    expect(snapshotTreeSafe(join(bed.homeDir, '.config')).size).toBe(0);
+  });
+
+  it.each([
+    ['install', 1],
+    ['disable', 1],
+    ['status', 0],
+  ])('win32 %s exits %i with a pointer that names Linux as supported', async (action, expected) => {
+    const s = sb();
+    const bed = makeDeps(s, { platform: 'win32' });
+    const { code, out, err } = await run(dataDirArgs(s, action), bed.deps);
+    const text = out + err;
+    expect(code).toBe(expected);
+    expect(text).toContain('systemd user timer on Linux');
+    expect(text).toContain('cron');
+    expect(text).toContain('Keeping the archive current');
+    expect(snapshotTreeSafe(s.dataDir).size).toBe(0);
+    expect(snapshotTreeSafe(bed.homeDir).size).toBe(0);
+    expect(bed.calls).toEqual([]);
+    expect(bed.systemctlCalls).toEqual([]);
+    expect(bed.loginctlCalls).toEqual([]);
+  });
+});
+
+describe('17 — no real binary and no real unit dir can be reached (AC7)', () => {
+  it('the default unit dir is inside the sandbox, never a real ~/.config', () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    expect(resolveSystemdUserDir(bed.homeDir, undefined).startsWith(s.root)).toBe(true);
+    expect(bed.timerPath).toBe(join(bed.homeDir, '.config', 'systemd', 'user', TIMER_UNIT));
+  });
+
+  it('the injected configHome decides where units land', async () => {
+    const s = sb();
+    const configHome = join(s.root, 'xdg-config');
+    const bed = linuxBed(s, { configHome });
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    expect(bed.unitDir).toBe(join(configHome, 'systemd', 'user'));
+    expect(readdirSync(bed.unitDir).sort()).toEqual([SERVICE_UNIT, TIMER_UNIT]);
+  });
+
+  it('an ambient XDG_CONFIG_HOME cannot retarget a unit write — the DEP decides', async () => {
+    const s = sb();
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = '/nonexistent/ambient/config';
+    try {
+      const bed = linuxBed(s);
+      await run(dataDirArgs(s, 'install'), bed.deps);
+      expect(bed.unitDir.startsWith(bed.homeDir)).toBe(true);
+      expect(readFileSync(bed.timerPath, 'utf8')).toContain('[Timer]');
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous;
+    }
+  });
+
+  // ★ `schedule(args, deps = realDeps())` means ANY `runMain` call that dispatches
+  // `schedule` with a valid action runs against the real machine. `tsc` cannot
+  // catch it — the default parameter is the hole in the "injection is
+  // type-enforced" argument. So the call sites are pinned by text instead.
+  //
+  // The grep below deliberately matches source TEXT, so prose in this file must
+  // not spell a call shape it would mistake for code.
+  it('every runMain that reaches `schedule` is on the reviewed allow-list', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const ALLOWED = [
+      // Refused by `validateArgs` BEFORE dispatch, so `realDeps()` is never built.
+      "'schedule', '--bogus'",
+      // Describe 18(b): real deps on purpose, guarded to Linux, refused before
+      // the first write. The only call here that reaches `realDeps()`.
+      "'schedule', 'install', '--dataDir', insideTheCorpus",
+    ];
+    const found: string[] = [];
+    for (const file of ['schedule.test.ts', 'args.test.ts']) {
+      const text = readFileSync(join(here, file), 'utf8');
+      for (const match of text.matchAll(/runMain\(\s*\[([\s\S]*?)\]/g)) {
+        const argv = match[1]!.replace(/\s+/g, ' ').trim().replace(/,$/, '');
+        if (argv.includes("'schedule'")) found.push(argv);
+      }
+    }
+    expect(
+      [...new Set(found)].sort(),
+      'a new CLI-level call reaching `schedule` would drive `realDeps()` against ' +
+        'the machine running the tests — a real systemctl, a real launchctl, a ' +
+        'real unit dir. Add it here only with a reason it is safe.',
+    ).toEqual([...ALLOWED].sort());
+  });
+});
+
+describe('18 — containment refuses a unit or wrapper path inside the corpus (AC8)', () => {
+  /** Home AND data dir inside the sandbox corpus, so every target is refused. */
+  function cornered(s: Sandbox): { bed: TestBed; inside: string; restore: () => void } {
+    const restore = pinSandboxEnv(s);
+    const inside = join(s.sourceRoot, 'swallowed');
+    const bed = linuxBed(s, { homeDir: inside });
+    return { bed, inside, restore };
+  }
+
+  it.each([
+    ['the wrapper, via --dataDir', (inside: string) => ['install', '--dataDir', inside]],
+    ['the wrapper, on the turn-off path', (inside: string) => ['disable', '--dataDir', inside]],
+  ])('%s is refused, and nothing is written', async (_label, argv) => {
+    const s = sb();
+    const { bed, inside, restore } = cornered(s);
+    try {
+      const before = [...snapshotTreeSafe(s.sourceRoot).keys()].sort();
+      await expect(schedule(argv(inside), bed.deps)).rejects.toThrow(
+        /refusing to write inside the transcript root/,
+      );
+      // The assert-everything-before-the-first-mkdir ordering is what makes this
+      // true rather than merely likely.
+      expect([...snapshotTreeSafe(s.sourceRoot).keys()].sort()).toEqual(before);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a unit dir resolving inside the corpus is refused too', async () => {
+    const s = sb();
+    const restore = pinSandboxEnv(s);
+    try {
+      // Only the HOME dir is swallowed, so the refusal can only come from the
+      // unit path — the data dir is a legal sandbox path.
+      const bed = linuxBed(s, { homeDir: join(s.sourceRoot, 'swallowed-home') });
+      await expect(schedule(dataDirArgs(s, 'install'), bed.deps)).rejects.toThrow(
+        /refusing to write inside the transcript root/,
+      );
+      expect(snapshotTreeSafe(s.sourceRoot).size).toBe(0);
+      expect(snapshotTreeSafe(s.dataDir).size).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a line break in a unit value refuses with nothing written', async () => {
+    const s = sb();
+    const bed = linuxBed(s);
+    const broken = join(s.root, 'data\nwith-a-newline');
+    await expect(schedule(['install', '--dataDir', broken], bed.deps)).rejects.toThrow(
+      /would split the directive/,
+    );
+    // Both unit texts are built BEFORE the first write, so the refusal is total.
+    expect(snapshotTreeSafe(broken).size).toBe(0);
+    expect(snapshotTreeSafe(bed.unitDir).size).toBe(0);
+    expect(bed.systemctlCalls).toEqual([]);
+  });
+
+  // (b) The exit code, as opposed to the throw. `index.ts:124-133` is the only
+  // thing that turns one into the other and nothing else in this file reaches it.
+  // Guarded to Linux: see the banner at the top of this file.
+  it.runIf(process.platform === 'linux')(
+    'the refusal reaches the CLI as exit 1, not an unhandled rejection',
+    async () => {
+      const s = sb();
+      const restore = pinSandboxEnv(s);
+      const insideTheCorpus = join(s.sourceRoot, 'swallowed');
+      try {
+        const { code, err } = await runMain(['schedule', 'install', '--dataDir', insideTheCorpus]);
+        expect(code).toBe(1);
+        expect(code).not.toBe(2);
+        expect(err).toMatch(/refusing to write inside the transcript root/);
+        expect(snapshotTreeSafe(s.sourceRoot).size).toBe(0);
+      } finally {
+        restore();
+      }
+    },
+  );
+});
+
+describe('19 — exit codes stay 0 and 1 for every failure shape a runner can hand back', () => {
+  const SPAWN_ABSENT: CommandResult = {
+    status: null,
+    stdout: '',
+    stderr: 'spawnSync systemctl ENOENT',
+  };
+  const NO_BUS: CommandResult = {
+    status: 1,
+    stdout: '',
+    stderr: 'Failed to connect to bus: No medium found',
+  };
+  const REFUSED: CommandResult = {
+    status: 1,
+    stdout: '',
+    stderr: 'Interactive authentication required.',
+  };
+  // Kept for the invariant, and labelled honestly: NO verb this command runs was
+  // measured to return 3. `show` exits 0 on an absent unit and `disable` exits 1;
+  // the 3 came from `is-active`, which this design does not use. "Never 3" has to
+  // hold for any status a runner hands back, not just the measured ones.
+  const UNMEASURED_THREE: CommandResult = { status: 3, stdout: '', stderr: 'surprise' };
+
+  const SHAPES: ReadonlyArray<readonly [string, CommandResult]> = [
+    ['an absent binary', SPAWN_ABSENT],
+    ['a present binary with no user bus', NO_BUS],
+    ['an ordinary refusal', REFUSED],
+    ['an unmeasured exit 3', UNMEASURED_THREE],
+  ];
+
+  const ARMING_VERBS = ['daemon-reload', 'enable', 'restart'];
+
+  it.each(
+    SHAPES.flatMap(([label, result]) =>
+      ARMING_VERBS.map((verb) => [`${verb} / ${label}`, verb, result] as const),
+    ),
+  )('install refuses at %s with exactly 1', async (_label, verb, result) => {
+    const s = sb();
+    const bed = linuxBed(
+      s,
+      {},
+      { systemctl: (args) => (args.includes(verb) ? result : undefined) },
+    );
+    const { code, err } = await run(dataDirArgs(s, 'install'), bed.deps);
+    expect(code).toBe(1);
+    expect(code).not.toBe(2);
+    expect(code).not.toBe(3);
+    expect(err).toContain(verb);
+  });
+
+  it('the no-bus failure prints the XDG_RUNTIME_DIR hint, and only then', async () => {
+    const s = sb();
+    const withBusError = linuxBed(s, {}, { systemctl: () => NO_BUS });
+    const busRun = await run(dataDirArgs(s, 'install'), withBusError.deps);
+    expect(busRun.code).toBe(1);
+    expect(busRun.err).toContain('XDG_RUNTIME_DIR');
+    expect(busRun.err).toContain('/run/user/<uid>');
+
+    const s2 = sb();
+    const plainRefusal = linuxBed(s2, {}, { systemctl: () => REFUSED });
+    const plainRun = await run(dataDirArgs(s2, 'install'), plainRefusal.deps);
+    expect(plainRun.code).toBe(1);
+    expect(plainRun.err).not.toContain('XDG_RUNTIME_DIR');
+  });
+
+  it.each(SHAPES)(
+    'a failed FIRST PASS is a warning, not a failure (%s)',
+    async (_label, result) => {
+      const s = sb();
+      const bed = linuxBed(
+        s,
+        {},
+        {
+          systemctl: (args) => (args.includes('--no-block') ? result : undefined),
+        },
+      );
+      const { code, out } = await run(dataDirArgs(s, 'install'), bed.deps);
+      // The timer IS armed; only the immediate catch-up pass did not start.
+      expect(code).toBe(0);
+      expect(out).toContain('warning: the first pass could not be started');
+      expect(readFileSync(bed.timerPath, 'utf8')).toContain('OnCalendar');
+    },
+  );
+
+  it.each(
+    SHAPES.flatMap(([label, result]) =>
+      (['stop', 'disable'] as const).map((verb) => [`${verb} / ${label}`, verb, result] as const),
+    ),
+  )('disable stays 0 at %s — "already off" is not a failure', async (_label, verb, result) => {
+    const s = sb();
+    const bed = linuxBed(
+      s,
+      {},
+      { systemctl: (args) => (args.includes(verb) ? result : undefined) },
+    );
+    await run(dataDirArgs(s, 'install'), linuxBed(s).deps);
+    const { code } = await run(dataDirArgs(s, 'disable'), bed.deps);
+    expect(code).toBe(0);
+    expect(code).not.toBe(2);
+    expect(code).not.toBe(3);
+  });
+
+  it.each(SHAPES)('status stays 0 when `show` answers with %s', async (_label, result) => {
+    const s = sb();
+    const bed = linuxBed(
+      s,
+      {},
+      { systemctl: (args) => (args.includes('show') ? result : undefined) },
+    );
+    await run(dataDirArgs(s, 'install'), bed.deps);
+    const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+    expect(code).toBe(0);
+    expect(code).not.toBe(2);
+    expect(code).not.toBe(3);
+    expect(out).toContain('unknown');
+  });
+
+  it.each(SHAPES)(
+    'status and install stay 0/1 when `loginctl` answers with %s',
+    async (_label, result) => {
+      const s = sb();
+      const bed = linuxBed(s, {}, { loginctl: () => result });
+      expect((await run(dataDirArgs(s, 'install'), bed.deps)).code).toBe(0);
+      const { code, out } = await run(dataDirArgs(s, 'status'), bed.deps);
+      expect(code).toBe(0);
+      expect(out).toContain('lingering: unknown');
+    },
+  );
+});
+
+describe('20 — escapeUnitValue and the pure unit builders', () => {
+  it.each([
+    ['a percent expands as a specifier unless doubled', 'a%b', 'a%%b'],
+    ['a dollar expands to empty unless doubled', 'a$b', 'a$$b'],
+    ['a quote is escaped, not stripped', 'a"b', 'a\\"b'],
+    ['a backslash is doubled', 'a\\b', 'a\\\\b'],
+    // Backslash BEFORE quote, so the backslash step 1 adds is not re-doubled.
+    ['backslash runs before quote', '\\"', '\\\\\\"'],
+    ['a space passes through — the value is already inside quotes', 'a b', 'a b'],
+    [
+      'an ordinary path is unchanged',
+      '/home/x/.agent-lens/schedule/archive.sh',
+      '/home/x/.agent-lens/schedule/archive.sh',
+    ],
+  ])('%s', (_label, input, expected) => {
+    expect(escapeUnitValue(input)).toBe(expected);
+  });
+
+  it.each([['\n'], ['\r'], ['a\nb']])('%j throws rather than being encoded', (value) => {
+    expect(() => escapeUnitValue(value)).toThrow(/would split the directive/);
+  });
+
+  it('a hostile --dataDir lands in ExecStart with nothing left bare', async () => {
+    const s = sb();
+    const hostile = join(s.root, 'odd % $ " \\ dir');
+    const bed = linuxBed(s);
+    const { code } = await run(['install', '--dataDir', hostile], bed.deps);
+    expect(code).toBe(0);
+
+    const execStart = readFileSync(bed.servicePath, 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('ExecStart='))!;
+    // The raw path does NOT appear — every special character was transformed.
+    expect(execStart).not.toContain(hostile);
+    expect(execStart).toContain('%%');
+    expect(execStart).toContain('$$');
+    expect(execStart).toContain('\\"');
+    expect(execStart).toContain('\\\\');
+    // No single `%` or `$` survives undoubled, which is what makes the unit load.
+    expect(execStart.replace(/%%/g, '').includes('%')).toBe(false);
+    expect(execStart.replace(/\$\$/g, '').includes('$')).toBe(false);
+  });
+
+  it('both units carry the GENERATED banner, the caveats, and no reverse-DNS label', () => {
+    const service = buildSystemdService({ wrapperPath: '/data/schedule/archive.sh' });
+    const timer = buildSystemdTimer();
+    for (const text of [service, timer]) {
+      expect(text).toContain('GENERATED by `agent-lens schedule`');
+      expect(text).toContain(WAKE_TIME_CAVEAT);
+      // The founder's own naming precedent, not reverse-DNS.
+      expect(text).not.toContain(SCHEDULE_LABEL);
+      expect(text).not.toContain(LEGACY_LABEL);
+    }
+    expect(timer).toContain(LINGER_CAVEAT);
+    expect(SYSTEMD_UNIT_BASE).toBe('agent-lens-archive');
+    expect(`${SYSTEMD_UNIT_BASE}.service`).toBe(SERVICE_UNIT);
+    expect(`${SYSTEMD_UNIT_BASE}.timer`).toBe(TIMER_UNIT);
   });
 });

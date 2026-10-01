@@ -59,6 +59,16 @@ a term.
 shape for SQL and for projector versioning. `src/__tests__/docs.test.ts` is the same shape for these
 documents.
 
+**`agent-lens schedule` has two backends, and the machine is never real in a test.** macOS gets a
+launchd agent, Linux gets a systemd user timer, and which one runs is decided by an injected
+`platform` — not by `process.platform`, which `src/` reads in exactly one place. No test may run a
+real `launchctl`, `systemctl` or `loginctl`, or touch a real `~/Library/LaunchAgents` or
+`~/.config/systemd/user`: all three runners, the home directory and `XDG_CONFIG_HOME` are injected
+dependencies for that reason, and `src/cli/__tests__/schedule.test.ts` opens with the rule and the
+one reasoned exception to it. The generated plist and wrapper bytes are pinned by plain string
+constants rather than snapshots, which is the no-update-script ruling below applied: `vitest -u`
+must not be able to rewrite them.
+
 ## Two things that will surprise you on a fresh clone
 
 **Some UI parity tests fail on a clean clone, and that is deliberate.** The design tokens and the
