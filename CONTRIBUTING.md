@@ -61,14 +61,27 @@ documents.
 
 ## Two things that will surprise you on a fresh clone
 
-**Some UI parity tests fail on a clean clone, and that is deliberate.** The design tokens and the
+**The UI parity tests pass on a clean clone, and they need no secret.** The design tokens and the
 empty-state copy are pinned against specification documents that live in `internal_docs/`, which is
-git-ignored by design and therefore absent from any clone. Three files resolve paths into it —
-`ui/src/design/spec-tokens.ts` (which also pins 1-based line numbers into the token tables),
-`ui/src/__tests__/spec-doc.ts` for the design system, and the same file again for the user-flow
-documents. `ui/src/__tests__/tokens.test.ts` checks for the file first and fails with an explanation
-rather than parsing an empty token set and passing vacuously. A loud failure was chosen over a skip
-on purpose: a silently-green parity test asserts nothing.
+git-ignored by design and therefore absent from any clone and from every fork PR. Exactly one module
+resolves paths into it — `ui/src/__tests__/spec-doc.ts`, for both the design system and the user-flow
+documents. (`ui/src/design/spec-tokens.ts` pins 1-based line numbers into the token tables and cites
+the path in prose, but resolves nothing itself.) `spec-doc.ts` tries both on-disk layouts in order
+and, when neither exists, falls back to `ui/src/__tests__/spec-excerpt.ts` — a tracked, line-faithful
+excerpt of exactly the lines the parity tests read, with every other line replaced by a redaction
+marker.
+
+So the same assertions run everywhere, and nothing is skipped: `tokens.test.ts` demands a non-empty
+parsed token set rather than a file, which still fails loudly if a source is empty, truncated or
+unreachable. A loud failure was chosen over a skip on purpose — a silently-green parity test asserts
+nothing.
+
+**If you have the real spec, it wins.** `spec-doc.ts` prefers it, and a founder-only drift test in
+`spec-excerpt.test.ts` reds when a published line no longer matches the spec, printing the corrected
+line. Edit `spec-excerpt.ts` by hand from that output. There is deliberately no generator, for the
+same reason golden snapshots have no update script (below). Nothing needs refreshing on a schedule
+and no repository secret is involved — the previous `AGENT_LENS_SPEC_TAR` secret is retired, along
+with the 48 KB secret-size ceiling it was approaching.
 
 **Golden snapshots have no update script, and that is also deliberate.** An earlier
 `snapshots:update` permanently disarmed the anti-skip gate for anyone who ran it once. Regenerate a

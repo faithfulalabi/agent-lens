@@ -73,25 +73,18 @@ jobs:
             ui/package-lock.json
       - run: npm ci
 
-      # internal_docs/ is deliberately untracked, but the ui spec-parity tests
-      # hard-fail (never skip) without these three files. The founder-owned
-      # AGENT_LENS_SPEC_TAR secret is a base64 tar of exactly those files,
-      # refreshed by hand when the specs change.
-      # ponytail: ceiling — secrets are absent on fork PRs, so this job (and
-      # the run) will fail there. Matters only once the repo goes public.
-      - name: Provision spec files from secret
-        env:
-          AGENT_LENS_SPEC_TAR: ${{ secrets.AGENT_LENS_SPEC_TAR }}
-        run: |
-          if [ -z "$AGENT_LENS_SPEC_TAR" ]; then
-            echo "::error::AGENT_LENS_SPEC_TAR secret is missing or empty. The ui spec-parity tests fail loudly without internal_docs/agent-lens/spec — refresh the secret (see task-2.1-ci-workflow.md)."
-            exit 1
-          fi
-          echo "$AGENT_LENS_SPEC_TAR" | base64 -d | tar xz
-          test -f internal_docs/agent-lens/spec/design-system.md
-          test -f internal_docs/agent-lens/spec/user-flows/01-first-run-install.md
-          test -f internal_docs/agent-lens/spec/user-flows/03-inspect-session.md
-
+      # No spec-provisioning step, by design (task 1.1). This job used to extract
+      # the git-ignored spec directory from a repo secret and fail hard when the
+      # secret was empty — which made a fork PR structurally unmergeable, because
+      # GitHub never exposes secrets to a fork's `pull_request` run. The parity
+      # tests now fall back to the tracked `ui/src/__tests__/spec-excerpt.ts`, so
+      # this job needs no secret and no spec on disk.
+      #
+      # `src/packaging.test.ts` pins all of that, by absence: no secret read on
+      # lint/test/smoke, and no privileged fork trigger — which would run
+      # head-ref code with base-repo secrets and is an explicit non-goal. Both
+      # pins are spelled there rather than here, because naming either string in
+      # this file is exactly what they forbid.
       - run: npm run typecheck
       # Build before test: the spawned-binary tests run bin/agent-lens.js,
       # which imports the BUILT CLI from dist/ — absent on a fresh checkout.
