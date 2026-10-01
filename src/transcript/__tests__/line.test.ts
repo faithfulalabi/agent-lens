@@ -14,7 +14,15 @@ import {
 } from '../line.js';
 import { classifyFixture, ctx, fixtureBytes } from './fixtures.js';
 
-/** The 14 measured top-level types, with their 2026-08-13 archive counts. */
+/**
+ * The 17 measured top-level types, with their 2026-08-13 archive counts.
+ *
+ * Two measurement dates, one list. The first fourteen were measured against the
+ * frozen archive on 2026-08-13 (harness 2.1.197 / 2.1.212). The last three were
+ * measured against the live corpus on 2026-09-30 (harness 2.1.277-2.1.284) and
+ * are ABSENT from that archive, which is why their count is `0` — see the comment
+ * on them below.
+ */
 const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['assistant', 22748],
   ['user', 13620],
@@ -30,6 +38,16 @@ const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['file-history-delta', 125],
   ['started', 12],
   ['result', 12],
+  // ★ `0` is the true FROZEN-ARCHIVE count for these three, not a placeholder:
+  // they arrived ~80 harness patches after 2026-08-13, so the archive this column
+  // reports on contains none of them. The live 2026-09-30 reading was 213 / 14 / 4
+  // lines across 48 files, and it is parked here as PROSE on purpose — this file's
+  // header forbids asserting a live count, and the counts are never asserted
+  // anyway (`TOP_LEVEL_TYPES` is read only for `.length` and for the names).
+  // `src/transcript/line.ts`'s header carries the full reading.
+  ['atis-latch', 0],
+  ['cost-state', 0],
+  ['fork-context-ref', 0],
 ];
 
 /** The 7 declared `system` subtypes. `api_error` is the one with no witness. */
@@ -46,9 +64,9 @@ const SYSTEM_SUBTYPES = [
 describe('AC1 — every measured top-level type classifies to its own kind', () => {
   const { lines } = classifyFixture('all-types.jsonl');
 
-  it('covers all 14 measured types, one fixture line each', () => {
-    expect(TOP_LEVEL_TYPES).toHaveLength(14);
-    expect(lines).toHaveLength(14);
+  it('covers all 17 measured types, one fixture line each', () => {
+    expect(TOP_LEVEL_TYPES).toHaveLength(17);
+    expect(lines).toHaveLength(17);
     // A set: the fixture is ordered for readability, the list above by measured
     // frequency, and neither ordering is a property worth pinning.
     expect(new Set(lines.map((line) => line.kind))).toEqual(
@@ -63,7 +81,7 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
   it('the union is exhaustive — a new kind will not compile', () => {
     // The `never` default is the assertion: adding an arm to `ParsedLine` without
     // adding it here is a TYPE error, which is the only way to keep this list and
-    // the union in step once the harness ships a 15th type.
+    // the union in step once the harness ships an 18th type.
     const label = (line: ParsedLine): string => {
       switch (line.kind) {
         case 'assistant':
@@ -79,6 +97,9 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
         case 'file-history-delta':
         case 'started':
         case 'result':
+        case 'atis-latch':
+        case 'cost-state':
+        case 'fork-context-ref':
           return line.kind;
         case 'system':
           return `system.${line.subtype}`;
@@ -252,7 +273,7 @@ describe('AC4 — byte offsets are archive-relative and multibyte-safe', () => {
   });
 });
 
-describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions', () => {
+describe('AC5 — the 13 uuid-less types project to nothing, bar two exceptions', () => {
   const UUID_LESS: readonly ParsedKind[] = [
     'mode',
     'permission-mode',
@@ -264,17 +285,22 @@ describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions'
     'pr-link',
     'started',
     'result',
+    // Measured 2026-09-30: 0 of 213, 0 of 14 and 0 of 4 carry a uuid, which is
+    // why absorbing these three changes `drift_json` and no projected row.
+    'atis-latch',
+    'cost-state',
+    'fork-context-ref',
   ];
 
-  it('is exactly 10 types, and none of them carries a uuid', () => {
+  it('is exactly 13 types, and none of them carries a uuid', () => {
     // 34.7% of session-file lines (3,779 of 10,879) on 2026-08-13.
-    expect(UUID_LESS).toHaveLength(10);
+    expect(UUID_LESS).toHaveLength(13);
     const { lines } = classifyFixture('all-types.jsonl');
     const uuidLess = lines.filter((line) => line.uuid === undefined).map((line) => line.kind);
     expect(new Set(uuidLess)).toEqual(new Set(UUID_LESS));
   });
 
-  it('projects nothing at all from the eight that are not exceptions', () => {
+  it('projects nothing at all from the eleven that are not exceptions', () => {
     const { lines } = classifyFixture('all-types.jsonl');
     const projection = foldControlLines(
       lines.filter((line) => line.kind !== 'ai-title' && line.kind !== 'last-prompt'),

@@ -18,23 +18,38 @@ import { runIt } from './run-it.js';
 const MIN_FILES = 100;
 const MIN_LINES = 20000;
 
-const DECLARED_KINDS: ReadonlySet<string> = new Set<ParsedKind>([
-  'assistant',
-  'user',
-  'system',
-  'attachment',
-  'mode',
-  'last-prompt',
-  'permission-mode',
-  'ai-title',
-  'file-history-snapshot',
-  'file-history-delta',
-  'queue-operation',
-  'pr-link',
-  'started',
-  'result',
-  'unknown',
-]);
+/**
+ * ★ A `Record<ParsedKind, true>`, NOT `new Set<ParsedKind>([...])`.
+ *
+ * The array form accepted any SUBSET, so a kind missing from this list compiled
+ * silently. That mattered more here than anywhere: every assertion in this file
+ * runs through `runIt`, which is `it.skip` unless `AGENT_LENS_REAL_CORPUS=1`, and
+ * it reads `~/.agent-lens/archive`, which does not exist on every dev machine.
+ * `tsc` is therefore the ONLY thing that can keep this list honest — which it now
+ * does, because `Record<K, true>` requires every key.
+ */
+const ALL_KINDS: Record<ParsedKind, true> = {
+  assistant: true,
+  user: true,
+  system: true,
+  attachment: true,
+  mode: true,
+  'last-prompt': true,
+  'permission-mode': true,
+  'ai-title': true,
+  'file-history-snapshot': true,
+  'file-history-delta': true,
+  'queue-operation': true,
+  'pr-link': true,
+  started: true,
+  result: true,
+  'atis-latch': true,
+  'cost-state': true,
+  'fork-context-ref': true,
+  unknown: true,
+};
+
+const DECLARED_KINDS: ReadonlySet<string> = new Set(Object.keys(ALL_KINDS));
 
 describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(

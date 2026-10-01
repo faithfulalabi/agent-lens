@@ -14,23 +14,36 @@ import { DriftCounter } from '../drift.js';
 const SEED = 20260813;
 const NUM_RUNS = 300;
 
-const KINDS: ReadonlySet<string> = new Set<ParsedKind>([
-  'assistant',
-  'user',
-  'system',
-  'attachment',
-  'mode',
-  'last-prompt',
-  'permission-mode',
-  'ai-title',
-  'file-history-snapshot',
-  'file-history-delta',
-  'queue-operation',
-  'pr-link',
-  'started',
-  'result',
-  'unknown',
-]);
+/**
+ * ★ A `Record<ParsedKind, true>`, NOT `new Set<ParsedKind>([...])`.
+ *
+ * The array form accepted any SUBSET: a kind missing from it compiled and this
+ * suite passed, so the list silently fell out of step with the union every time
+ * the harness shipped a type. `Record<K, true>` requires EVERY key, so omitting
+ * one is a compile error and the list now moves with `ParsedLine` by force.
+ */
+const ALL_KINDS: Record<ParsedKind, true> = {
+  assistant: true,
+  user: true,
+  system: true,
+  attachment: true,
+  mode: true,
+  'last-prompt': true,
+  'permission-mode': true,
+  'ai-title': true,
+  'file-history-snapshot': true,
+  'file-history-delta': true,
+  'queue-operation': true,
+  'pr-link': true,
+  started: true,
+  result: true,
+  'atis-latch': true,
+  'cost-state': true,
+  'fork-context-ref': true,
+  unknown: true,
+};
+
+const KINDS: ReadonlySet<string> = new Set(Object.keys(ALL_KINDS));
 
 const KNOWN_TYPES = [...KINDS].filter((kind) => kind !== 'unknown');
 

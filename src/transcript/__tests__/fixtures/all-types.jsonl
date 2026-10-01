@@ -12,3 +12,6 @@
 {"type":"pr-link","sessionId":"33333333-3333-4333-8333-333333333333","prNumber":45,"prUrl":"https://github.com/example/repo/pull/45","prRepository":"example/repo","timestamp":"2026-08-13T10:00:06.000Z"}
 {"type":"started","key":"wf_step_0001","agentId":"agent_0001"}
 {"type":"result","key":"wf_step_0001","agentId":"agent_0001","result":"ok"}
+{"type":"atis-latch","atis":"latch_0001","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"cost-state","sessionId":"33333333-3333-4333-8333-333333333333","startTime":"2026-09-30T10:00:00.000Z","totalCostUSD":0.4213,"totalDuration":61234,"totalAPIDuration":41234,"totalAPIDurationWithoutRetries":40012,"totalToolDuration":3120,"totalLinesAdded":42,"totalLinesRemoved":7,"modelUsage":{"claude-opus-4":{"inputTokens":10,"outputTokens":2}},"hasUnknownModelCost":false}
+{"type":"fork-context-ref","agentId":"agent_0001","parentSessionId":"77777777-7777-4777-8777-777777777777","parentLastUuid":"44444444-4444-4444-8444-444444444444","contextLength":18342}
