@@ -64,8 +64,6 @@ describe('the README quotes the product, not a paraphrase of it (Test 1)', () =>
   it.each([
     ['DURABILITY_STATEMENT', DURABILITY_STATEMENT],
     ['COVERAGE_GAP_STATEMENT', COVERAGE_GAP_STATEMENT],
-    // Same reason as the two above: a bound the mechanism cannot deliver is
-    // printed by the CLI and stated by the README, and the two must be one string.
     ['LINGER_CAVEAT', LINGER_CAVEAT],
   ])('README carries %s verbatim', (_name, statement) => {
     expect(

@@ -1,25 +1,10 @@
-// `agent-lens schedule` — the recurring archive job, owned end to end on TWO
-// backends chosen by the injected platform:
+// `agent-lens schedule` — the recurring archive job: a launchd plist on darwin, a
+// `.service` + `.timer` on linux, chosen by the injected platform. Both drive the
+// SAME generated wrapper byte-for-byte, so `doctor` reads one `cron.log` format on
+// both; a second format would break it on one platform only.
 //
-//   darwin → a launchd plist under `~/Library/LaunchAgents`, loaded with `launchctl`
-//   linux  → a `.service` + `.timer` under `~/.config/systemd/user`, armed with
-//            `systemctl --user`, with the lingering state read via `loginctl`
-//
-// Both drive the SAME generated wrapper under the data dir, which appends the
-// per-pass `cron.log` line `readCronLogStatus` reads — so `doctor`'s freshness
-// report works unchanged on both. A second log format would break `doctor` on
-// one platform only, which is why the wrapper is reused byte-for-byte rather
-// than parameterised. The two backends differ deliberately on catch-up: launchd
-// uses `RunAtLoad`, systemd uses `OnCalendar` + `Persistent=true`.
-//
-// Exit codes: 0 (done, or a report) and 1 (failed, refused, or nothing was set
-// up on this platform). Never 2 — reserved product-wide (`commands/archive.ts:1`)
-// — and never 3, which belongs to the archive pass itself.
-//
-// All three binaries sit behind injectable runners, and the platform, home dir,
-// uid, `XDG_CONFIG_HOME` and module URL behind `ScheduleDeps`, so the test suite
-// never touches the real LaunchAgents dir or a real `~/.config/systemd/user`, and
-// never runs a real `launchctl`, `systemctl` or `loginctl`.
+// Exit codes are 0 and 1 only. Every binary, path and env read is an injected dep,
+// so no test reaches a real `launchctl`/`systemctl`/`loginctl` or unit dir.
 
 import { spawnSync } from 'node:child_process';
 import {
@@ -50,32 +35,23 @@ import {
 import { parseStringFlag } from './archive.js';
 
 export const SCHEDULE_LABEL = 'com.agent-lens.archive';
-/** The founder's hand-authored job, migrated out on turn-on so two jobs never race. */
+/** A hand-authored predecessor, removed on turn-on so two jobs never race. */
 export const LEGACY_LABEL = 'com.faithful.agent-lens.archive';
 const START_INTERVAL_SECONDS = 900;
-/** `date` format whose output `parseCronLog` anchors on — colon-less offset included. */
+/** Pinned: `parseCronLog` anchors on this exact shape, colon-less offset included. */
 export const CRON_STAMP_FORMAT = '+%Y-%m-%dT%H:%M:%S%z';
 export const WAKE_TIME_CAVEAT =
   'a wall-clock schedule does not fire while the machine is asleep — treat the interval as a bound on wake time, not on elapsed time';
-/**
- * The systemd half of the same honesty `WAKE_TIME_CAVEAT` sets the precedent for:
- * a bound the mechanism cannot deliver gets printed rather than hidden. Quoted
- * verbatim by `README.md`, pinned by `docs.test.ts` — never retyped.
- */
+/** Quoted verbatim by `README.md` and pinned by `docs.test.ts` — never retype it. */
 export const LINGER_CAVEAT =
   'a systemd user timer does not run while you are logged out unless lingering is on for your user';
 
-/**
- * The fixed systemd unit pair, named the way the founder's own `internal-docs-sync`
- * pair is rather than reverse-DNS. FIXED is what makes a second turn-on replace
- * its own job instead of duplicating it, the same property the launchd label has.
- */
+/** Fixed, so a second turn-on replaces its own units rather than duplicating them. */
 export const SYSTEMD_UNIT_BASE = 'agent-lens-archive';
 const SYSTEMD_SERVICE = `${SYSTEMD_UNIT_BASE}.service`;
 const SYSTEMD_TIMER = `${SYSTEMD_UNIT_BASE}.timer`;
-/** `systemd-analyze calendar '*:0/15'` on 249 normalises to `*-*-* *:00/15:00`. */
 const SYSTEMD_CALENDAR = '*:0/15';
-/** Asked for in one `show`; the reply order is NOT the requested order, measured. */
+/** Asked for in one `show`, whose reply order is not the requested order. */
 const SYSTEMD_TIMER_PROPERTIES = [
   'ActiveState',
   'UnitFileState',
@@ -90,7 +66,6 @@ const UNSUPPORTED_PLATFORM_POINTER =
   'is neither. Run `agent-lens archive` every ~15 minutes from whatever scheduler it does have — ' +
   'a cron entry, for instance — per the README section "Keeping the archive current". No cron ' +
   'fallback ships here on purpose: the two backends above are the two this command sets up for you.';
-/** Measured: a PRESENT `systemctl` with no user bus exits 1 with exactly this. */
 const BUS_HINT =
   '  hint: run this from a logged-in session — `systemctl --user` needs a user D-Bus, with ' +
   'XDG_RUNTIME_DIR pointing at /run/user/<uid>';
@@ -105,7 +80,6 @@ export type CommandRunner = (args: string[]) => CommandResult;
 
 /** Alias kept because `schedule.test.ts` imports this name. */
 export type LaunchctlResult = CommandResult;
-/** Alias kept as bookkeeping; nothing outside this file names it. */
 export type LaunchctlRunner = CommandRunner;
 
 /** Everything the command reads from the machine, injectable for tests. */
@@ -120,10 +94,7 @@ export interface ScheduleDeps {
   systemctl: CommandRunner;
   /** Read-only, and only for the lingering advisory — never `enable-linger`. */
   loginctl: CommandRunner;
-  /**
-   * `XDG_CONFIG_HOME`, or `undefined`. A dep rather than an env read inside
-   * `resolveSystemdUserDir`, so no test can land a unit in a real config home.
-   */
+  /** `XDG_CONFIG_HOME`; a dep, not an env read, so no test lands a unit in a real one. */
   configHome: string | undefined;
   now: () => number;
 }
@@ -145,9 +116,7 @@ function realDeps(): ScheduleDeps {
     platform: process.platform,
     execPath: process.execPath,
     homeDir: homedir(),
-    // `?? 0` cannot fire on the only platform that reads `uid` for a systemd
-    // path: `process.getuid` is always defined on Linux. A genuine root turn-on
-    // gives `loginctl show-user 0` exit 1, which reads as `unknown`.
+    // `?? 0` is unreachable where it matters: `getuid` is always defined on Linux.
     uid: process.getuid?.() ?? 0,
     moduleUrl: import.meta.url,
     launchctl: realRunner('launchctl'),
@@ -158,10 +127,7 @@ function realDeps(): ScheduleDeps {
   };
 }
 
-/**
- * The one bare token, walked the way `validateArgs` walks: a `--dataDir` value
- * is consumed by position and never inspected.
- */
+/** First bare token; a `--dataDir` value is consumed by position, never inspected. */
 export function parseScheduleAction(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -182,7 +148,7 @@ export interface ArchiveInvocation {
   kind: 'source' | 'built';
 }
 
-/** Nearest ancestor holding a `package.json` — the `resolveUiDir` idiom. */
+/** Nearest ancestor holding a `package.json`. */
 function resolvePackageRoot(fromDir: string): string {
   let dir = fromDir;
   for (;;) {
@@ -196,10 +162,8 @@ function resolvePackageRoot(fromDir: string): string {
 }
 
 /**
- * The non-stale way to run the archive from a job. A dev checkout runs the
- * TypeScript entry under tsx, so a stale `dist/` can never silently execute
- * old archive logic; the built package runs `bin/agent-lens.js`, which
- * re-resolves its co-located `dist/` in-process on every pass.
+ * A dev checkout runs the TS entry under tsx, so a stale `dist/` can never silently
+ * execute old archive logic; the built package runs `bin/agent-lens.js`.
  */
 export function resolveArchiveInvocation(moduleUrl: string): ArchiveInvocation {
   const modulePath = fileURLToPath(moduleUrl);
@@ -225,15 +189,13 @@ export interface WrapperOptions {
 }
 
 /**
- * The wrapper the plist invokes. Its `cron.log` line is byte-compatible with
- * `parseCronLog`: `date "+%Y-%m-%dT%H:%M:%S%z"`, a status token, a summary —
- * continuation lines carry no timestamp and are skipped by the reader.
+ * The wrapper both backends run. Its `cron.log` line must stay byte-compatible with
+ * `parseCronLog`: timestamp, status token, summary.
  */
 export function buildWrapperScript(opts: WrapperOptions): string {
   const { kind, packageRoot } = opts.invocation;
   const entry = kind === 'source' ? '$ROOT/src/cli/index.ts' : '$ROOT/bin/agent-lens.js';
-  // `--dataDir` is explicit so the pass archives into the SAME data dir the
-  // cron.log lives in — an env-default lookup under launchd could diverge.
+  // `--dataDir` explicit: an env-default lookup under launchd could pick another dir.
   const run =
     kind === 'source'
       ? '"$NODE" --import tsx "$ROOT/src/cli/index.ts" archive --dataDir "$DATA_DIR"'
@@ -306,11 +268,6 @@ function xmlEscape(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/**
- * The launchd plist. Every property is the founder's hand-tuned job with a
- * generic label: 15-minute interval, catch-up at load, background priority,
- * launchd-level failures to their own logs, and deliberately no KeepAlive.
- */
 export function buildPlist(opts: { wrapperPath: string; dataDir: string }): string {
   const outLog = xmlEscape(join(opts.dataDir, 'logs', 'launchd.out.log'));
   const errLog = xmlEscape(join(opts.dataDir, 'logs', 'launchd.err.log'));
@@ -358,23 +315,12 @@ export function buildPlist(opts: { wrapperPath: string; dataDir: string }): stri
 }
 
 /**
- * A systemd `.ini` value is neither a shell word nor a unit NAME, so neither
- * `shQuote` nor `systemd-escape` is the right tool. Straight from the three man
- * pages, in this order:
- *
- * 1. `\` → `\\`  — an unrecognised escape pattern otherwise WARNS and silently
- *    changes the value (`systemd.syntax(7)`); a trailing `\` merges two lines.
- * 2. `"` → `\"`  — AFTER step 1, so the backslash step 1 introduces is not
- *    re-doubled. Quotes wrap an item and are removed on parse.
- * 3. `%` → `%%`  — otherwise a `%` in the path expands as a specifier and the
- *    unit fails to load (`systemd.unit(5)`: `%%` is one literal percent).
- * 4. `$` → `$$`  — otherwise `$FOO` expands, and `systemd.service(5)` says a
- *    variable with no value at expansion time becomes an EMPTY string, so the
- *    path would be silently mangled rather than loudly broken.
- *
- * A newline cannot be encoded at all — it splits the directive — so it throws.
- * `index.ts` turns that into exit 1, and because both unit texts are built before
- * the first write, a refused value leaves nothing on disk.
+ * Escaping for a systemd `.ini` VALUE — not a shell word, not a unit name, so
+ * neither `shQuote` nor `systemd-escape`. The order is load-bearing: `\`, then `"`,
+ * then `%` (unescaped it expands as a specifier and the unit fails to load), then
+ * `$` (unescaped it expands to an empty string, silently mangling the path). A
+ * newline cannot be encoded and throws; both unit texts are built before the first
+ * write, so a refused value leaves nothing on disk.
  */
 export function escapeUnitValue(value: string): string {
   if (/[\n\r]/.test(value)) {
@@ -391,15 +337,10 @@ export function escapeUnitValue(value: string): string {
 }
 
 /**
- * The systemd service: one oneshot pass, the same wrapper launchd runs. `/bin/sh`
- * rather than the script directly for the plist's own reason — an exec failure is
- * then reported against a known-good binary, so a broken shebang or a lost +x bit
- * surfaces as a script error instead of a silent no-op.
- *
- * No `StandardOutput=append:`: the pass's own results already go to `cron.log`
- * through the wrapper, unit-level failures go to the journal, and `install` prints
- * the `journalctl` command that reads them. `append:` also has a later systemd
- * floor than every directive here.
+ * One oneshot pass of the shared wrapper. `/bin/sh <wrapper>` rather than the script
+ * directly, so a broken shebang or a lost +x bit surfaces as a script error instead
+ * of a silent no-op. No `StandardOutput=append:` — results already reach `cron.log`,
+ * and `append:` has a later systemd floor than every directive here.
  */
 export function buildSystemdService(opts: { wrapperPath: string }): string {
   return `[Unit]
@@ -421,12 +362,9 @@ ExecStart=/bin/sh "${escapeUnitValue(opts.wrapperPath)}"
 }
 
 /**
- * The timer. `OnCalendar` + `Persistent=true` rather than `OnUnitActiveSec=900`,
- * deliberately and for two measured reasons: `Persistent=true` runs ONE catch-up
- * pass for a slot missed while the machine was off — the same intent as the
- * plist's `RunAtLoad`, which `OnUnitActiveSec` has no equivalent of at all — and
- * an `OnUnitActiveSec` timer reports an EMPTY `NextElapseUSecRealtime`, so only a
- * calendar timer can give `schedule status` a next trigger to print.
+ * `OnCalendar` + `Persistent=true`, not `OnUnitActiveSec`: only the calendar form
+ * catches up a slot missed while the machine was off, and only it reports a
+ * `NextElapseUSecRealtime` for `schedule status` to print.
  */
 export function buildSystemdTimer(): string {
   return `[Unit]
@@ -450,18 +388,15 @@ WantedBy=timers.target
 `;
 }
 
-// --- the few writes, each behind one call site -------------------------------
+// --- writes, each behind one call site ---------------------------------------
 
-/**
- * The one mkdir. `assertNotUnderRoot` keeps the read-only guarantee over the
- * corpus even against `--dataDir ~/.claude/projects`.
- */
+/** The one mkdir; the assert keeps `--dataDir ~/.claude/projects` out of the corpus. */
 function ensureDirOutsideCorpus(dir: string, mode: number, transcriptRoot: string): void {
   assertNotUnderRoot(dir, transcriptRoot, TRANSCRIPT_ROOT_LABEL);
   mkdirSync(dir, { recursive: true, mode });
 }
 
-/** Temp-write → chmod → rename, the `server/config.ts` idiom. */
+/** Temp-write → chmod → rename. */
 function atomicWrite(path: string, text: string, mode: number, transcriptRoot: string): void {
   assertNotUnderRoot(path, transcriptRoot, TRANSCRIPT_ROOT_LABEL);
   const tmp = `${path}.tmp.${process.pid}`;
@@ -479,18 +414,10 @@ function removeIfPresent(path: string, transcriptRoot: string): boolean {
 }
 
 /**
- * The one rmdir, for the one directory a turn-on creates: `<dataDir>/schedule`.
- * `rmdir(2)` only ever removes an EMPTY directory, so anything a user parked in
- * there survives and the call degrades to a no-op.
- *
- * The try/catch wraps the rmdir ALONE and never the assert. A non-empty or absent
- * directory is a tolerated no-op; a containment refusal is not, and must reach the
- * caller the way `removeIfPresent`'s does. That assert is new here — the inline
- * `rmdirSync` this helper took over was the one write in this file with no
- * containment guard at all.
- *
- * Deliberately NOT used on the systemd unit dir or on `timers.target.wants`: both
- * are shared with every other user unit on the box.
+ * Only for `<dataDir>/schedule` — never the systemd unit dir or `timers.target.wants`,
+ * which are shared with every other user unit. `rmdir(2)` removes an empty directory
+ * only, so a non-empty or absent one is a tolerated no-op; the try/catch wraps the
+ * rmdir ALONE so a containment refusal still reaches the caller.
  */
 function removeEmptyDir(dir: string, transcriptRoot: string): void {
   assertNotUnderRoot(dir, transcriptRoot, TRANSCRIPT_ROOT_LABEL);
@@ -501,7 +428,7 @@ function removeEmptyDir(dir: string, transcriptRoot: string): void {
   }
 }
 
-// --- the three actions -------------------------------------------------------
+// --- actions -----------------------------------------------------------------
 
 function gui(deps: ScheduleDeps, label: string): string {
   return `gui/${deps.uid}/${label}`;
@@ -520,7 +447,7 @@ function install(dataDirFlag: string | undefined, deps: ScheduleDeps): number {
   const cronLogPath = resolveCronLogPath(dataDir);
   const lines: string[] = [];
 
-  // Migrate the founder's hand-authored job out FIRST, so the two never race.
+  // Migrate the legacy job out FIRST, so the two never race.
   const legacyPlist = resolvePlistPath(LEGACY_LABEL, deps.homeDir);
   const legacyWrapper = join(deps.homeDir, '.agent-lens', 'archive-cron.sh');
   if (lstatSafe(legacyPlist) !== undefined || lstatSafe(legacyWrapper) !== undefined) {
@@ -542,9 +469,8 @@ function install(dataDirFlag: string | undefined, deps: ScheduleDeps): number {
   );
   atomicWrite(plistPath, buildPlist({ wrapperPath, dataDir }), 0o644, transcriptRoot);
 
-  // Keyed on the fixed label: boot any previous instance out, then load the
-  // fresh plist, so a second run replaces rather than duplicates. "Not loaded"
-  // from the bootout is the healthy first-run case, ignored on purpose.
+  // Bootout then bootstrap, so a second run replaces rather than duplicates;
+  // "not loaded" from the bootout is the healthy first run and is ignored.
   deps.launchctl(['bootout', gui(deps, SCHEDULE_LABEL)]);
   const bootstrap = deps.launchctl(['bootstrap', `gui/${deps.uid}`, plistPath]);
   if (bootstrap.status !== 0) {
@@ -590,8 +516,7 @@ async function status(dataDirFlag: string | undefined, deps: ScheduleDeps): Prom
     lines.push('recurring archive job: not installed');
     lines.push('  turn it on with: agent-lens schedule install');
   }
-  // Lazy: `doctor.ts` statically reaches `node:sqlite` via db/open, which a
-  // status report must not load. Same freshness wording as `doctor` by reuse.
+  // Lazy: `doctor.ts` statically reaches `node:sqlite`, which a status must not load.
   const [{ formatLastPassSection }, { readCronLogStatus }] = await Promise.all([
     import('./doctor.js'),
     import('../../archive/cron-log.js'),
@@ -631,7 +556,7 @@ function disable(dataDirFlag: string | undefined, deps: ScheduleDeps): number {
   return 0;
 }
 
-// --- the systemd backend -----------------------------------------------------
+// --- systemd backend ---------------------------------------------------------
 
 interface SystemdPaths {
   unitDir: string;
@@ -641,7 +566,7 @@ interface SystemdPaths {
   wantsPath: string;
 }
 
-/** Every systemd path, from the INJECTED home dir and `configHome`, never ambient env. */
+/** From the injected home dir and `configHome`, never ambient env. */
 function systemdPaths(deps: ScheduleDeps): SystemdPaths {
   return {
     unitDir: resolveSystemdUserDir(deps.homeDir, deps.configHome),
@@ -651,17 +576,12 @@ function systemdPaths(deps: ScheduleDeps): SystemdPaths {
   };
 }
 
-/** The sentence a refusal gets reported with; a spawn error arrives as stderr. */
+/** Refusal detail; a spawn error arrives as stderr. */
 function detailOf(result: CommandResult): string {
   return (result.stderr || result.stdout).trim() || `systemctl exited ${String(result.status)}`;
 }
 
-/**
- * `k=v` lines as a map, NEVER positionally: `systemctl show` was measured to reply
- * in a different order than the properties were asked for. An absent or empty
- * value is reported as unknown rather than as a fact — `show` on a unit that does
- * not exist at all exits 0 with every value empty.
- */
+/** `k=v` as a map, never positionally: `show` does not reply in the requested order. */
 function parseProperties(stdout: string): Map<string, string> {
   const properties = new Map<string, string>();
   for (const line of stdout.split('\n')) {
@@ -679,11 +599,8 @@ function reported(value: string | undefined): string {
 type LingerState = 'on' | 'off' | 'unknown';
 
 /**
- * One `loginctl show-user <uid> --property=Linger`. Anything that is not an
- * explicit `yes` or `no` is `unknown`, and the enable command prints anyway:
- * `loginctl show-user` with NO argument was measured to exit 0 printing NOTHING,
- * which is exactly the shape a naive parser reads as "lingering is off". A missing
- * `loginctl` degrades to `unknown` too, never to a failure.
+ * Anything but an explicit `yes`/`no` is `unknown` — a `loginctl` that exits 0
+ * printing nothing must not read as "off". A missing one degrades to `unknown` too.
  */
 function readLingerState(deps: ScheduleDeps): LingerState {
   const result = deps.loginctl(['show-user', String(deps.uid), '--property=Linger']);
@@ -694,12 +611,7 @@ function readLingerState(deps: ScheduleDeps): LingerState {
   return 'unknown';
 }
 
-/**
- * The lingering advisory: PRINTED, never run. `loginctl enable-linger` writes
- * `/var/lib/systemd/linger/<user>` — outside everything this tool owns — is
- * commonly polkit-gated, and prompting for it would need `prune`'s injected
- * `confirm` plus its non-TTY-declines rule inside a command scripts invoke.
- */
+/** Advisory only: `enable-linger` writes outside everything this tool owns, so it is printed, never run. */
 function lingerLines(deps: ScheduleDeps): string[] {
   const state = readLingerState(deps);
   if (state === 'on') {
@@ -718,10 +630,8 @@ function installSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): nu
   const cronLogPath = resolveCronLogPath(dataDir);
   const { unitDir, servicePath, timerPath } = systemdPaths(deps);
 
-  // EVERY path asserted and BOTH unit texts built before the first mkdir. That
-  // ordering is the whole containment proof: a `--dataDir` inside the corpus, or
-  // a line break in a unit value, refuses with nothing written at all. Asserting
-  // up front adds reads only, so it costs no `fs-write-sites` manifest entry.
+  // Assert EVERY path and build both unit texts before the first mkdir, so a
+  // corpus `--dataDir` or a line break in a unit value refuses with nothing written.
   for (const path of [wrapperPath, cronLogPath, unitDir, servicePath, timerPath]) {
     assertNotUnderRoot(path, transcriptRoot, TRANSCRIPT_ROOT_LABEL);
   }
@@ -737,16 +647,15 @@ function installSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): nu
 
   ensureDirOutsideCorpus(dirname(wrapperPath), 0o700, transcriptRoot);
   ensureDirOutsideCorpus(dirname(cronLogPath), 0o700, transcriptRoot);
-  // 0o700 applies only to a unit dir THIS command creates: `mkdir -p` does not
-  // change the mode of a directory that already exists.
+  // 0o700 only lands on a unit dir this command creates; `mkdir -p` leaves an
+  // existing directory's mode alone.
   ensureDirOutsideCorpus(unitDir, 0o700, transcriptRoot);
   atomicWrite(wrapperPath, wrapperText, 0o700, transcriptRoot);
   atomicWrite(servicePath, serviceText, 0o644, transcriptRoot);
   atomicWrite(timerPath, timerText, 0o644, transcriptRoot);
 
-  // Keyed on the fixed unit names, so a second turn-on replaces rather than
-  // duplicates. `restart` re-arms with the fresh text, starts the timer when it
-  // was inactive, and does not reset the Persistent stamp.
+  // `restart` re-arms with the fresh text, starts an inactive timer, and does not
+  // reset the Persistent stamp.
   const armed: string[][] = [
     ['--user', 'daemon-reload'],
     ['--user', 'enable', SYSTEMD_TIMER],
@@ -764,12 +673,8 @@ function installSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): nu
     }
   }
 
-  // LOAD-BEARING, not a nicety. A never-run Persistent timer does not catch up:
-  // systemd writes the stamp at first start using the current time and does not
-  // read a missing stamp as a missed window. Without this, a fresh turn-on waits
-  // out a whole 15-minute slot before its first pass — the "merged but never
-  // executed" gap this command exists to close. `--no-block` keeps the turn-on
-  // from blocking on a whole pass.
+  // Required: a Persistent timer stamps itself at first start, so without this kick
+  // a fresh turn-on idles a whole slot. `--no-block` so turn-on never waits on a pass.
   const firstPass = deps.systemctl(['--user', 'start', '--no-block', SYSTEMD_SERVICE]);
   const lines: string[] = [];
   if (firstPass.status !== 0) {
@@ -793,13 +698,12 @@ function installSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): nu
 async function statusSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): Promise<number> {
   const { servicePath, timerPath } = systemdPaths(deps);
   const lines: string[] = [];
-  // The lstat gate is LOAD-BEARING: `show` cannot tell "absent" from "installed
-  // but idle" — both answer `ActiveState=inactive` and exit 0.
+  // The lstat gate is load-bearing: `show` cannot tell absent from installed-but-idle
+  // — both answer `ActiveState=inactive` and exit 0.
   if (lstatSafe(timerPath)?.isFile() === true) {
     lines.push(`recurring archive job: installed — ${timerPath}`);
     lines.push(`  service  ${servicePath}`);
-    // One `show`, and its exit code is IGNORED on purpose: the lstat above has
-    // already answered the only question the code could speak to.
+    // Exit code ignored on purpose: the lstat above already answered the question.
     const shown = deps.systemctl([
       '--user',
       'show',
@@ -819,8 +723,7 @@ async function statusSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps
     lines.push('  turn it on with: agent-lens schedule install');
   }
   lines.push(...lingerLines(deps));
-  // The EXISTING freshness path, unchanged — same lazy import as the launchd arm,
-  // so a status report never loads `node:sqlite` through `doctor.ts`.
+  // Same lazy import as the launchd arm: no `node:sqlite` in a status report.
   const [{ formatLastPassSection }, { readCronLogStatus }] = await Promise.all([
     import('./doctor.js'),
     import('../../archive/cron-log.js'),
@@ -837,31 +740,24 @@ function disableSystemd(dataDirFlag: string | undefined, deps: ScheduleDeps): nu
   const { servicePath, timerPath, wantsPath } = systemdPaths(deps);
   const wasInstalled = lstatSafe(timerPath) !== undefined || lstatSafe(servicePath) !== undefined;
 
-  // Two verbs, not `disable --now`: splitting removes the only version-floor
-  // question in the verb set and gives two separately reportable statuses.
-  // Neither status becomes the exit code — turning something off that is already
-  // off is not a failure, and the files below come away either way.
+  // Two verbs, not `disable --now`: avoids the one version-floor question. Neither
+  // status becomes the exit code — off when already off is not a failure.
   const stopped = deps.systemctl(['--user', 'stop', SYSTEMD_TIMER]);
   const disabled = deps.systemctl(['--user', 'disable', SYSTEMD_TIMER]);
 
   const removed: string[] = [];
-  // Four paths, and the `timers.target.wants` symlink is the one that matters:
-  // `disable` on a unit whose file is already gone exits 1 WITHOUT removing it,
-  // leaving a dangling link behind. `removeIfPresent` is `lstat` + `unlink`,
-  // which takes the link itself and never its target.
+  // `wantsPath` is named explicitly: `disable` leaves that symlink dangling once the
+  // unit file is gone.
   for (const path of [timerPath, servicePath, wantsPath, wrapperPath]) {
     if (removeIfPresent(path, transcriptRoot)) removed.push(path);
   }
   deps.systemctl(['--user', 'daemon-reload']);
-  // `<dataDir>/schedule` only. The unit dir and `timers.target.wants` are shared
-  // with every other user unit on the box and are deliberately left standing.
   removeEmptyDir(dirname(wrapperPath), transcriptRoot);
 
   const lines: string[] = [];
   const refused = [stopped, disabled].find((result) => result.status !== 0);
   if (refused !== undefined && wasInstalled) {
-    // Without this, an absent `systemctl` or a missing user bus would print
-    // "removed" and exit 0 in silence.
+    // Otherwise a missing user bus prints "removed" and exits 0 in silence.
     lines.push(
       `warning: systemctl --user could not stop the timer — ${detailOf(refused)}`,
       '  the unit files were removed anyway, so nothing is left to fire',

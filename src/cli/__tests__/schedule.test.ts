@@ -1,32 +1,17 @@
-// `agent-lens schedule` — the recurring archive job, on both backends. Harness
-// split follows `args.test.ts`: pure builders get pure tests; argv rejection goes
-// through `runMain` (rejected BEFORE dispatch, so nothing loads); everything
-// touching disk drives `schedule()` directly with injected deps against
-// `makeSandbox()`.
+// `agent-lens schedule` — both backends. Pure builders get pure tests; argv
+// rejection goes through `runMain`; anything touching disk drives `schedule()` with
+// injected deps against `makeSandbox()`.
 //
-// ⚠️ NO test here may ever run a real `launchctl`, `systemctl` or `loginctl`, or
-// touch the real `~/Library/LaunchAgents` or a real `~/.config/systemd/user`. All
-// three runners are always fakes; the home dir is always inside the sandbox; and
-// `configHome` is an injected DEP rather than an `XDG_CONFIG_HOME` read inside the
-// resolver, which is what makes a stray ambient env var unable to retarget a unit
-// write. The real launchd and systemd interactions are verified by manual
-// measurement on the founder's machine, exactly as the wrapper's predecessor was.
+// ⚠️ NO test here may run a real `launchctl`, `systemctl` or `loginctl`, or touch a
+// real `~/Library/LaunchAgents` or `~/.config/systemd/user`. One reasoned exception:
+// describe 18's `it.runIf(process.platform === 'linux')` drives `runMain` with REAL
+// deps, the only way to exercise the throw→exit-1 mapping in `index.ts`. Safe
+// because the systemd turn-on asserts every path before the first `mkdirSync`, so a
+// refused `--dataDir` returns 1 having written nothing and run no binary; guarded to
+// Linux because on macOS the same call could run a real `launchctl bootout`.
 //
-// ONE EXCEPTION, reasoned: describe 18's `it.runIf(process.platform === 'linux')`
-// drives `runMain` with REAL deps, because that is the only way to exercise the
-// throw→exit-1 mapping in `index.ts`. It is safe and it is guarded to Linux on
-// purpose — the systemd turn-on asserts every path BEFORE the first `mkdirSync`,
-// so a refused `--dataDir` returns 1 having written nothing and having run no
-// binary at all. On macOS the same call would `lstat` the founder's real
-// LaunchAgents dir and could run a real `launchctl bootout`, which the paragraph
-// above forbids absolutely. CI is Linux, so it runs there.
-//
-// Describe 17 pins that exception: a text grep over this file and `args.test.ts`
-// collects every `runMain` call whose argv names the schedule command, and
-// compares the set to an allow-list — so a NEW unguarded one reds the suite
-// instead of silently driving `realDeps()` against the machine running the tests.
-// Because that grep reads source text, prose in this file must never spell out a
-// call shape the grep would mistake for real code.
+// Describe 17 pins that exception by grepping this file for `runMain` calls naming
+// the command, so prose here must never spell a call shape the grep reads as code.
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -109,12 +94,9 @@ interface TestBed {
 }
 
 /**
- * Deps pinned entirely inside the sandbox: home dir, package root and all three
- * fake runners. `handler` overrides individual launchctl verdicts and `fakes`
- * does the same for the two Linux binaries; every default is success.
- *
- * `configHome: undefined` is explicit and required — it is what sends the unit
- * writes under the sandboxed `homeDir` instead of a real `XDG_CONFIG_HOME`.
+ * Deps pinned entirely inside the sandbox; every runner defaults to success.
+ * `configHome: undefined` is required — it is what sends unit writes under the
+ * sandboxed `homeDir` instead of a real `XDG_CONFIG_HOME`.
  */
 function makeDeps(
   s: Sandbox,
@@ -355,7 +337,7 @@ describe('5 — turn-on is idempotent: replace, never duplicate (AC3)', () => {
     expect(first.out).toContain(WAKE_TIME_CAVEAT);
     const wrapper1 = readFileSync(bed.wrapperPath, 'utf8');
     const plist1 = readFileSync(bed.plistPath, 'utf8');
-    // The pass and the log are pinned to the SAME data dir the flag named.
+    // Pass and log pinned to the SAME data dir the flag named.
     expect(wrapper1).toContain(`DATA_DIR='${s.dataDir}'`);
     // The label is booted out BEFORE the fresh plist is bootstrapped in.
     expect(bed.calls).toEqual([
@@ -603,7 +585,7 @@ describe('10 — the Linux turn-on writes both units and arms the timer (AC1)', 
     expect(timer).toContain(`Unit=${SERVICE_UNIT}`);
     expect(timer).toContain('WantedBy=timers.target');
     // Deliberately absent: an OnUnitActiveSec timer reports an empty
-    // NextElapseUSecRealtime and so cannot satisfy AC2's "next trigger".
+    // NextElapseUSecRealtime, so `status` would have no next trigger to print.
     expect(timer).not.toContain('OnUnitActiveSec');
 
     const service = readFileSync(bed.servicePath, 'utf8');
@@ -666,16 +648,10 @@ describe('11 — both backends share the wrapper and the cron.log contract', () 
   });
 });
 
-// ★ The byte pin AC5 asks for, which did not exist before this task: the existing
-// launchd assertions are all `toContain` property checks, so a shared-code change
-// could have altered a generated byte without reddening anything.
-//
-// Captured from `git show 96cbd39:src/cli/commands/schedule.ts` against the fixed
-// inputs this suite already uses. PLAIN STRING CONSTANTS, deliberately NOT
-// `toMatchInlineSnapshot`: `vitest -u` cannot rewrite these, which is
-// `CONTRIBUTING.md`'s "golden snapshots have no update script" applied. If one of
-// these reds, the launchd output changed — read the diff, do not retype the
-// constant.
+// ★ Byte pins for the launchd output; the other assertions are `toContain` checks,
+// so a shared-code change could alter a generated byte without reddening anything.
+// Plain string constants, deliberately NOT `toMatchInlineSnapshot`, so `vitest -u`
+// cannot rewrite them. If one reds, read the diff — never retype the constant.
 const WRAPPER_GOLDEN_96cbd39 = [
   '#!/bin/sh',
   '# agent-lens archive — unattended pass, invoked by the launchd agent',
@@ -805,7 +781,7 @@ describe('12 — the launchd bytes are pinned, so no shared-code change can drif
 });
 
 describe('13 — Linux status is a report in every state, always 0 (AC2)', () => {
-  /** `show` output in the order systemd was MEASURED to reply in — not the asked order. */
+  /** `show` output in the order systemd replies in — not the asked order. */
   const SHOW_REPLY =
     'NextElapseUSecRealtime=Mon 2026-09-14 12:15:00 UTC\n' +
     'ActiveState=active\n' +
@@ -826,8 +802,8 @@ describe('13 — Linux status is a report in every state, always 0 (AC2)', () =>
     expect(code).toBe(0);
     expect(out).toContain('not installed');
     expect(out).toContain('agent-lens schedule install');
-    // Load-bearing: `show` on an absent unit was measured to exit 0 with every
-    // value empty, so it can never be the thing that decides "installed".
+    // Load-bearing: `show` on an absent unit exits 0 with every value empty, so it
+    // can never be the thing that decides "installed".
     expect(bed.systemctlCalls).toEqual([]);
     expect(out).toContain(WAKE_TIME_CAVEAT);
   });
@@ -883,8 +859,8 @@ describe('13 — Linux status is a report in every state, always 0 (AC2)', () =>
   it.each([
     ['Linger=yes\n', 0, 'lingering: on'],
     ['Linger=no\n', 0, 'lingering: off'],
-    // MEASURED: `loginctl show-user` with no argument exits 0 printing nothing.
-    // A naive parser reads that as "off"; it must read as unknown.
+    // `loginctl show-user` with no argument exits 0 printing nothing. A naive parser
+    // reads that as "off"; it must read as unknown.
     ['', 0, 'lingering: unknown'],
     ['', 1, 'lingering: unknown'],
   ])('loginctl %j (exit %i) → %s', async (stdout, status, expected) => {
@@ -934,8 +910,8 @@ describe('14 — the Linux turn-off removes exactly what the turn-on created (AC
 
   it('a refused `disable` still clears the dangling symlink, warns, and exits 0', async () => {
     const s = sb();
-    // The MEASURED failure: `disable` on a unit whose file is gone exits 1 and
-    // leaves `timers.target.wants/<timer>` behind as a dangling link.
+    // `disable` on a unit whose file is gone exits 1 and leaves
+    // `timers.target.wants/<timer>` behind as a dangling link.
     const bed = linuxBed(
       s,
       {},
@@ -1000,10 +976,8 @@ describe('15 — two Linux turn-ons leave exactly one timer and one service (AC4
       'timers.target.wants',
     ]);
     expect(readdirSync(dirname(bed.wrapperPath))).toEqual(['archive.sh']);
-    // NOT asserted: how many archive passes ran. `restart` on a Persistent timer
-    // more than one slot after the first turn-on can itself fire a catch-up, so a
-    // second turn-on may launch two passes. Benign — a second concurrent pass
-    // copies nothing and exits 0 — and counting them would pin systemd internals.
+    // NOT asserted: how many passes ran. `restart` on a Persistent timer can itself
+    // fire a catch-up, and counting them would pin systemd internals.
   });
 });
 
@@ -1077,20 +1051,17 @@ describe('17 — no real binary and no real unit dir can be reached (AC7)', () =
     }
   });
 
-  // ★ `schedule(args, deps = realDeps())` means ANY `runMain` call that dispatches
-  // `schedule` with a valid action runs against the real machine. `tsc` cannot
-  // catch it — the default parameter is the hole in the "injection is
-  // type-enforced" argument. So the call sites are pinned by text instead.
-  //
-  // The grep below deliberately matches source TEXT, so prose in this file must
-  // not spell a call shape it would mistake for code.
+  // ★ `deps = realDeps()` is a default parameter, so `tsc` cannot stop a `runMain`
+  // call from reaching the real machine; the call sites are pinned by text instead.
+  // The grep matches source TEXT, so prose here must not spell a call shape it would
+  // mistake for code.
   it('every runMain that reaches `schedule` is on the reviewed allow-list', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const ALLOWED = [
       // Refused by `validateArgs` BEFORE dispatch, so `realDeps()` is never built.
       "'schedule', '--bogus'",
-      // Describe 18(b): real deps on purpose, guarded to Linux, refused before
-      // the first write. The only call here that reaches `realDeps()`.
+      // Real deps on purpose, guarded to Linux, refused before the first write —
+      // the only call here that reaches `realDeps()`.
       "'schedule', 'install', '--dataDir', insideTheCorpus",
     ];
     const found: string[] = [];
@@ -1130,8 +1101,7 @@ describe('18 — containment refuses a unit or wrapper path inside the corpus (A
       await expect(schedule(argv(inside), bed.deps)).rejects.toThrow(
         /refusing to write inside the transcript root/,
       );
-      // The assert-everything-before-the-first-mkdir ordering is what makes this
-      // true rather than merely likely.
+      // True because every path is asserted before the first mkdir.
       expect([...snapshotTreeSafe(s.sourceRoot).keys()].sort()).toEqual(before);
     } finally {
       restore();
@@ -1142,8 +1112,7 @@ describe('18 — containment refuses a unit or wrapper path inside the corpus (A
     const s = sb();
     const restore = pinSandboxEnv(s);
     try {
-      // Only the HOME dir is swallowed, so the refusal can only come from the
-      // unit path — the data dir is a legal sandbox path.
+      // Only HOME is swallowed, so the refusal can only come from the unit path.
       const bed = linuxBed(s, { homeDir: join(s.sourceRoot, 'swallowed-home') });
       await expect(schedule(dataDirArgs(s, 'install'), bed.deps)).rejects.toThrow(
         /refusing to write inside the transcript root/,
@@ -1168,9 +1137,8 @@ describe('18 — containment refuses a unit or wrapper path inside the corpus (A
     expect(bed.systemctlCalls).toEqual([]);
   });
 
-  // (b) The exit code, as opposed to the throw. `index.ts:124-133` is the only
-  // thing that turns one into the other and nothing else in this file reaches it.
-  // Guarded to Linux: see the banner at the top of this file.
+  // (b) The exit code rather than the throw — `index.ts` is the only thing that
+  // turns one into the other. Guarded to Linux: see the banner at the top.
   it.runIf(process.platform === 'linux')(
     'the refusal reaches the CLI as exit 1, not an unhandled rejection',
     async () => {
@@ -1206,10 +1174,8 @@ describe('19 — exit codes stay 0 and 1 for every failure shape a runner can ha
     stdout: '',
     stderr: 'Interactive authentication required.',
   };
-  // Kept for the invariant, and labelled honestly: NO verb this command runs was
-  // measured to return 3. `show` exits 0 on an absent unit and `disable` exits 1;
-  // the 3 came from `is-active`, which this design does not use. "Never 3" has to
-  // hold for any status a runner hands back, not just the measured ones.
+  // No verb this command runs is known to return 3, but "never 3" has to hold for
+  // any status a runner hands back.
   const UNMEASURED_THREE: CommandResult = { status: 3, stdout: '', stderr: 'surprise' };
 
   const SHAPES: ReadonlyArray<readonly [string, CommandResult]> = [
@@ -1325,7 +1291,7 @@ describe('20 — escapeUnitValue and the pure unit builders', () => {
     ['a dollar expands to empty unless doubled', 'a$b', 'a$$b'],
     ['a quote is escaped, not stripped', 'a"b', 'a\\"b'],
     ['a backslash is doubled', 'a\\b', 'a\\\\b'],
-    // Backslash BEFORE quote, so the backslash step 1 adds is not re-doubled.
+    // Backslash BEFORE quote, so the backslash it adds is not re-doubled.
     ['backslash runs before quote', '\\"', '\\\\\\"'],
     ['a space passes through — the value is already inside quotes', 'a b', 'a b'],
     [
@@ -1368,7 +1334,7 @@ describe('20 — escapeUnitValue and the pure unit builders', () => {
     for (const text of [service, timer]) {
       expect(text).toContain('GENERATED by `agent-lens schedule`');
       expect(text).toContain(WAKE_TIME_CAVEAT);
-      // The founder's own naming precedent, not reverse-DNS.
+      // Plain unit names, not reverse-DNS.
       expect(text).not.toContain(SCHEDULE_LABEL);
       expect(text).not.toContain(LEGACY_LABEL);
     }

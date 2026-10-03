@@ -90,10 +90,8 @@ export function resolveLockPath(dataDir?: string): string {
 }
 
 /**
- * Where the generated wrapper appends its per-pass line, on either backend — the
- * launchd agent and the systemd timer run the same wrapper. The wrapper hardcodes
- * `$HOME/.agent-lens/logs/cron.log` in shell, outside the repo — the two are
- * manually synced, the same accepted duplication as the exit-code contract.
+ * Where the generated wrapper appends its per-pass line, on either backend. The
+ * wrapper also hardcodes this path in shell — keep the two in sync by hand.
  */
 export function resolveCronLogPath(dataDir?: string): string {
   return join(resolveDataDir(dataDir), LOGS_DIR, 'cron.log');
@@ -110,13 +108,9 @@ export function resolvePlistPath(label: string, homeDir: string = homedir()): st
 }
 
 /**
- * Where `systemctl --user` reads per-user units from. Outside the data dir by
- * design, the same way `~/Library/LaunchAgents` is.
- *
- * `configHome` is the caller's `XDG_CONFIG_HOME`, passed in rather than read from
- * `process.env` here: `schedule` carries it as an injected dep so no test can
- * land a unit file in a real `~/.config/systemd/user`. A relative value is
- * ignored, which is what the XDG spec says to do with one.
+ * Where `systemctl --user` reads per-user units from; outside the data dir by
+ * design. `configHome` is passed in rather than read from `process.env` so no test
+ * can land a unit in a real one. A relative value is ignored, per the XDG spec.
  */
 export function resolveSystemdUserDir(homeDir: string = homedir(), configHome?: string): string {
   const base =
@@ -136,11 +130,8 @@ export function resolveSystemdUnitPath(
 }
 
 /**
- * The symlink `systemctl --user enable` plants for a timer. Measured, not
- * assumed: enabling `agent-lens-archive.timer` creates
- * `~/.config/systemd/user/timers.target.wants/agent-lens-archive.timer` pointing
- * at the unit, and `systemctl --user disable` on a unit whose file is already
- * gone exits 1 without removing it — so turn-off has to name it explicitly.
+ * The symlink `systemctl --user enable` plants for a timer. Turn-off must name it
+ * explicitly: `disable` exits 1 without removing it once the unit file is gone.
  */
 export function resolveSystemdWantsPath(
   name: string,
