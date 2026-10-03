@@ -1,20 +1,10 @@
-// AC1 in full ("raw-types.ts contains type declarations only, every field
-// optional and `unknown`-valued") and AC4's static half ("neither module imports
-// `node:fs`/`node:sqlite` or reads a clock"), both asserted MECHANICALLY over
-// the source text rather than trusted to review. Same shape as
-// `src/fs-write-sites.test.ts`, the repo's established source-property guard:
-// `typescript` as `ts`, and every helper taking a DEFAULTED `text` parameter so
-// the mutation controls at the bottom can drive the real helper bodies with
-// fixture text instead of disk. Re-deriving a comparison inline in a control
-// would prove nothing — softening a real assertion would leave it green.
+// Asserts over the source text that `raw-types.ts` declares types only, every field optional and
+// `unknown`-valued, and that neither module can reach the filesystem or the clock. Every helper
+// takes a DEFAULTED `text` parameter so the mutation controls at the bottom drive the real
+// helper bodies rather than a re-derived copy.
 //
-// AC1 is checked two independent ways because neither limb alone is enough:
-//   - EMIT: the JavaScript TypeScript produces must be byte-identical to the
-//     emit of a type-only reference module. `removeComments` is mandatory —
-//     without it a header comment alone makes the emits differ.
-//   - AST: every top-level statement kind must be a type declaration.
-// `export declare const X: number` is why: it emits nothing (passing the emit
-// limb) while being exactly the "no executable statements" violation AC1 means.
+// Type-only is checked two ways because `export declare const X: number` emits nothing — so the
+// byte-identical-emit limb passes it and only the statement-kind limb catches it.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -29,11 +19,8 @@ const RAW_TYPES = 'raw-types.ts';
 const ACCESSORS = 'accessors.ts';
 
 /**
- * Identifiers neither module may name. `Date` is the load-bearing one: `isoTs`
- * validates by regex precisely so this can be a flat zero rather than a
- * judgement call about `Date.parse` versus `Date.now`, a distinction that rots.
- * `Math` stands in for `Math.random`, and the last two close the obvious escape
- * hatch from all of the above.
+ * Identifiers neither module may name. `isoTs` validates by regex precisely so this can be a
+ * flat zero rather than a judgement call about which clock call is acceptable.
  */
 const BANNED = new Set(['Date', 'performance', 'process', 'Math', 'globalThis', 'require']);
 
@@ -45,11 +32,7 @@ function parse(file: string, text: string): ts.SourceFile {
   return ts.createSourceFile(join(MODULE_DIR, file), text, ts.ScriptTarget.ESNext, true);
 }
 
-/**
- * The JavaScript `text` compiles down to. Comments stripped — see the header.
- * The filename is a module-format hint for `transpileModule` and nothing more;
- * it does not have to be, and is not, the file being checked.
- */
+/** The JavaScript `text` compiles to. The filename is a module-format hint and nothing more. */
 function emit(text: string): string {
   return ts.transpileModule(text, {
     fileName: 'module-under-test.ts',
@@ -132,11 +115,8 @@ function importSpecifiers(file: string, text = read(file)): string[] {
 }
 
 /**
- * Every identifier `file` names. Walking IDENTIFIERS rather than raw text is
- * deliberate: comments are trivia and never reach the AST, so the modules can
- * explain in prose exactly why they avoid the clock without tripping their own
- * guard — and that explanation is the thing that stops a future maintainer
- * "simplifying" `isoTs` back onto a date parser.
+ * Every identifier `file` names. IDENTIFIERS rather than raw text, so the modules can explain
+ * in prose why they avoid the clock without tripping their own guard.
  */
 function identifiers(file: string, text = read(file)): string[] {
   const source = parse(file, text);
@@ -149,11 +129,7 @@ function identifiers(file: string, text = read(file)): string[] {
   return found;
 }
 
-/**
- * The banned subset. Deliberately a filter over the walk above rather than a
- * second walker: the non-vacuity test drives `identifiers` directly, so a walk
- * that stopped recursing reds there instead of silently emptying this list.
- */
+/** The banned subset. A filter over the walk above, so a walk that stopped recursing reds there. */
 function bannedIdentifiers(file: string, text = read(file)): string[] {
   return identifiers(file, text).filter((name) => BANNED.has(name));
 }
@@ -186,9 +162,8 @@ describe('AC1 — raw-types.ts is documentation that compiles', () => {
   });
 
   it('names the record types, content blocks and sub-objects that were measured', () => {
-    // The module's entire purpose is a measured field INVENTORY, so losing an
-    // interface is losing the measurement. "Contains", not "equals": Task 2.2
-    // may add to this list, and a red for adding a type would be noise.
+    // The module's whole purpose is a measured field INVENTORY, so losing an interface is
+    // losing the measurement. "Contains", not "equals": adding a type must not red.
     const declared = new Set(
       parse(RAW_TYPES, read(RAW_TYPES))
         .statements.filter(ts.isInterfaceDeclaration)
@@ -205,7 +180,6 @@ describe('AC1 — raw-types.ts is documentation that compiles', () => {
       'RawFileHistorySnapshotLine',
       'RawAiTitleLine',
       'RawLastPromptLine',
-      // Measured 2026-09-30 on 2.1.277-2.1.284, absent from the frozen archive.
       'RawAtisLatchLine',
       'RawCostStateLine',
       'RawForkContextRefLine',
@@ -235,12 +209,9 @@ describe('AC4 — neither module imports anything, nor can reach a clock', () =>
   });
 
   it.each([RAW_TYPES, ACCESSORS])('%s does not contain the clock global even in prose', (file) => {
-    // The founder ruling is that the identifier must not appear AT ALL, and the
-    // AST walk above satisfies only the precise reading of that — comments are
-    // trivia and never become identifiers. This limb takes the ruling literally
-    // over the raw text, so nobody has to adjudicate which reading was meant.
-    // The cost is that both modules must explain in prose why they avoid the
-    // clock without naming it; they do.
+    // The rule is that the identifier must not appear AT ALL, and the AST walk above cannot
+    // see it in a comment, so this limb reads the raw text. The cost is that both modules
+    // must explain why they avoid the clock without naming it; they do.
     expect(namesClockInText(file)).toBe(false);
   });
 
@@ -278,8 +249,8 @@ describe('the guard reds when the property it protects is broken', () => {
   });
 
   it('an ambient declaration reds the AST limb, and ONLY the AST limb', () => {
-    // The reason AC1 is asserted two ways. `declare` is erased at emit, so the
-    // byte-comparison sees a clean module; the statement kind is what catches it.
+    // Why it is asserted two ways: `declare` is erased at emit, so the byte-comparison sees a
+    // clean module and only the statement kind catches it.
     const mutated = `${RAW_SRC}\nexport declare const Y: number;\n`;
     expect(emit(mutated)).toBe(TYPE_ONLY_EMIT);
     expect(executableStatements(RAW_TYPES, mutated)).toHaveLength(1);
