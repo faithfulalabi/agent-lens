@@ -299,7 +299,6 @@ describe('the release scope predicate (task 8.5, AC1)', () => {
     'eslint.config.js',
     'package-lock.json',
     'internal_docs/x.md',
-    // Task 1.1: the published spec excerpt is test scaffolding, not product.
     'ui/src/__tests__/spec-excerpt.ts',
     'src/__tests__/dead-product-terms.ts',
   ])('does not ship %s', (path) => {
@@ -523,15 +522,9 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
     expect(job('publish')).toContain('needs: [publish-check]');
   });
 
-  /*
-   * Task 1.1 — a fork PR must be able to go green. GitHub never exposes secrets
-   * to a `pull_request` run from a fork, so any step that reads one and exits
-   * non-zero when it is empty makes an outside contributor's first PR
-   * unmergeable against the `main` ruleset's required `test` context. This is the
-   * structural half of that guarantee, and it is what discharges AC1 together
-   * with a green run: with no step reading the secret, no step CAN fail for its
-   * absence. (Deleting the repo secret itself is optional founder cleanup.)
-   */
+  // GitHub withholds secrets from a fork's `pull_request` run, so a step that
+  // reads one and exits non-zero makes an outside contributor's first PR
+  // unmergeable against the required `test` context.
   it('reads no secret on the fork-reachable jobs, so a fork PR can go green', () => {
     expect(
       CI_WORKFLOW,
@@ -539,15 +532,12 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
         'ui/src/__tests__/spec-excerpt.ts, which is tracked.',
     ).not.toContain('AGENT_LENS_SPEC_TAR');
 
-    // The three fork-reachable jobs — the ones the `main` ruleset requires — read
-    // no secret at all, so none of them can fail for a missing one.
+    // The three fork-reachable jobs — the ones the `main` ruleset requires.
     for (const name of ['lint', 'test', 'smoke']) {
       expect(`${name}: ${job(name).includes('secrets.')}`).toBe(`${name}: false`);
     }
 
-    // And `test` carries no provisioning step to resurrect. Asserted as the
-    // mechanism, not the name: an extract step is what reintroduces the defect,
-    // whatever the secret ends up being called.
+    // Asserted as the extract mechanism, not a secret name: the name can change.
     const test = job('test');
     for (const fragment of ['base64 -d', 'tar xz', 'design-system.md']) {
       expect(`test contains ${fragment}: ${test.includes(fragment)}`).toBe(
@@ -558,15 +548,14 @@ describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC
 
   it('runs on pull_request and never on pull_request_target', () => {
     // `pull_request_target` would run head-ref code with base-repo secrets — the
-    // standard fork-PR exfiltration shape. An explicit non-goal, pinned so it
-    // cannot be reintroduced as a "fix" for a missing secret.
+    // standard fork-PR exfiltration shape.
     expect(CI_WORKFLOW).toMatch(/\n {2}pull_request:/);
     expect(CI_WORKFLOW).not.toContain('pull_request_target');
   });
 
   it('skips the whole release chain on a fork PR, which is why no job needs a spec', () => {
-    // The reason the jobs above are the only fork-reachable ones: `release` is
-    // gated on a push to main, and every job downstream of it `needs:` it.
+    // Every job downstream of `release` `needs:` it, so this gate is what makes
+    // lint/test/smoke the only fork-reachable jobs.
     expect(job('release')).toContain("github.event_name == 'push'");
     expect(job('release')).toContain("github.ref == 'refs/heads/main'");
   });

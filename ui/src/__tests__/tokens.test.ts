@@ -32,16 +32,9 @@ const THEME_CSS_PATH = fileURLToPath(new URL('../styles/theme.css', import.meta.
  */
 
 // Test 18 first: if the spec source moved or came back empty, every other
-// assertion here would silently parse nothing and go green-and-vacuous.
-//
-// This asserts NON-VACUITY, not file presence, and that is the whole change
-// Task 1.1 made. `internal_docs/` is git-ignored, so on a fork PR or a fresh
-// clone the real spec is genuinely absent and `spec-excerpt.ts` answers instead.
-// Demanding the file would red those environments for an environment property;
-// demanding a parsed token set still reds the thing that actually breaks the
-// suite — an empty, truncated or unreachable source. The loud-not-skip ruling
-// survives intact: there is no `skip` on either branch, and both are exercised
-// on every run (`spec-excerpt.test.ts` drives the excerpt in-process).
+// assertion here would silently parse nothing and go green-and-vacuous. It
+// asserts non-vacuity rather than file presence, because the spec is legitimately
+// absent on a clean clone and the excerpt answers instead. Neither branch skips.
 describe('spec source', () => {
   it('a non-vacuous design-system source resolves in every environment', () => {
     const source = designSystemSource();
@@ -53,9 +46,8 @@ describe('spec source', () => {
         'parsing an empty token set and passing vacuously.',
     ).toBeGreaterThan(0);
 
-    // The tokens are the payload, so parse them here too: a source that exists
-    // but carries no css fence must red at this assertion, by name, rather than
-    // surfacing as a throw under an unrelated parity test below.
+    // Parsed here too, so a source with no css fence reds by name rather than
+    // throwing under an unrelated parity test below.
     expect(
       parseColourFence(source.lines, source.label).size,
       `${source.label} produced no colour tokens`,

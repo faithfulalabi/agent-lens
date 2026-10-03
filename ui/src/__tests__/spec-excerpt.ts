@@ -1,60 +1,24 @@
 /*
- * The published spec excerpt — the fallback source for the parity tests when
- * `internal_docs/` is absent (a fork PR, a fresh clone, trusted CI).
+ * A line-faithful excerpt of the spec documents the parity tests read, so they
+ * are satisfiable with no spec on disk. Only the lines those tests assert on are
+ * published; everything else is `REDACTION_MARKER`. The real spec wins when
+ * present, and `spec-excerpt.test.ts` reds on drift. Edit by hand from its
+ * output — there is deliberately no generator.
  *
- * WHY THIS FILE EXISTS. The parity tests read specification documents that live
- * in `internal_docs/`, which is git-ignored by design. Before this module, CI
- * provisioned them from a repo secret — and GitHub never exposes secrets to a
- * `pull_request` run from a fork, so an outside contributor's first PR could not
- * go green. Committing a line-faithful excerpt makes the parity tests satisfiable
- * everywhere with no secret at all. Task 1.1.
- *
- * WHAT IS PUBLISHED, EXACTLY (founder ruling 2026-09-30, which supersedes the
- * 2026-09-16 "spec provisioning = repo secret" ruling):
- *   - `design-system.md` lines 62-129, 169-179 — the colour fence, the token
- *     tables, the session-list count sentence and the Empty states section.
- *     ZERO of `:1-61`, which is where the aesthetic references live.
- *   - `01-first-run-install.md:14` — the binding spelling of the
- *     never-captured sentence, and nothing else. Every other line of Flow 1 is
- *     redacted, which is what keeps the deleted hooks product out of the tracked
- *     tree by construction.
- *   - `03-inspect-session.md:24,35,50` — the `agent-lens doctor` hint and the
- *     "outside range" diagram node.
- * Everything else is `REDACTION_MARKER`. The real spec still WINS when present:
- * `spec-doc.ts` resolves it first and only falls back to these exports.
- *
- * THE MARKER IS LOAD-BEARING, NOT COSMETIC. Every read path over this data is a
- * structural search, so a marker that collided with a landmark would silently
- * move a window while the assertions still "passed" against the wrong text. The
- * marker must not trim to ```css (it would open the fence above :62), must not
- * trim to ``` (it would close it early), must not start with '### ' and must not
- * equal '### Empty states' (either truncates the Empty-states window), and must
- * carry no `prosePin` (which would mask a genuine line shift). Pinned by
- * `spec-excerpt.test.ts`, five assertions, one `it`.
- *
- * NO DEAD-PRODUCT PROSE MAY ENTER HERE. `docs.test.ts`'s `PUBLIC_DOCS` is a
- * hard-coded three-element list and will never scan this module, so its `TERMS`
- * map is re-run over all three exports by `spec-excerpt.test.ts`. That assertion
- * is the gate, not a side effect: it must red if a future line is added back.
- *
- * HOW TO EDIT. By hand, one line at a time, against the real spec — there is no
- * generator and there must not be one. `golden-replay.test.ts` records why: an
- * earlier regeneration script permanently disarmed an anti-skip gate for anyone
- * who ran it once. The founder-only drift test in `spec-excerpt.test.ts` PRINTS
- * the corrected line and writes nothing. A malformed excerpt is a compile error,
- * so `npm run typecheck` catches it before vitest starts.
+ * The marker is load-bearing. Every read path over this data is a structural
+ * search, so it must not trim to ```css or to ``` (it would open or close the
+ * fence), must not start with '### ' (it would truncate a section window), and
+ * must carry no token `prosePin` (it would mask a line shift).
  */
 
 /** Stands in for every line of the spec that is deliberately not published. */
 export const REDACTION_MARKER = '<!-- redacted -->';
 
 /**
- * `design-system.md` lines 1-179, 1:1 by index: element `i` is line `i + 1`.
- *
- * A `string[]` rather than one template literal because lines 62 and 90 are
- * triple backticks, which would terminate the literal. The index alignment is
- * what `spec-tokens.ts`'s `specLine` pins resolve against — `tsc` checks the
- * array, so a dropped line is a type-level length change, not a silent shift.
+ * `design-system.md`, 1:1 by index: element `i` is line `i + 1`. That alignment
+ * is what `spec-tokens.ts`'s `specLine` pins resolve against, so never drop an
+ * element. An array, not a template literal, because two lines are triple
+ * backticks and would terminate it.
  */
 export const DESIGN_SYSTEM_EXCERPT: readonly string[] = [
   '<!-- redacted -->',
@@ -238,18 +202,14 @@ export const DESIGN_SYSTEM_EXCERPT: readonly string[] = [
   '### Loading states', // :179
 ];
 
-/**
- * `01-first-run-install.md`, redacted to line 14. Whole-text, not line-indexed:
- * `spec-doc.ts` pins flow copy by substring on purpose, because a flow document
- * is prose in motion and a line pin on it would break on any edit above.
- */
+/** `01-first-run-install.md`. Whole-text, not index-aligned: flow copy is pinned by substring. */
 export const FIRST_RUN_EXCERPT: string = [
   '<!-- redacted -->',
   '4. **User** → opens the printed URL in a browser. **System** → UI loads; if no traces yet, shows the empty state: "No sessions yet — start a Claude Code session and it will appear here live", plus a `doctor` hint.',
   '<!-- redacted -->',
 ].join('\n');
 
-/** `03-inspect-session.md`, redacted to lines 24,35,50. */
+/** `03-inspect-session.md`. */
 export const INSPECT_SESSION_EXCERPT: string = [
   '<!-- redacted -->',
   '- **Step 1: no sessions in DB** → empty state with setup instructions + `agent-lens doctor` hint (distinguish "never captured anything" from "nothing in the current time filter" — the latter says "N sessions outside this range").',
@@ -258,10 +218,7 @@ export const INSPECT_SESSION_EXCERPT: string = [
   '<!-- redacted -->',
 ].join('\n');
 
-/**
- * The real-spec lines each export publishes, for the founder-only drift test.
- * 1-based, matching `specLine` and the ruling above.
- */
+/** The 1-based real-spec lines each export publishes; the drift test reads these. */
 export const PUBLISHED_LINES = {
   designSystem: [
     [62, 129],

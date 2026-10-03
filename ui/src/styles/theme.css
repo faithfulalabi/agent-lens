@@ -1,7 +1,6 @@
 /*
  * agent-lens design tokens — the single implementation of the design system
- * specified in `internal_docs/spec/design-system.md` (git-ignored; the published
- * excerpt the parity tests fall back to is `../__tests__/spec-excerpt.ts`).
+ * specified in `design-system.md`, which `../__tests__/spec-doc.ts` resolves.
  *
  * That document is the source of truth; this file is downstream of it.
  * `../__tests__/tokens.test.ts` compares the *built* CSS against the spec and

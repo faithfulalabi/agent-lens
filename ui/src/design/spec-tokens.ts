@@ -2,10 +2,8 @@
  * The token manifest — the spine of AC1 and AC3.
  *
  * One entry per custom property that `../styles/theme.css` emits, each carrying
- * its citation back to `internal_docs/spec/design-system.md` — git-ignored, so
- * `../__tests__/spec-doc.ts` resolves it and falls back to the published excerpt
- * in `../__tests__/spec-excerpt.ts` when it is absent. This module itself
- * resolves no path; it only cites one.
+ * its citation back to `design-system.md`, which `../__tests__/spec-doc.ts`
+ * resolves. This module cites the path but does not resolve it.
  * `../pages/Showcase.tsx` renders from it; the parity tests assert against it.
  *
  * ===========================================================================

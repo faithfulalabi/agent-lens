@@ -105,9 +105,6 @@ describe('the retracted figure stays retracted (Test 3)', () => {
 });
 
 describe('no dead install path survives in the public docs (Test 4)', () => {
-  // The term list moved to `./dead-product-terms.ts` (Task 1.1) so the published
-  // spec excerpt can be gated by the SAME map — `PUBLIC_DOCS` is a hard-coded
-  // three-element list and will never scan it.
   it('the hit set is empty — no suppressions table, by ruling', () => {
     const hits = PUBLIC_DOCS.flatMap((name) => deadProductHits(name, doc(name)));
     expect(
@@ -206,11 +203,7 @@ describe('the tracer-bullet ruling is a fact on disk, not a promise (Test 7)', (
 });
 
 describe('CONTRIBUTING.md states how the spec-parity tests get their spec (Task 1.1)', () => {
-  // This repo tests doc prose, not just doc links. A contributor whose first PR
-  // comes from a fork needs to read, in the contributing guide, that the parity
-  // tests need nothing from them and nothing from the founder — otherwise the
-  // first red they see sends them looking for a secret they cannot have. Pinned
-  // as the PROPERTY each sentence must state, so a rewording stays free.
+  // Pinned as the property each sentence must state, so a rewording stays free.
   const contributing = prose('CONTRIBUTING.md');
 
   it.each([
@@ -229,9 +222,6 @@ describe('CONTRIBUTING.md states how the spec-parity tests get their spec (Task 
   });
 
   it('no longer tells contributors that the parity tests fail on a clean clone', () => {
-    // The stale claim this task removed. It was true while CI provisioned the
-    // spec from a secret; it is false now, and leaving it would send a
-    // contributor hunting for a failure that no longer exists.
     expect(contributing).not.toMatch(/parity tests fail on a clean clone/i);
     expect(contributing).not.toMatch(/Three files resolve paths into it/i);
   });
@@ -251,11 +241,8 @@ describe('no public doc links into a git-ignored directory (Test 8)', () => {
   });
 
   it('internal_docs/ really has zero tracked files', () => {
-    // The premise of the two assertions above, now a fact under test rather than
-    // a claim in the comment. Task 1.1 committed an EXCERPT of those specs on
-    // purpose; committing the directory itself is still out of bounds, and the
-    // untracked guarantee currently rests on a global ignore rule that a clone
-    // elsewhere would not have.
+    // The premise of the two assertions above. It rests on a global ignore rule,
+    // which a clone elsewhere would not have.
     expect(
       trackedFiles().filter((file) => file.startsWith('internal_docs/')),
       'the specs stay untracked; the published excerpt lives in ' +

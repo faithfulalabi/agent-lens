@@ -24,17 +24,8 @@ import { emptyStateCopy } from '../lib/session-list';
 import { DEAD_PRODUCT_TERMS } from '../../../src/__tests__/dead-product-terms';
 
 /*
- * Task 1.1. Two defects with one root cause: the parity tests read a file whose
- * location was a property of the environment rather than of the repo, at a path
- * only CI's tar produced. A fork PR could not go green (secrets are withheld from
- * fork `pull_request` runs) and the founder's own suite could not either (the
- * pinned path was one level too deep past a symlink that absorbs it).
- *
- * This file is the half that makes the fork case real. Every assertion below runs
- * the excerpt's read paths DIRECTLY, in-process, on every run — founder, trusted
- * CI and fork alike — so the fallback branch can never first break on a
- * stranger's PR. Nothing here writes a file the other suites read, so there is no
- * cross-worker race with `tokens.test.ts` or `session-list.test.tsx`.
+ * Drives the excerpt's read paths directly, in-process, on every run — so the
+ * fallback branch can never first break in an environment without the spec.
  */
 
 /** The window `session-list.test.tsx`'s `emptyStatesSpec()` computes, verbatim. */
@@ -48,17 +39,14 @@ function emptyStatesWindow(lines: readonly string[]): string {
 describe('the published excerpt satisfies every read path the parity tests use', () => {
   it('parses the full colour-token set out of the excerpt alone', () => {
     const tokens = parseColourFence(DESIGN_SYSTEM_EXCERPT, EXCERPT_LABEL);
-    // Non-vacuity, stated as a number rather than "> 0": the fence holds 20
-    // tokens, and a fence that silently lost some must red here.
+    // An exact count, not "> 0", so a fence that silently lost a token reds.
     expect(tokens.size).toBe(20);
     expect(tokens.get('--color-background')).toBe('#0b0b0e');
     expect(tokens.get('--color-running')).toBe('#7c8cf8');
   });
 
   it('every one of the 41 prose pins lands on its own specLine', () => {
-    // The assertion `tokens.test.ts` makes against the real spec, made here
-    // against the excerpt. This is what keeps the index alignment honest: the
-    // excerpt is 1:1 by index, so a dropped line shifts every pin below it.
+    // Keeps the index alignment honest: a dropped line shifts every pin below it.
     expect(SPEC_TOKENS.length).toBe(41);
     const distinct = new Set(SPEC_TOKENS.map((t) => t.specLine));
     expect(distinct.size).toBe(33);
@@ -81,9 +69,8 @@ describe('the published excerpt satisfies every read path the parity tests use',
     expect(spec).toContain(neverCaptured.sentence);
     expect(spec).toContain('outside range');
 
-    // The fourth state. The first draft of this task's excerpt covered these
-    // three by luck rather than by design — they all sit on one line inside the
-    // window — so they are named individually here.
+    // The fourth state. Named individually: all three strings sit on one line, so
+    // a single assertion would cover them by luck rather than by design.
     const fourth = emptyStateCopy({
       kind: 'no_match_for_project',
       project: '/p/one',
@@ -113,9 +100,7 @@ describe('the published excerpt satisfies every read path the parity tests use',
   });
 
   it('keeps Flow 3\'s losing "outside this range" spelling out of the pin', () => {
-    // Flow 3's prose spells it "outside THIS range" and lost the 2026-07-30
-    // ruling 2-1. The excerpt publishes both that line and the diagram node, so
-    // the test that pins against them must still be able to tell them apart.
+    // The excerpt publishes both spellings, so the pin must tell them apart.
     const { sentence } = emptyStateCopy({ kind: 'outside_range', count: 7, truncated: false });
     expect(sentence).not.toContain('outside this range');
     expect(emptyStatesWindow(DESIGN_SYSTEM_EXCERPT)).not.toContain('outside this range');
@@ -124,9 +109,8 @@ describe('the published excerpt satisfies every read path the parity tests use',
 
 describe('the redaction marker cannot collide with a structural landmark', () => {
   it('holds all five marker conditions', () => {
-    // Every read path above is a structural search, so a marker that collided
-    // with a landmark would move a window while the assertions still "passed"
-    // against the wrong text. These five are the collisions that matter.
+    // A marker colliding with a landmark would move a window while the assertions
+    // still "passed" against the wrong text.
     expect(REDACTION_MARKER.trim(), 'would open the css fence above :62').not.toBe('```css');
     expect(REDACTION_MARKER.trim(), 'would close the css fence early').not.toBe('```');
     expect(REDACTION_MARKER.startsWith('### '), 'would truncate the Empty states window').toBe(
@@ -158,20 +142,15 @@ describe('the redaction marker cannot collide with a structural landmark', () =>
       );
     }
 
-    // Nothing above :62 is published — that is where the aesthetic references
-    // live, and the ruling publishes zero of it.
     expect(DESIGN_SYSTEM_EXCERPT.slice(0, 61).every((l) => l === REDACTION_MARKER)).toBe(true);
-    // And the excerpt stops at :179, which is what keeps `consented` (:189) out.
     expect(DESIGN_SYSTEM_EXCERPT.join('\n')).not.toContain('consented');
   });
 });
 
 describe('the committed excerpt documents no product that was deleted', () => {
   it('the hit set is empty over all three exports', () => {
-    // THE GATE, not a side effect. `docs.test.ts`'s `PUBLIC_DOCS` is a hard-coded
-    // three-element list, so it will never scan this module — and the spec's
-    // Flow 1 documents the deleted hooks product end to end. If a future edit
-    // publishes one of those lines, this reds.
+    // `docs.test.ts` scans a hard-coded list of docs and will never reach this
+    // module, so the same term map is re-run here.
     const sources: ReadonlyArray<readonly [string, string]> = [
       ['spec-excerpt.ts DESIGN_SYSTEM_EXCERPT', DESIGN_SYSTEM_EXCERPT.join('\n')],
       ['spec-excerpt.ts FIRST_RUN_EXCERPT', FIRST_RUN_EXCERPT],
@@ -203,7 +182,6 @@ describe('the spec root resolves in both on-disk layouts, and the excerpt answer
     writeFileSync(join(specDir, 'design-system.md'), 'marker-from-disk\n```css\n--x: #abc;\n```\n');
     writeFileSync(join(specDir, 'user-flows', '01-first-run-install.md'), 'flow-1-from-disk\n');
     writeFileSync(join(specDir, 'user-flows', '03-inspect-session.md'), 'flow-3-from-disk\n');
-    // Both layouts offered in the real order; only one of them exists each time.
     return {
       root: base,
       candidates: [join(base, 'spec') + '/', join(base, 'agent-lens', 'spec') + '/'],
@@ -242,9 +220,8 @@ describe('the spec root resolves in both on-disk layouts, and the excerpt answer
   });
 
   it('never throws while building a failure message, even with no spec at all', () => {
-    // `session-list.test.tsx` evaluates `userFlowPath()` EAGERLY to build its
-    // message, so a throw here would surface as a stack under an unrelated
-    // assertion instead of the named failure.
+    // Callers evaluate `userFlowPath()` eagerly to build a failure message, so a
+    // throw here would surface as a stack under an unrelated assertion.
     const absent = [join(tmpdir(), 'agent-lens-no-such-spec-root', 'spec') + '/'];
     expect(() => userFlowPath('firstRun', absent)).not.toThrow();
     expect(userFlowPath('firstRun', absent)).toContain('01-first-run-install.md');
@@ -258,14 +235,9 @@ describe('the spec root resolves in both on-disk layouts, and the excerpt answer
 });
 
 /*
- * Drift. Founder-only, because it needs the real spec — `describe.runIf` per
- * `src/db/__tests__/spill-index.test.ts`, which is the only instance of this
- * shape in the repo, rather than a seventeenth open-coded `it.skip` copy.
- *
- * It PRINTS the corrected line and writes nothing. `golden-replay.test.ts`
- * records why: an earlier regeneration script permanently disarmed an anti-skip
- * gate for anyone who ran it once. A writer here would also race the other
- * vitest workers reading the same module.
+ * Drift. Runs only where the real spec is on disk. It prints the corrected line
+ * and writes nothing: a writer here would race the other vitest workers reading
+ * the same module.
  */
 describe.runIf(designSystemExists())('the excerpt still matches the real spec', () => {
   it('publishes every design-system line byte-identically', () => {
@@ -308,8 +280,7 @@ describe.runIf(designSystemExists())('the excerpt still matches the real spec', 
     const drift: string[] = [];
     for (const n of published) {
       const truth = real[n - 1];
-      // Whole-text, not index-aligned: the flow excerpts are prose pins, so the
-      // invariant is presence of the real line, not its position.
+      // Prose pins, so the invariant is presence of the real line, not position.
       if (truth === undefined || !excerpt.includes(truth)) {
         drift.push(`${name} line ${n} is no longer published verbatim:\n  spec: ${truth}`);
       }
