@@ -202,7 +202,7 @@ describe('the tracer-bullet ruling is a fact on disk, not a promise (Test 7)', (
   });
 });
 
-describe('CONTRIBUTING.md states how the spec-parity tests get their spec (Task 1.1)', () => {
+describe('CONTRIBUTING.md states how the spec-parity tests get their spec', () => {
   // Pinned as the property each sentence must state, so a rewording stays free.
   const contributing = prose('CONTRIBUTING.md');
 
