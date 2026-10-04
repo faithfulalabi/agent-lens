@@ -20,7 +20,7 @@
 // `fixtures/scrubbed/**` transcripts plus the golden snapshots — permanent by
 // ruling. A suppressions table over generated snapshots would also recreate the
 // `snapshots:update` disarm hazard `golden-replay.test.ts:9-19` records. Scoped
-// to the three documents AC3 actually names, the hit set is empty.
+// to the three public documents, the hit set is empty.
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -34,7 +34,7 @@ import { deadProductHits } from './dead-product-terms.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/** The three documents AC3 names. Every gate below is scoped to exactly these. */
+/** Every gate below is scoped to exactly these three. */
 const PUBLIC_DOCS = ['README.md', 'SECURITY.md', 'CONTRIBUTING.md'] as const;
 
 function doc(name: string): string {
@@ -165,7 +165,6 @@ describe('SECURITY.md carries the whole trust boundary (Test 6)', () => {
     // the phrase out for the reader.
     ['the static page is not token-guarded', /static page.{0,30}not.{0,20}token-guarded/i],
     ['the token bootstrap that replaces it', /token injected/i],
-    // Task 3.5 (finding F1): the spill containment boundary, at both times.
     ['the spill-path containment', /realpath-resolves inside the transcript root or the archive/i],
     ['the spill check at projection and serve time', /projection time.{0,120}serve time/i],
   ])('discloses %s', (_label, pattern) => {
