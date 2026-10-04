@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/faithfulalabi/agent-lens/compare/v0.2.0...v0.3.0) (2026-10-04)
+
+
+### Features
+
+* **schedule:** add a systemd user-timer backend for Linux ([#111](https://github.com/faithfulalabi/agent-lens/issues/111)) ([4c0da8a](https://github.com/faithfulalabi/agent-lens/commit/4c0da8ae0d652c5333319325cc77170df55bffb7))
+
+
+### Bug Fixes
+
+* **ci:** make the spec-parity tests satisfiable without a secret ([#110](https://github.com/faithfulalabi/agent-lens/issues/110)) ([986f5a0](https://github.com/faithfulalabi/agent-lens/commit/986f5a0ab3c9479d26d65b585abc274f4f8eb54b))
+
 ## [0.2.0](https://github.com/faithfulalabi/agent-lens/compare/v0.1.1...v0.2.0) (2026-09-27)
 
 
