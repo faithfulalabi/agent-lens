@@ -90,9 +90,8 @@ export function resolveLockPath(dataDir?: string): string {
 }
 
 /**
- * Where the launchd wrapper appends its per-pass line. The wrapper hardcodes
- * `$HOME/.agent-lens/logs/cron.log` in shell, outside the repo — the two are
- * manually synced, the same accepted duplication as the exit-code contract.
+ * Where the generated wrapper appends its per-pass line, on either backend. The
+ * wrapper also hardcodes this path in shell — keep the two in sync by hand.
  */
 export function resolveCronLogPath(dataDir?: string): string {
   return join(resolveDataDir(dataDir), LOGS_DIR, 'cron.log');
@@ -106,6 +105,40 @@ export function resolveLaunchAgentsDir(homeDir: string = homedir()): string {
 /** The plist for `label`, under the per-user LaunchAgents dir. */
 export function resolvePlistPath(label: string, homeDir: string = homedir()): string {
   return join(resolveLaunchAgentsDir(homeDir), `${label}.plist`);
+}
+
+/**
+ * Where `systemctl --user` reads per-user units from; outside the data dir by
+ * design. `configHome` is passed in rather than read from `process.env` so no test
+ * can land a unit in a real one. A relative value is ignored, per the XDG spec.
+ */
+export function resolveSystemdUserDir(homeDir: string = homedir(), configHome?: string): string {
+  const base =
+    configHome !== undefined && configHome !== '' && isAbsolute(configHome)
+      ? configHome
+      : join(homeDir, '.config');
+  return join(base, 'systemd', 'user');
+}
+
+/** One unit file by name, under the per-user systemd unit dir. */
+export function resolveSystemdUnitPath(
+  name: string,
+  homeDir?: string,
+  configHome?: string,
+): string {
+  return join(resolveSystemdUserDir(homeDir, configHome), name);
+}
+
+/**
+ * The symlink `systemctl --user enable` plants for a timer. Turn-off must name it
+ * explicitly: `disable` exits 1 without removing it once the unit file is gone.
+ */
+export function resolveSystemdWantsPath(
+  name: string,
+  homeDir?: string,
+  configHome?: string,
+): string {
+  return join(resolveSystemdUserDir(homeDir, configHome), 'timers.target.wants', name);
 }
 
 /** The wrapper `agent-lens schedule` generates; rewritten in full on every turn-on. */

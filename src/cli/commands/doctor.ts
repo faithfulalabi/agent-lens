@@ -172,7 +172,8 @@ function formatAgo(elapsedMs: number): string {
 }
 
 /**
- * The archive-job block, read from the launchd wrapper's cron.log — the only
+ * The archive-job block, read from the generated wrapper's cron.log — the same
+ * wrapper on both backends, which is why there is one freshness report. The only
  * artifact that answers "did it run"; an archive mtime only says the source was
  * quiet. Keyed on the status token, never on bytes copied: a pass that ran and
  * copied nothing is the healthy steady state. `now` is a parameter because an

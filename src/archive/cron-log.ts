@@ -1,9 +1,7 @@
-// Reader for the launchd wrapper's own per-pass log — the only artifact that
-// answers "did the archive job run". `archive.jsonl` cannot: `isQuiet` in
-// `log.ts` suppresses most healthy passes, so days can pass between its lines
-// while the job fires every 15 minutes. An mtime cannot either: a quiet source
-// leaves the archive untouched while the job runs on schedule. Read-only, per
-// the `report.ts` discipline: no write syscall, safe to run beside a live pass.
+// Reader for the generated wrapper's per-pass log — the only artifact that answers
+// "did the archive job run": `archive.jsonl` suppresses quiet passes and an mtime
+// says nothing when the source is quiet. Both backends share the wrapper, so one
+// reader serves both. Read-only: no write syscall, safe beside a live pass.
 
 import { readFileSync } from 'node:fs';
 import { lstatSafe, resolveCronLogPath } from './paths.js';
