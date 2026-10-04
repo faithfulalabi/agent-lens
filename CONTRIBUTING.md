@@ -71,14 +71,14 @@ must not be able to rewrite them.
 
 ## Two things that will surprise you on a fresh clone
 
-**Some UI parity tests fail on a clean clone, and that is deliberate.** The design tokens and the
-empty-state copy are pinned against specification documents that live in `internal_docs/`, which is
-git-ignored by design and therefore absent from any clone. Three files resolve paths into it —
-`ui/src/design/spec-tokens.ts` (which also pins 1-based line numbers into the token tables),
-`ui/src/__tests__/spec-doc.ts` for the design system, and the same file again for the user-flow
-documents. `ui/src/__tests__/tokens.test.ts` checks for the file first and fails with an explanation
-rather than parsing an empty token set and passing vacuously. A loud failure was chosen over a skip
-on purpose: a silently-green parity test asserts nothing.
+**The UI parity tests pass on a clean clone, and they need no secret.** They pin tokens and
+empty-state copy against specs in `internal_docs/`, which is git-ignored and absent from any clone.
+`ui/src/__tests__/spec-doc.ts` resolves those paths and falls back to the tracked, line-faithful
+`spec-excerpt.ts` beside it, so nothing is skipped — a silently-green parity test asserts nothing.
+If you have the real spec, it wins: a founder-only drift test reds when a published line stops
+matching it and prints the correction, which you apply by hand. There is deliberately no generator.
+Nothing needs refreshing on a schedule and no repository secret is involved — the
+`AGENT_LENS_SPEC_TAR` secret and its 48 KB ceiling are retired.
 
 **Golden snapshots have no update script, and that is also deliberate.** An earlier
 `snapshots:update` permanently disarmed the anti-skip gate for anyone who ran it once. Regenerate a
