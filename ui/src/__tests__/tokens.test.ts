@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { builtCss, builtRootVars, cleanupBuilds } from './build-ui';
 import {
-  DESIGN_SYSTEM_PATH,
-  designSystemExists,
+  SPEC_ROOT_CANDIDATES,
+  EXCERPT_LABEL,
+  designSystemSource,
   designSystemLines,
   parseColourFence,
 } from './spec-doc';
@@ -30,17 +31,27 @@ const THEME_CSS_PATH = fileURLToPath(new URL('../styles/theme.css', import.meta.
  * comparing theme.css to itself would be a tautology.
  */
 
-// Test 18 first: if the spec file moved, every other assertion here would
-// silently parse nothing and go green-and-vacuous.
-describe('spec file location', () => {
-  it('the spec file is where the parity test thinks it is', () => {
+// Test 18 first: if the spec source moved or came back empty, every other
+// assertion here would silently parse nothing and go green-and-vacuous. It
+// asserts non-vacuity rather than file presence, because the spec is legitimately
+// absent on a clean clone and the excerpt answers instead. Neither branch skips.
+describe('spec source', () => {
+  it('a non-vacuous design-system source resolves in every environment', () => {
+    const source = designSystemSource();
+    const tried = [...SPEC_ROOT_CANDIDATES, EXCERPT_LABEL].map((c) => `  - ${c}`).join('\n');
     expect(
-      designSystemExists(),
-      `design-system.md not found at ${DESIGN_SYSTEM_PATH}.\n` +
+      source.lines.length,
+      `no design-system source produced any lines. Tried, in order:\n${tried}\n` +
         'The token parity tests read it directly, so this fails loudly rather than\n' +
-        'parsing an empty token set and passing vacuously. Note internal_docs/ is\n' +
-        'git-ignored by design, so this suite requires a working copy that has it.',
-    ).toBe(true);
+        'parsing an empty token set and passing vacuously.',
+    ).toBeGreaterThan(0);
+
+    // Parsed here too, so a source with no css fence reds by name rather than
+    // throwing under an unrelated parity test below.
+    expect(
+      parseColourFence(source.lines, source.label).size,
+      `${source.label} produced no colour tokens`,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -75,7 +86,8 @@ describe('type and radius scales have exactly the shape the spec allows', () => 
 
 describe('emitted tokens match design-system.md', () => {
   it('colour tokens are set-equal to the design-system.md css fence, both directions', async () => {
-    const spec = parseColourFence(designSystemLines());
+    const source = designSystemSource();
+    const spec = parseColourFence(source.lines, source.label);
     const vars = await builtRootVars();
     const emitted = new Map(
       [...vars].filter(([n]) => n.startsWith('--color-')).map(([n, v]) => [n, v.toLowerCase()]),

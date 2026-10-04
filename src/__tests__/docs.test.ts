@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDoctorReport } from '../archive/index.js';
 import { COVERAGE_GAP_STATEMENT, DURABILITY_STATEMENT } from '../cli/commands/doctor.js';
+import { deadProductHits } from './dead-product-terms.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -104,30 +105,8 @@ describe('the retracted figure stays retracted (Test 3)', () => {
 });
 
 describe('no dead install path survives in the public docs (Test 4)', () => {
-  // Scoped to AC3's literal words. `installer` and `uninstall` are anchored so
-  // they never match the `npm install` CONTRIBUTING.md legitimately documents.
-  const TERMS: ReadonlyMap<string, RegExp> = new Map([
-    ['settings.json', /settings\.json/],
-    ['installer', /\binstallers?\b/i],
-    ['uninstall', /\buninstall\w*\b/i],
-    ['consent', /\bconsents?\b|\bconsented\b/i],
-    ['PreToolUse', /\bPreToolUse\b/],
-    ['PostToolUse', /\bPostToolUse\b/],
-    ['SessionStart', /\bSessionStart\b/],
-    ['agent-lens hook', /agent-lens hook/],
-  ]);
-
   it('the hit set is empty — no suppressions table, by ruling', () => {
-    const hits: string[] = [];
-    for (const name of PUBLIC_DOCS) {
-      doc(name)
-        .split('\n')
-        .forEach((line, index) => {
-          for (const [term, pattern] of TERMS) {
-            if (pattern.test(line)) hits.push(`${name}:${index + 1}  ${term}  ${line.trim()}`);
-          }
-        });
-    }
+    const hits = PUBLIC_DOCS.flatMap((name) => deadProductHits(name, doc(name)));
     expect(
       hits,
       'Hooks are gone. A public doc that still names the harness settings file, ' +
@@ -149,7 +128,9 @@ describe('the quickstart is zero-configuration (Test 5)', () => {
   const firstBlock = /```bash\n([\s\S]*?)```/.exec(readme);
 
   it('the first shell block in the README is the quickstart, and it is npx', () => {
-    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe('npx @faithfulalabi/agent-lens');
+    expect(firstBlock?.[1]?.trim(), 'the README has no shell block at all').toBe(
+      'npx @faithfulalabi/agent-lens',
+    );
   });
 
   it('no setup command runs before it', () => {
@@ -221,17 +202,52 @@ describe('the tracer-bullet ruling is a fact on disk, not a promise (Test 7)', (
   });
 });
 
+describe('CONTRIBUTING.md states how the spec-parity tests get their spec', () => {
+  // Pinned as the property each sentence must state, so a rewording stays free.
+  const contributing = prose('CONTRIBUTING.md');
+
+  it.each([
+    ['the tracked excerpt is what makes a clean clone work', /spec-excerpt\.ts/],
+    ['the one module that resolves the spec path', /spec-doc\.ts/],
+    ['the fallback is explicit', /falls back to/i],
+    ['the real spec stays authoritative', /If you have the real spec, it wins/i],
+    ['drift is detected rather than assumed', /drift test/i],
+    ['the excerpt is hand-edited, with no generator', /no generator/i],
+    ['no secret is involved', /no repository secret is involved/i],
+    ['the retired secret is named, so a stale reference is findable', /AGENT_LENS_SPEC_TAR/],
+    ['the 48 KB cap concern is recorded as retired', /48 KB/],
+    ['nothing needs refreshing on a schedule', /Nothing needs refreshing/i],
+  ])('states %s', (_label, pattern) => {
+    expect(contributing).toMatch(pattern);
+  });
+
+  it('no longer tells contributors that the parity tests fail on a clean clone', () => {
+    expect(contributing).not.toMatch(/parity tests fail on a clean clone/i);
+    expect(contributing).not.toMatch(/Three files resolve paths into it/i);
+  });
+});
+
 describe('no public doc links into a git-ignored directory (Test 8)', () => {
   // `internal_docs/` is globally git-ignored with zero tracked files, so a link
   // into it 404s on every clone. CONTRIBUTING.md names the directory in prose —
-  // it has to, to explain why the parity tests fail on a fresh clone — so the
-  // gate is on the LINK, which is the thing that actually breaks.
+  // it has to, to explain where the spec lives — so the gate is on the LINK,
+  // which is the thing that actually breaks.
   it.each(PUBLIC_DOCS)('%s has no markdown link resolving into internal_docs/', (name) => {
     expect(doc(name)).not.toMatch(/\]\(\.?\/?internal_docs\//);
   });
 
   it('the README does not mention internal_docs at all', () => {
     expect(doc('README.md')).not.toContain('internal_docs');
+  });
+
+  it('internal_docs/ really has zero tracked files', () => {
+    // The premise of the two assertions above. It rests on a global ignore rule,
+    // which a clone elsewhere would not have.
+    expect(
+      trackedFiles().filter((file) => file.startsWith('internal_docs/')),
+      'the specs stay untracked; the published excerpt lives in ' +
+        'ui/src/__tests__/spec-excerpt.ts instead.',
+    ).toEqual([]);
   });
 });
 

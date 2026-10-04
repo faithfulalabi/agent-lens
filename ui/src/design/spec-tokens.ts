@@ -2,7 +2,8 @@
  * The token manifest — the spine of AC1 and AC3.
  *
  * One entry per custom property that `../styles/theme.css` emits, each carrying
- * its citation back to `internal_docs/agent-lens/spec/design-system.md`.
+ * its citation back to `design-system.md`, which `../__tests__/spec-doc.ts`
+ * resolves. This module cites the path but does not resolve it.
  * `../pages/Showcase.tsx` renders from it; the parity tests assert against it.
  *
  * ===========================================================================

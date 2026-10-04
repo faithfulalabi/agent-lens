@@ -73,25 +73,8 @@ jobs:
             ui/package-lock.json
       - run: npm ci
 
-      # internal_docs/ is deliberately untracked, but the ui spec-parity tests
-      # hard-fail (never skip) without these three files. The founder-owned
-      # AGENT_LENS_SPEC_TAR secret is a base64 tar of exactly those files,
-      # refreshed by hand when the specs change.
-      # ponytail: ceiling — secrets are absent on fork PRs, so this job (and
-      # the run) will fail there. Matters only once the repo goes public.
-      - name: Provision spec files from secret
-        env:
-          AGENT_LENS_SPEC_TAR: ${{ secrets.AGENT_LENS_SPEC_TAR }}
-        run: |
-          if [ -z "$AGENT_LENS_SPEC_TAR" ]; then
-            echo "::error::AGENT_LENS_SPEC_TAR secret is missing or empty. The ui spec-parity tests fail loudly without internal_docs/agent-lens/spec — refresh the secret (see task-2.1-ci-workflow.md)."
-            exit 1
-          fi
-          echo "$AGENT_LENS_SPEC_TAR" | base64 -d | tar xz
-          test -f internal_docs/agent-lens/spec/design-system.md
-          test -f internal_docs/agent-lens/spec/user-flows/01-first-run-install.md
-          test -f internal_docs/agent-lens/spec/user-flows/03-inspect-session.md
-
+      # No spec-provisioning step, by design: the parity tests fall back to a
+      # tracked excerpt, so this job needs no secret. Pinned in src/packaging.test.ts.
       - run: npm run typecheck
       # Build before test: the spawned-binary tests run bin/agent-lens.js,
       # which imports the BUILT CLI from dist/ — absent on a fresh checkout.
