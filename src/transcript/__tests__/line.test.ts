@@ -1,8 +1,5 @@
-// Task 2.2 AC1-AC5 and AC7. Every count quoted here was measured against
-// `~/.agent-lens/archive` on 2026-08-13 and is asserted against a FROZEN fixture,
-// never against the live corpus: the archive is append-only and grew 40,701 ->
-// 41,911 lines between the approach being written and this suite being written.
-// An absolute count asserted against live data decays into a false failure.
+// Every assertion runs against a frozen fixture, never the live corpus: the archive is
+// append-only, so an absolute count asserted against it decays into a false failure.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -14,7 +11,7 @@ import {
 } from '../line.js';
 import { classifyFixture, ctx, fixtureBytes } from './fixtures.js';
 
-/** The 14 measured top-level types, with their 2026-08-13 archive counts. */
+/** The measured top-level types. The count column is a frozen reading and is never asserted. */
 const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['assistant', 22748],
   ['user', 13620],
@@ -30,6 +27,10 @@ const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['file-history-delta', 125],
   ['started', 12],
   ['result', 12],
+  // `0` because these three arrived after the archive the column reports on was frozen.
+  ['atis-latch', 0],
+  ['cost-state', 0],
+  ['fork-context-ref', 0],
 ];
 
 /** The 7 declared `system` subtypes. `api_error` is the one with no witness. */
@@ -46,11 +47,10 @@ const SYSTEM_SUBTYPES = [
 describe('AC1 — every measured top-level type classifies to its own kind', () => {
   const { lines } = classifyFixture('all-types.jsonl');
 
-  it('covers all 14 measured types, one fixture line each', () => {
-    expect(TOP_LEVEL_TYPES).toHaveLength(14);
-    expect(lines).toHaveLength(14);
-    // A set: the fixture is ordered for readability, the list above by measured
-    // frequency, and neither ordering is a property worth pinning.
+  it('covers all 17 measured types, one fixture line each', () => {
+    expect(TOP_LEVEL_TYPES).toHaveLength(17);
+    expect(lines).toHaveLength(17);
+    // A set: neither the fixture's order nor the list's is a property worth pinning.
     expect(new Set(lines.map((line) => line.kind))).toEqual(
       new Set(TOP_LEVEL_TYPES.map(([name]) => name)),
     );
@@ -61,9 +61,8 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
   });
 
   it('the union is exhaustive — a new kind will not compile', () => {
-    // The `never` default is the assertion: adding an arm to `ParsedLine` without
-    // adding it here is a TYPE error, which is the only way to keep this list and
-    // the union in step once the harness ships a 15th type.
+    // The `never` default is the assertion: adding an arm to `ParsedLine` without adding it
+    // here is a TYPE error, which is what keeps this list and the union in step.
     const label = (line: ParsedLine): string => {
       switch (line.kind) {
         case 'assistant':
@@ -79,6 +78,9 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
         case 'file-history-delta':
         case 'started':
         case 'result':
+        case 'atis-latch':
+        case 'cost-state':
+        case 'fork-context-ref':
           return line.kind;
         case 'system':
           return `system.${line.subtype}`;
@@ -109,9 +111,8 @@ describe('AC1 — every declared system subtype classifies', () => {
   });
 
   it('reaches compact_boundary ONLY through system.subtype, never the top level', () => {
-    // The trap: `compact_boundary` is not a top-level type (0 occurrences there,
-    // 3 as a subtype). Anything that greps for it at the top level silently drops
-    // every compaction in the corpus.
+    // `compact_boundary` is not a top-level type, so anything that greps for it there
+    // silently drops every compaction.
     const boundary = lines.find(
       (line) => line.kind === 'system' && line.subtype === 'compact_boundary',
     );
@@ -135,10 +136,8 @@ describe('AC1 — every declared system subtype classifies', () => {
 });
 
 describe('AC1 — started and result are sidecar-only and both classify', () => {
-  // Both live exclusively in `subagents/workflows/wf_*/journal.jsonl`, 12 each,
-  // paired 1:1. `result` was absent from the original type list; the 2026-08-13
-  // ruling classifies it rather than dropping it to unknown, because Task 3.3
-  // (sub-agent linkage) needs both ends of the workflow span.
+  // Sidecar-only, and `result` is classified rather than dropped to unknown: sub-agent
+  // linkage needs both ends of the workflow span.
   const { lines } = classifyFixture('all-types.jsonl');
 
   it('classifies both, and neither carries a uuid', () => {
@@ -149,12 +148,8 @@ describe('AC1 — started and result are sidecar-only and both classify', () => 
 });
 
 describe('AC2 — api_error keeps its branch with no live witness', () => {
-  // DEFENSIVE AND DATED. `api_error` measured 9 occurrences on 2026-08-07 and 0
-  // on 2026-08-13: pure transcript expiry, not removal from the harness —
-  // `isApiErrorMessage` is still sent on 9 assistant lines in the same archive.
-  // There is therefore NO corpus witness for this line, and the fixture below is
-  // hand-authored. Deleting the branch because "nothing produces it" would make
-  // the next API outage classify as unknown.
+  // No corpus witness, so the fixture is hand-authored. Deleting the branch because "nothing
+  // produces it" would make the next API outage classify as unknown.
   it('classifies from a synthetic fixture', () => {
     const { lines } = classifyFixture('system-subtypes.jsonl');
     const apiError = lines.find((line) => line.kind === 'system' && line.subtype === 'api_error');
@@ -236,8 +231,8 @@ describe('AC4 — byte offsets are archive-relative and multibyte-safe', () => {
   });
 
   it('a string index would have been wrong — the fixture is non-vacuous', () => {
-    // Without this the test above would pass on an ASCII-only fixture and prove
-    // nothing. `🚀` is 4 bytes and 2 UTF-16 units, so the two disagree.
+    // Without this the test above would pass on an ASCII-only fixture and prove nothing:
+    // `🚀` is 4 bytes and 2 UTF-16 units, so the two disagree.
     const text = bytes.toString('utf8');
     const stringIndex = text.indexOf('{"type":"ai-title"');
     const byteOffset = offsets.at(-1)?.byteOffset ?? -1;
@@ -252,7 +247,7 @@ describe('AC4 — byte offsets are archive-relative and multibyte-safe', () => {
   });
 });
 
-describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions', () => {
+describe('AC5 — the 13 uuid-less types project to nothing, bar two exceptions', () => {
   const UUID_LESS: readonly ParsedKind[] = [
     'mode',
     'permission-mode',
@@ -264,17 +259,21 @@ describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions'
     'pr-link',
     'started',
     'result',
+    // None of these three carries a uuid, which is why absorbing them changes `drift_json`
+    // and no projected row.
+    'atis-latch',
+    'cost-state',
+    'fork-context-ref',
   ];
 
-  it('is exactly 10 types, and none of them carries a uuid', () => {
-    // 34.7% of session-file lines (3,779 of 10,879) on 2026-08-13.
-    expect(UUID_LESS).toHaveLength(10);
+  it('is exactly 13 types, and none of them carries a uuid', () => {
+    expect(UUID_LESS).toHaveLength(13);
     const { lines } = classifyFixture('all-types.jsonl');
     const uuidLess = lines.filter((line) => line.uuid === undefined).map((line) => line.kind);
     expect(new Set(uuidLess)).toEqual(new Set(UUID_LESS));
   });
 
-  it('projects nothing at all from the eight that are not exceptions', () => {
+  it('projects nothing at all from the eleven that are not exceptions', () => {
     const { lines } = classifyFixture('all-types.jsonl');
     const projection = foldControlLines(
       lines.filter((line) => line.kind !== 'ai-title' && line.kind !== 'last-prompt'),
@@ -287,10 +286,8 @@ describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions'
   });
 
   it('the LAST ai-title and the LAST last-prompt win, not the first', () => {
-    // The fixture carries 3 of each with distinct values, none in a final
-    // position. Non-vacuous in reality: 19 of 26 archived session files carry
-    // more than one `ai-title`, one of them 66. A first-wins implementation
-    // reds here, which is the whole reason the values differ.
+    // The fixture carries 3 of each with distinct values, none in a final position, so a
+    // first-wins implementation reds here. That is the whole reason the values differ.
     const { lines } = classifyFixture('control-lines.jsonl');
     expect(lines.filter((line) => line.kind === 'ai-title')).toHaveLength(3);
     expect(lines.filter((line) => line.kind === 'last-prompt')).toHaveLength(3);
@@ -305,8 +302,7 @@ describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions'
   });
 
   it('a first-wins fold would produce the stale title this test forbids', () => {
-    // Names the bug the assertion above exists to catch, so a future reader can
-    // see it is about ordering rather than about which fixture line was picked.
+    // Names the bug the assertion above exists to catch: ordering, not which line was picked.
     const { lines } = classifyFixture('control-lines.jsonl');
     const firstWins = lines.find((line) => line.kind === 'ai-title');
     expect(firstWins?.raw.aiTitle).toBe('first title');
@@ -316,9 +312,8 @@ describe('AC5 — the 10 uuid-less types project to nothing, bar two exceptions'
 
 describe('AC7 — summary has no branch', () => {
   it('a top-level summary line classifies as unknown', () => {
-    // 0 top-level occurrences across the whole archive, re-confirmed 2026-08-13.
-    // Both `"type":"summary"` hits in the corpus are nested inside other
-    // payloads, which a top-level classifier never sees.
+    // `summary` only ever appears nested inside another payload, which a top-level
+    // classifier never sees.
     const line = classifyLine({ type: 'summary', summary: 'text' }, ctx());
     expect(line.kind).toBe('unknown');
     if (line.kind !== 'unknown') throw new Error('unreachable');
@@ -351,8 +346,7 @@ describe('Task 0.13 — foldSessionEnvelope answers `model` on its own rule', ()
   });
 
   it('answers undefined when `<synthetic>` is the only model named', () => {
-    // The NULL floor. A marker that names no model must not be priced, and
-    // must not be reported as though a model of that name had run.
+    // A marker that names no model must not be priced, nor reported as a model that ran.
     const lines = [modelLine('<synthetic>'), modelLine('<synthetic>')];
     expect(foldSessionEnvelope(lines).model).toBeUndefined();
   });
@@ -367,11 +361,8 @@ describe('Task 0.13 — foldSessionEnvelope answers `model` on its own rule', ()
   });
 
   it('breaks a tie to the FIRST model seen, which IS first-real-model-wins', () => {
-    // Asserted from both directions because the tie-break is a semantic
-    // choice, not a consequence of `Map` iteration order. On a
-    // one-line-against-one-line tie this rule is candidate (a), which is wrong
-    // on a session that switched deliberately — it is taken because it is
-    // deterministic and because no measured session ties.
+    // Asserted from both directions because the tie-break is a semantic choice, not a
+    // consequence of `Map` iteration order.
     const forward = [modelLine('claude-opus-5'), modelLine('claude-sonnet-5')];
     const reversed = [modelLine('claude-sonnet-5'), modelLine('claude-opus-5')];
 
@@ -392,9 +383,8 @@ describe('Task 0.13 — foldSessionEnvelope answers `model` on its own rule', ()
   });
 
   it('leaves cwd, branch and version last-wins on the very line it excludes', () => {
-    // The exclusion is scoped to `model`. A `<synthetic>` line carries the
-    // session's real `cwd`, `gitBranch` and `version` — measured, 8 of 8 — so
-    // skipping the whole line would lose three fields to fix one.
+    // The exclusion is scoped to `model`: a `<synthetic>` line still carries the session's
+    // real `cwd`, `gitBranch` and `version`, so skipping the whole line loses three to fix one.
     const lines = [
       modelLine('claude-opus-5'),
       modelLine('<synthetic>', {

@@ -1,11 +1,6 @@
-// AC1 under real data, without the decay. Opt-in via `AGENT_LENS_REAL_CORPUS=1`,
-// same gate as `src/archive/__tests__/real-corpus.test.ts`.
-//
-// Reads `~/.agent-lens/archive` and NEVER `~/.claude/projects`. The archive is
-// append-only and the live source is not: the corpus grew 40,064 -> 40,444 lines
-// during one hour of measurement, and `api_error` went 9 -> 0 through pure
-// transcript expiry. So every assertion here is an INVARIANT or a LOWER BOUND —
-// never an absolute count, which would red on a Tuesday for no reason.
+// The classifier under real data. Opt-in via `AGENT_LENS_REAL_CORPUS=1`, and it reads the
+// append-only archive, never the live source. Every assertion here is an INVARIANT or a LOWER
+// BOUND — an absolute count would red on a Tuesday for no reason.
 
 import { describe, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -14,27 +9,33 @@ import { DriftCounter } from '../drift.js';
 import { ARCHIVE_ROOT, archiveJsonlFiles, offsetLines } from './fixtures.js';
 import { runIt } from './run-it.js';
 
-/** Lower bounds, well under what was measured on 2026-08-13 (254 files, 40,701 lines). */
+/** Lower bounds, deliberately well under what any real archive holds. */
 const MIN_FILES = 100;
 const MIN_LINES = 20000;
 
-const DECLARED_KINDS: ReadonlySet<string> = new Set<ParsedKind>([
-  'assistant',
-  'user',
-  'system',
-  'attachment',
-  'mode',
-  'last-prompt',
-  'permission-mode',
-  'ai-title',
-  'file-history-snapshot',
-  'file-history-delta',
-  'queue-operation',
-  'pr-link',
-  'started',
-  'result',
-  'unknown',
-]);
+/** `Record<ParsedKind, true>`, not a `Set`: a set accepts a SUBSET, so `tsc` would miss a gap. */
+const ALL_KINDS: Record<ParsedKind, true> = {
+  assistant: true,
+  user: true,
+  system: true,
+  attachment: true,
+  mode: true,
+  'last-prompt': true,
+  'permission-mode': true,
+  'ai-title': true,
+  'file-history-snapshot': true,
+  'file-history-delta': true,
+  'queue-operation': true,
+  'pr-link': true,
+  started: true,
+  result: true,
+  'atis-latch': true,
+  'cost-state': true,
+  'fork-context-ref': true,
+  unknown: true,
+};
+
+const DECLARED_KINDS: ReadonlySet<string> = new Set(Object.keys(ALL_KINDS));
 
 describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(
@@ -55,8 +56,8 @@ describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_
           try {
             parsed = JSON.parse(entry.text);
           } catch {
-            // A partially written tail line is a real thing in an append-only
-            // archive. It is still a line, so it still gets a row.
+            // A partially written tail line is real in an append-only archive. It is still
+            // a line, so it still gets a row.
             parsed = undefined;
           }
           return classifyLine(parsed, {
@@ -78,17 +79,15 @@ describe('the frozen archive classifies without throwing (opt-in via AGENT_LENS_
           kindsSeen.add(row.kind);
         }
 
-        // The counter must survive real data too — it is a report about a bad
-        // transcript, so failing on one would defeat its purpose.
+        // The counter is a report about a bad transcript, so failing on one defeats it.
         expect(() => JSON.parse(drift.serialize()), file).not.toThrow();
         linesSeen += entries.length;
       }
 
       expect(linesSeen).toBeGreaterThanOrEqual(MIN_LINES);
 
-      // A lower bound on coverage, not an equality: `started`/`result` live in a
-      // single sidecar that a future archive may not contain, and asserting all
-      // 14 would red on a corpus that is merely smaller.
+      // A lower bound on coverage, not an equality: `started`/`result` live in a single
+      // sidecar a given archive may not contain, so demanding every kind reds on a smaller one.
       for (const kind of ['assistant', 'user', 'system', 'attachment', 'ai-title']) {
         expect(kindsSeen.has(kind), `no ${kind} line in the archive`).toBe(true);
       }

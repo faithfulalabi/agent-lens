@@ -1,43 +1,14 @@
-// A version integer nobody remembers to bump is worse than none: it serves
-// stale rows forever and no test ever notices. So `PROJECTOR_VERSION` is
-// guarded by a committed sha256 over the projector's own source, and the only
-// way to green this file is editing two constants in a diff a human reads.
+// `PROJECTOR_VERSION` is guarded by a committed sha256 over the projector's own source. There is
+// NO regeneration script and no env escape hatch: the test prints the recomputed hash, but
+// nothing writes it for you.
 //
-// THERE IS NO REGENERATION SCRIPT AND NO ENV ESCAPE HATCH, on purpose. This
-// repo already recorded what one costs: `AGENT_LENS_UPDATE_SNAPSHOTS=1` makes
-// `snapshotReviewed()` return `true` unconditionally and "silently and
-// permanently disarms the anti-skip gate". The test prints the recomputed hash
-// so the fix is copy-paste, but nothing writes it for you.
+// The version lives INSIDE the hashed tree, so it cannot be bumped without rehashing. The
+// reverse — a new sha with no bump — is correct for a change that does not alter what projection
+// emits; nothing in-repo distinguishes the two, only review does.
 //
-// `PROJECTOR_VERSION` LIVES INSIDE THE HASHED TREE. Bumping it changes the
-// hash mechanically, so the two edits cannot be made independently in the
-// bump-but-forget-to-rehash direction. The reverse — editing the sha without
-// bumping the version — is not closed by anything in-repo; only review closes
-// it. That is the honest limit of a single committed pair.
-//
-// THE HASH COVERS NON-TEST `.ts` ONLY (`.test.ts`, `__tests__/` and `.d.ts`
-// excluded, the same filter as `sourceFiles()` at
-// `fs-write-sites.test.ts:388-394`). Two measured reasons, both on `main`
-// @0903699:
-//   1. `PROJECTOR_VERSION` is a cache key — it answers "was this row projected
-//      by today's projector?", and a test edit cannot change projection output.
-//      An unfiltered walk hashes `src/transcript/__tests__/**` at 22 files /
-//      167,425 bytes against production's 8 files / 56,490 bytes, so 75% of the
-//      hashed bytes would be tests. A stamp that bumps for non-reasons trains
-//      people to bump it without reading.
-//   2. An unfiltered walk is not reproducible: `src/transcript/` already holds
-//      9 committed `.jsonl` fixtures, and a `**` walk takes any stray untracked
-//      file or `.DS_Store` with it, so a dev machine and CI would disagree.
-//
-// `src/project/` DOES NOT EXIST YET — it arrives with Task 3.1, and the absent
-// tree contributes nothing: not a sentinel, not a skip. When 3.1 lands it, this
-// test goes red, and THAT IS THE DESIGN, not a bug to engineer around. 3.1 owns
-// bumping the version, pasting the new sha, and applying this same filter.
-//
-// OPERATIONAL TRAP: `npm run format` is `prettier --write .` over the whole
-// repo and `src/transcript/` is not in `.prettierignore`, so a formatting-only
-// run reds this test. That is correct — the bytes changed — and it is stated
-// here rather than engineered around.
+// The hash covers non-test `.ts` only: a test edit cannot change projection output, and an
+// unfiltered walk would take stray untracked files with it, so a dev box and CI would disagree.
+// `npm run format` rewrites these bytes, so recompute AFTER formatting, never before.
 
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -48,11 +19,11 @@ import { PROJECTOR_VERSION } from '../transcript/version.js';
 
 const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** Both halves of the projector. `project/` is absent until Task 3.1. */
+/** Both halves of the projector. */
 const HASHED_TREES = ['transcript', 'project'] as const;
 
 /** The committed pair. Both change together or this file reds. */
-const PROJECTOR_SOURCE_SHA = '1ca47b98ce184c9cba39c6e93601209ea47db5287f90e1e798185c63eafe6ca1';
+const PROJECTOR_SOURCE_SHA = 'd9218496838669d87ec6f6b761a9d4a399cb0e917382cc2ae951194c7fd7e575';
 
 interface HashedFile {
   path: string;
@@ -77,10 +48,8 @@ function hashedFiles(trees: readonly string[] = HASHED_TREES): HashedFile[] {
 }
 
 /**
- * sha256 over path + byte length + raw bytes, per file in sorted path order.
- * The path and the length are in the digest so a pure rename, or a shuffle of
- * content between two files, reds too. Sorting here rather than trusting the
- * caller is what keeps it independent of filesystem enumeration order.
+ * sha256 over path + byte length + raw bytes, per file in sorted path order, so a rename or a
+ * shuffle of content between two files reds too. Sorting here keeps it enumeration-independent.
  */
 function projectorHash(files: readonly HashedFile[] = hashedFiles()): string {
   const hash = createHash('sha256');
@@ -111,9 +80,8 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
   });
 
   it('the version is imported, not redeclared, and lives inside the hashed tree', () => {
-    // Deliberately NOT pinned to a literal: Task 3.1 is required to bump this,
-    // and a pin would red a bump that is the correct response to a projector
-    // change. The hash above is what polices the value; this polices the shape.
+    // Deliberately NOT pinned to a literal: a pin would red a bump that is the correct
+    // response to a projector change. The hash above polices the value; this polices the shape.
     expect(Number.isInteger(PROJECTOR_VERSION)).toBe(true);
     expect(PROJECTOR_VERSION).toBeGreaterThan(0);
     expect(hashedFiles().map((file) => file.path)).toContain('transcript/version.ts');
@@ -122,7 +90,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
   it('hashes production source only, and every projector module is in it', () => {
     const paths = hashedFiles().map((file) => file.path);
 
-    // Containment, never a bare count: Phase 3 adds modules to this tree.
+    // Containment, never a bare count: modules get added to this tree.
     expect(paths).toEqual(expect.arrayContaining(['transcript/version.ts']));
     for (const module of [
       'accessors',
@@ -152,9 +120,8 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
   });
 
   it('editing a test file leaves the digest alone', () => {
-    // AC5's negative limb. The exclusion happens in the FILE LIST, so the proof
-    // is that no real file under `transcript/__tests__/` reaches the digest —
-    // whatever anyone does to its bytes afterwards cannot move the hash.
+    // The exclusion happens in the FILE LIST, so the proof is that no real file under
+    // `transcript/__tests__/` reaches the digest at all.
     const hashed = new Set(hashedFiles().map((file) => file.path));
     const testTree = readdirSync(join(SRC_DIR, 'transcript', '__tests__'), {
       recursive: true,
@@ -183,10 +150,6 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
   });
 
   it('src/project/ is present and contributes its production source only', () => {
-    // The mirror image of the assertion this file shipped with. Task 3.1 landed
-    // the tree, so the absence limb became a lie the moment it did — a sha paste
-    // could never have fixed it, and rewriting it is the second of that task's
-    // two edits here.
     expect(existsSync(join(SRC_DIR, 'project'))).toBe(true);
     expect(treeFiles('project').length).toBeGreaterThan(0);
 
@@ -233,9 +196,8 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     shuffled[other] = { ...files[other]!, bytes: files[index]!.bytes };
     expect(projectorHash(shuffled)).not.toBe(PROJECTOR_SOURCE_SHA);
 
-    // Bumping the constant — the whole point of putting it inside the tree.
-    // Derived from the imported value rather than a literal `1`, so this keeps
-    // testing a real bump after Task 3.1 bumps it.
+    // Bumping the constant — the whole point of putting it inside the tree. Derived from the
+    // imported value rather than a literal, so this keeps testing a real bump after each one.
     const bumped = [...files];
     const versionAt = files.findIndex((file) => file.path === 'transcript/version.ts');
     const source = files[versionAt]!.bytes.toString('utf8');

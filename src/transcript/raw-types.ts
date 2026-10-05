@@ -1,31 +1,7 @@
-// Every harness record shape agent-lens has MEASURED, declared with every field
-// optional and `unknown`-valued. Type-only, like `src/shared/entities.ts` and
-// `src/shared/api.ts`: this module emits zero runtime JavaScript, and
-// `__tests__/module-shape.test.ts` asserts that mechanically rather than on
-// trust.
-//
-// It asserts NOTHING about what the harness will send. It records what was seen:
-// 25,609 lines across 27 session transcripts and three Claude Code versions
-// (2.1.153 / 2.1.197 / 2.1.212), re-measured against the committed fixtures on
-// 2026-08-12. The transcript format is officially unstable and the corpus
-// already disagrees with itself — `origin` is present on 2.1.197+ and absent on
-// 2.1.153 (0 of 42 user-text lines) — so a field appearing here means "observed
-// at least once", never "will be there".
-//
-// ## What these types do NOT do, stated plainly because a reviewer will assume
-// ## otherwise
-//
-// Every field is optional and `unknown`, so all of these interfaces are
-// STRUCTURALLY IDENTICAL and mutually assignable, and `{}` satisfies every one
-// of them. TypeScript will not catch passing a `RawUserLine` where a
-// `RawAssistantLine` is expected. There is no discrimination here and no union
-// to switch on — adding one would advertise a safety that does not exist.
-//
-// What they give is a NAME and a measured field inventory: documentation that
-// compiles. The enforcement power is elsewhere and comes from one thing —
-// `message` is `unknown`, so `line.message.usage` does not compile, and every
-// read is forced through a checked accessor in `./accessors.js`. That is the
-// whole mechanism.
+// Every harness record shape agent-lens has MEASURED, every field optional and `unknown`-valued.
+// A field here means "observed at least once", never "will be there". These interfaces therefore
+// discriminate NOTHING — they are mutually assignable; what they buy is a name, an inventory, and
+// `unknown` forcing every read through a checked accessor in `./accessors.js`.
 
 /** `type: 'user'` — a human prompt, a tool result, or a compaction summary. */
 export interface RawUserLine {
@@ -38,7 +14,7 @@ export interface RawUserLine {
   timestamp?: unknown;
   version?: unknown;
   message?: unknown;
-  /** `{ kind: 'human' | 'task-notification' }` on 2.1.197+; absent on 2.1.153. */
+  /** `{ kind: 'human' | 'task-notification' }` on newer harness builds; absent on older ones. */
   origin?: unknown;
   /** Structured tool output: `stdout`, `stderr`, `structuredPatch`, `agentId`. */
   toolUseResult?: unknown;
@@ -57,6 +33,12 @@ export interface RawUserLine {
   slug?: unknown;
   entrypoint?: unknown;
   permissionMode?: unknown;
+  serverClassifierContext?: unknown;
+  /** `"human"` / `"sdk"`, stated outright. A corroborator for `origin.kind`, not an authority. */
+  turnOrigin?: unknown;
+  queueSkipAttachments?: unknown;
+  turnPosition?: unknown;
+  turnCompanion?: unknown;
 }
 
 /** `type: 'assistant'` — one model response, carrying usage and content blocks. */
@@ -79,6 +61,17 @@ export interface RawAssistantLine {
   gitBranch?: unknown;
   slug?: unknown;
   entrypoint?: unknown;
+  /** Seen on `assistant` and nothing else. */
+  perTurnEffort?: unknown;
+  apiBlockIndex?: unknown;
+  advisorModel?: unknown;
+  serverClassifierRequest?: unknown;
+  /** What actually ran. The model's own `tool_use.input` is the REQUEST, and the two differ. */
+  wireToolInputs?: unknown;
+  wireIngestContext?: unknown;
+  /** On a quota or outage refusal, beside `isApiErrorMessage`. */
+  apiErrorStatus?: unknown;
+  quotaLimits?: unknown;
 }
 
 /** `type: 'system'` — hooks, turn timings, compaction bookkeeping, notices. */
@@ -132,6 +125,9 @@ export interface RawAttachmentLine {
   gitBranch?: unknown;
   slug?: unknown;
   entrypoint?: unknown;
+  /** The ONLY readable text these lines carry: `message.content` is absent on this type. */
+  rendered?: unknown;
+  renderedInHumanTurn?: unknown;
 }
 
 /** `type: 'mode'` — a mode switch. Carries no uuid and no timestamp. */
@@ -169,6 +165,42 @@ export interface RawLastPromptLine {
   lastPrompt?: unknown;
   leafUuid?: unknown;
   sessionId?: unknown;
+  explicit?: unknown;
+}
+
+/** `type: 'atis-latch'` — harness bookkeeping. No uuid, and `atis` is an opaque token. */
+export interface RawAtisLatchLine {
+  type?: unknown;
+  atis?: unknown;
+  sessionId?: unknown;
+}
+
+/**
+ * `type: 'cost-state'` — the harness's own cost tally, and NOT a pricing source: agent-lens
+ * prices from `message.usage` x `src/shared/pricing.ts`. No uuid to hang an event on.
+ */
+export interface RawCostStateLine {
+  type?: unknown;
+  sessionId?: unknown;
+  startTime?: unknown;
+  totalCostUSD?: unknown;
+  totalDuration?: unknown;
+  totalAPIDuration?: unknown;
+  totalAPIDurationWithoutRetries?: unknown;
+  totalToolDuration?: unknown;
+  totalLinesAdded?: unknown;
+  totalLinesRemoved?: unknown;
+  modelUsage?: unknown;
+  hasUnknownModelCost?: unknown;
+}
+
+/** `type: 'fork-context-ref'` — where a fork was cut from. `src/project/subagents.ts` owns that. */
+export interface RawForkContextRefLine {
+  type?: unknown;
+  agentId?: unknown;
+  parentSessionId?: unknown;
+  parentLastUuid?: unknown;
+  contextLength?: unknown;
 }
 
 /** `message` on a user or assistant line. `content` is a string OR a block array. */
@@ -177,9 +209,8 @@ export interface RawMessage {
   type?: unknown;
   role?: unknown;
   /**
-   * A BARE STRING on 529 measured lines, including real human prompts, and a
-   * block array elsewhere. This is why the accessors take a required fallback:
-   * an absent `content` and a present-but-empty one must not collapse.
+   * A BARE STRING on some lines, a block array on others. Why the accessors take a required
+   * fallback: an absent `content` and a present-but-empty one must not collapse.
    */
   content?: unknown;
   model?: unknown;
@@ -204,9 +235,9 @@ export interface RawUsage {
   speed?: unknown;
 }
 
-/** `origin` on a user line — the human-vs-machinery discriminator on 2.1.197+. */
+/** `origin` on a user line — the human-vs-machinery discriminator. */
 export interface RawOrigin {
-  /** `'human'` or `'task-notification'` in the measured corpus. */
+  /** `'human'` or `'task-notification'`. */
   kind?: unknown;
 }
 
