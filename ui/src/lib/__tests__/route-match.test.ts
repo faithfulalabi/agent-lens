@@ -84,7 +84,7 @@ describe('matchRoute covers every locked route plus the miss', () => {
     expect(matchRoute(path)).toEqual(expected);
   });
 
-  it('ignores query and fragment so Task 7.2 can add query-string state', () => {
+  it('ignores query and fragment so a caller can add query-string state', () => {
     expect(matchRoute('/session/abc?tab=spans#top')).toEqual({
       name: 'session',
       sessionId: 'abc',

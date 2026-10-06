@@ -523,7 +523,7 @@ describe('the archive refuses a symlinked log leaf and directory component (Test
     expect(readFileSync(join(volume, SESSION), 'utf8')).toBe(body);
   });
 
-  it('(C2) PIN, prospective and green before task 1.5 — AGENT_LENS_DIR at a symlinked archive root still mirrors', () => {
+  it('(C2) PIN, prospective and green before the directory-chain refusal — AGENT_LENS_DIR at a symlinked archive root still mirrors', () => {
     // This is NOT evidence of a fix and must never be read as one: it passed
     // unmodified before this task. It exists so that the directory-chain refusal
     // above cannot be bought by refusing symlinked ROOTS too, which would break
@@ -551,7 +551,7 @@ describe('the archive refuses a symlinked log leaf and directory component (Test
     expect(readFileSync(join(volume, SESSION), 'utf8')).toBe(body);
   });
 
-  it('(C3) PIN, also green before task 1.5 — an interior symlink that stays INSIDE the real root is allowed', () => {
+  it('(C3) PIN, also green before the directory-chain refusal — an interior symlink that stays INSIDE the real root is allowed', () => {
     // The third clause of the rule the guard now states in one place: the root
     // may be a link, an interior link may not escape the real root (B1), and one
     // that stays inside it is fine. This clause is what stops B1's refusal from

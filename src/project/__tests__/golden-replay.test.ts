@@ -148,7 +148,7 @@ describe.each(fixtures)('golden replay — %s', (id) => {
   });
 });
 
-describe('the real corpus is priced (Task 0.8b)', () => {
+describe('the real corpus is priced', () => {
   // Independent of the snapshot bytes: the scrubbed corpus is 100% `claude-opus-5`,
   // so a parent row whose cost comes back NULL means the rate is missing again
   // — or a stored row was priced under a table that did not carry it.

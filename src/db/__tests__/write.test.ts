@@ -190,7 +190,7 @@ describe('projectSession is one unit of work (AC1)', () => {
     expect(row.projected_at).not.toBeNull();
   });
 
-  it('stores the fold key a machinery turn was stamped with (Task 5.1)', () => {
+  it('stores the fold key a machinery turn was stamped with', () => {
     // The one end-to-end limb of the fold: `pipeline.ts` computes the key,
     // `write.ts` binds it and `read.ts` selects it. Every earlier fixture leaves
     // the column null, so without a NON-null value the round trip is untested.
@@ -662,7 +662,7 @@ describe('recomputeSessionRollups (AC8)', () => {
     expect(typeof sessionRow(db, id).est_cost).toBe('number');
   });
 
-  it('a claude-opus-5 session is priced, and at the published rate (Task 0.8b)', () => {
+  it('a claude-opus-5 session is priced, and at the published rate', () => {
     const db = cache();
     const { path } = plant('opus5', [
       humanLine('go', TS(0)),
@@ -707,7 +707,7 @@ function syntheticLine(ts: string): Record<string, unknown> {
   };
 }
 
-describe('the folded model reaches the row (Task 0.13)', () => {
+describe('the folded model reaches the row', () => {
   it('writes the model that did the work, not the marker on the last line', () => {
     const db = cache();
     const { path } = plant('lastsynthetic', [
@@ -741,7 +741,7 @@ describe('the folded model reaches the row (Task 0.13)', () => {
   });
 });
 
-describe('sessions.models: every model the file used, most calls first (Task 0.17)', () => {
+describe('sessions.models: every model the file used, most calls first', () => {
   const modelsOf = (db: DatabaseSync, id: string, column = 'models'): unknown =>
     JSON.parse(sessionRow(db, id)[column] as string);
 
@@ -823,7 +823,7 @@ describe('sessions.models: every model the file used, most calls first (Task 0.1
   });
 });
 
-describe('sessions.sub_models: transitive over sidecars, summed, kept apart from models (Task 0.17)', () => {
+describe('sessions.sub_models: transitive over sidecars, summed, kept apart from models', () => {
   const setModels = (db: DatabaseSync, id: string, models: string): void => {
     db.prepare('UPDATE sessions SET models = ? WHERE id = ?').run(models, id);
   };
@@ -871,7 +871,7 @@ describe('sessions.sub_models: transitive over sidecars, summed, kept apart from
   });
 });
 
-describe('mixed-model pricing: the session is the sum of its parts (Task 0.14)', () => {
+describe('mixed-model pricing: the session is the sum of its parts', () => {
   /** An assistant tool call CARRYING USAGE, under an explicit model. */
   function pricedCallLine(
     callId: string,
@@ -1095,7 +1095,7 @@ describe('sub_est_cost follows the same rule: real spend blocks, zero spend neve
   });
 });
 
-describe('a sidecar IS a sessions row (Task 3.3 AC1, AC2, AC3)', () => {
+describe('a sidecar IS a sessions row (AC1, AC2, AC3)', () => {
   /** The launch result text, exactly as the harness writes it. */
   function launched(agentId: string): string {
     return `Async agent launched successfully.\nagentId: ${agentId}`;

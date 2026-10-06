@@ -113,7 +113,7 @@ describe('AC8 — unjoined tool calls are a scalar, and silence stays silent', (
   });
 });
 
-describe('Task 0.16 — the 2.1.277-2.1.284 shapes are absorbed, and only those', () => {
+describe('the 2.1.277-2.1.284 shapes are absorbed, and only those', () => {
   // Absorbing is for PRECISION, not silence: most of these tests exist to prove the alarm
   // still fires for a never-seen type, a new field beside an absorbed one, and the wrong type.
 

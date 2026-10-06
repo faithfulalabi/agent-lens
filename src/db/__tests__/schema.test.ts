@@ -526,7 +526,7 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
   ['events', 'agent_status'],
 ];
 
-describe('task 0.12 audited comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
+describe('the audit changed comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
   it('the DDL, stripped of comments, equals main @ d5c66d1 plus the 7.5 statements exactly', () => {
     expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt017()));
   });
@@ -538,7 +538,7 @@ describe('task 0.12 audited comments only — the statements did not move, and 7
   });
 });
 
-describe('task 0.12 measurement markers landed at the declared lines (AC4)', () => {
+describe('measurement markers landed at the declared lines (AC4)', () => {
   it.each(AUDITED_COLUMNS)('%s.%s carries a dated MEASURED marker', (table, column) => {
     expect(columnBlock(table, column)).toMatch(/MEASURED 2026-/);
   });

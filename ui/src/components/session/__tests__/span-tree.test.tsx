@@ -981,7 +981,7 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(markup).not.toContain('$0');
   });
 
-  it('★ the header no longer coerces a missing rate into a zero (Task 0.8, Test 4)', () => {
+  it('★ the header no longer coerces a missing rate into a zero (Test 4)', () => {
     /*
      * ★ THE MUTATION CONTROL IS THE POINT OF THIS TEST. `formatCost(est_cost ??
      * 0)` stood here and passed the assertion above — both branches spell the em
@@ -1025,7 +1025,7 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(markup).not.toContain('data-slot="metric-cost"');
   });
 
-  it('★ an unpriced row with real usage renders the label, never a missing chip (Task 0.14)', () => {
+  it('★ an unpriced row with real usage renders the label, never a missing chip', () => {
     /*
      * ★ THE MUTATION CONTROL IS THE POINT, exactly Task 0.8's Test 4 one layer
      * down. `est_cost ?? 0` stood in `turnChips`/`eventChips` and the omitted
@@ -1230,7 +1230,7 @@ describe('the child’s root row carries the sub-agent’s own numbers (Test 14,
     ).not.toContain('$');
   });
 
-  it('★ names WHY the sidecar has no cost, on the measured majority path (Task 0.8, Test 5)', () => {
+  it('★ names WHY the sidecar has no cost, on the measured majority path (Test 5)', () => {
     /*
      * 262 of 272 sidecars carry a null `est_cost`, so this arm is the common
      * case rather than the corner — and the em-dash assertion above cannot tell

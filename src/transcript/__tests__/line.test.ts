@@ -321,7 +321,7 @@ describe('AC7 — summary has no branch', () => {
   });
 });
 
-describe('Task 0.13 — foldSessionEnvelope answers `model` on its own rule', () => {
+describe('foldSessionEnvelope answers `model` on its own rule', () => {
   /** One assistant line naming `model`, classified the way production does. */
   function modelLine(model: string, over: Record<string, unknown> = {}): ParsedLine {
     return classifyLine(

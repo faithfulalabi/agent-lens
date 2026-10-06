@@ -68,8 +68,8 @@ function bumpMessage(actual: string): string {
     'you changed the projector; bump PROJECTOR_VERSION\n' +
     `  recomputed: ${actual}\n` +
     '  Paste that into PROJECTOR_SOURCE_SHA in the same diff that bumps the constant.\n' +
-    '  If src/project/ just appeared, this is expected and it is your task (3.1): ' +
-    'bump PROJECTOR_VERSION and paste the printed sha.'
+    '  Adding or removing a file under src/transcript/ or src/project/ reds this too: ' +
+    'recompute AFTER npm run format, then bump PROJECTOR_VERSION and paste the printed sha.'
   );
 }
 
@@ -219,5 +219,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     expect(bumpMessage('abc')).toContain('you changed the projector; bump PROJECTOR_VERSION');
     expect(bumpMessage('abc')).toContain('abc');
     expect(bumpMessage('abc')).toContain('src/project/');
+    expect(bumpMessage('abc')).toContain('paste the printed sha');
+    expect(bumpMessage('abc')).not.toMatch(/task \(?\d+\.\d/i);
   });
 });

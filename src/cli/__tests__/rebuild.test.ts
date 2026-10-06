@@ -96,7 +96,7 @@ async function runRebuild(args: string[]): Promise<{ code: number; out: string }
   return { code, out: lines.join('\n') };
 }
 
-describe('parseSessionId — one positional, at any index (task 0.15)', () => {
+describe('parseSessionId — one positional, at any index', () => {
   it.each([
     [[], undefined],
     [['abc'], 'abc'],
@@ -118,7 +118,7 @@ describe('parseSessionId — one positional, at any index (task 0.15)', () => {
   });
 });
 
-describe('task 0.15 — a session id after a flag rebuilds it, and the cache survives', () => {
+describe('a session id after a flag rebuilds it, and the cache survives', () => {
   // ★ THE INCIDENT TRAIL, WORTH KEEPING: before task 0.6, `parseSessionId` read
   // `args[0]` and nothing else, so `rebuild --dataDir=/x abc` dropped the id,
   // took the WHOLE-CACHE branch and `rmSync`d cache.db — then exited 0. Task

@@ -123,7 +123,7 @@ describe('MetricChip stays inside the agent-lens vocabulary', () => {
     expect(CHIP_SOURCE).not.toMatch(/(?<![\w-])bg-muted(?![\w-])/);
   });
 
-  it('writes its classes where the built-CSS scan Task 5.2b turns on can see them', () => {
+  it('writes its classes where the built-CSS scan can see them', () => {
     /*
      * retokenized.test.ts's extractor reads `className="…"` literals and the
      * strings inside `cn( … )`, and nothing else — a class list hoisted into a

@@ -248,7 +248,7 @@ describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => 
   );
 });
 
-describe('Task 3.2 — the tool join over the whole archive, as properties', () => {
+describe('the tool join over the whole archive, as properties', () => {
   runIt(
     'joins every result, and strands an unjoined call only on its file’s LAST EMITTING line',
     () => {

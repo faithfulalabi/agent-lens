@@ -792,7 +792,7 @@ describe('AC2 — coverage, bytes, divergence and retention', () => {
   });
 });
 
-describe('a symlinked archive leaf is never counted as a mirror (task 1.5)', () => {
+describe('a symlinked archive leaf is never counted as a mirror', () => {
   /** Task 1.4's repro layout: a live source, a live victim, one leaf symlink. */
   function plantVictimLink(s: Sandbox): void {
     writeSource(s, SESSION, jsonLines(4));
