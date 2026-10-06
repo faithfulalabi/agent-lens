@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/faithfulalabi/agent-lens/compare/v0.3.0...v0.4.0) (2026-10-05)
+
+
+### Features
+
+* **transcript:** absorb the Claude Code 2.1.2xx transcript shape ([#112](https://github.com/faithfulalabi/agent-lens/issues/112)) ([2b93486](https://github.com/faithfulalabi/agent-lens/commit/2b93486d638107b3ec495fd35544c8b089ec2f97))
+
 ## [0.3.0](https://github.com/faithfulalabi/agent-lens/compare/v0.2.0...v0.3.0) (2026-10-04)
 
 
