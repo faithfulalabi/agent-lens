@@ -252,6 +252,58 @@ describe('no public doc links into a git-ignored directory (Test 8)', () => {
   });
 });
 
+describe('every README image resolves to a tracked file (Test 10)', () => {
+  // The README references its screenshots by absolute `raw.githubusercontent.com`
+  // URL, because the same text is rendered on the npm package page, which does
+  // not reliably rewrite a relative image path. That buys npm rendering and costs
+  // the one thing a relative path gave for free: a renamed or deleted PNG stops
+  // being a broken link anyone can see locally and becomes a 404 that only a
+  // visitor hits. So the URL is mapped back to the repo path it promises and
+  // checked against `git ls-files` — the same tracked-tree oracle Tests 4, 7 and
+  // 8 already use.
+  //
+  // Scoped to this repo's own raw URLs on purpose. A link to any other host is a
+  // link to something this repository does not control, and asserting on it would
+  // make the suite depend on the network.
+  const RAW_PREFIX = 'https://raw.githubusercontent.com/faithfulalabi/agent-lens/main/';
+  const readme = doc('README.md');
+
+  /** Every `![alt](url)` target in the README that points into this repo. */
+  const imagePaths = [...readme.matchAll(/!\[[^\]]*\]\((\S+?)\)/g)]
+    .map((match) => match[1]!)
+    .filter((url) => url.startsWith(RAW_PREFIX))
+    .map((url) => url.slice(RAW_PREFIX.length));
+
+  it('the README actually carries images, so the check below is not vacuous', () => {
+    expect(
+      imagePaths.length,
+      'a landing page with no screenshot is the state this test was added to stop ' +
+        'the page drifting back into.',
+      // Four: the hero plus the three tour shots. A fifth would be a fifth image
+      // a human has to read for residue before every commit, which is the cost
+      // the shot list is deliberately kept short against.
+    ).toBeGreaterThan(0);
+  });
+
+  it.each(imagePaths)('%s is a tracked file', (path) => {
+    expect(
+      trackedFiles(),
+      `README references ${RAW_PREFIX}${path}, which nothing in the tree provides. ` +
+        'Regenerate with the capture command named in CONTRIBUTING.md, or fix the link.',
+    ).toContain(path);
+  });
+
+  it('no README image is referenced by a relative path', () => {
+    // A relative path renders on GitHub and breaks on npmjs.com, which is the
+    // whole reason the absolute form was chosen. Catching the regression here
+    // beats discovering it on a published package page.
+    const relative = [...readme.matchAll(/!\[[^\]]*\]\((\S+?)\)/g)]
+      .map((match) => match[1]!)
+      .filter((url) => !/^https?:\/\//.test(url));
+    expect(relative, 'npmjs.com does not rewrite relative image paths').toEqual([]);
+  });
+});
+
 describe('the archive outlives the source (Test 9, opt-in)', () => {
   // Opt-in per `real-corpus.test.ts:14`: the corpus is not a fixture and moves
   // daily. The assertion is the INVARIANT — full mirror coverage, and a

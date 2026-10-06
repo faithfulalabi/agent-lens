@@ -38,6 +38,7 @@
     "dev": "tsx src/dev/server.ts",
     "dev:ui": "npm --prefix ui run dev",
     "render-gate": "tsx src/render-gate/index.ts",
+    "demo:capture": "node --import tsx scripts/capture-screenshots.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && npm --prefix ui run typecheck",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && npm --prefix ui run build",
