@@ -12,13 +12,6 @@
 // a cold upstream registry, or a machine with no Homebrew Node. The real cold run
 // against the public registry is task 8.4's, and nothing here may claim it.
 //
-// ★ TWO MODES, since the archive-wrapper step was added. The installed code is
-// driven BY SUBPROCESS (the `.bin` link, `npm install`, the generated wrapper under
-// `/bin/sh`) and also IN-PROCESS: the wrapper step imports the pure builders out of
-// `<installed>/dist`. In-process strengthens the isolation claim rather than
-// weakening it — the imported file sits inside the jail, so a reachable repo copy
-// would still be a breach — but the header is the contract, so it says so.
-//
 // The isolation is PROVED rather than asserted. Node's resolver only consults
 // `node_modules` in ANCESTOR directories of the importing file, so a walk from
 // the jail to `/` that finds none makes a repo-resident or hoisted copy
@@ -305,22 +298,9 @@ async function smoke(jail) {
 }
 
 /**
- * The generated archive wrapper, built by the INSTALLED package and run for real
- * against the hoisted layout every published install actually has.
- *
- * Why this step exists: 0.3.0 shipped a wrapper that demanded `$ROOT/node_modules`,
- * which npm hoists to an ANCESTOR of `$ROOT` in every published layout. Turn-on
- * exited 0, armed the timer, and then every pass FATALed — for everyone who
- * installed the way the README says to. Nothing in the suite could see it: the unit
- * tests inject a fake package root they also populate, so the guard always passed.
- *
- * Deliberately NO scheduler binary and no unit file. `launchctl bootstrap` loads
- * into launchd's MACHINE-GLOBAL state, which survives this script's teardown, and
- * `systemctl --user enable` is executed by the running user manager over D-Bus using
- * that session's own `XDG_CONFIG_HOME` — so an injected one does not redirect it.
- * Arming is pinned at the unit layer instead, over injected runners, which is where
- * `CONTRIBUTING.md` requires scheduler interaction to be proved. What is left here
- * writes only under `<dataDir>/schedule/` and `<dataDir>/logs/`.
+ * The generated archive wrapper, built by the installed package and run for real
+ * against the hoisted layout. No scheduler binary and no unit file: both reach
+ * machine-global state that survives this script's teardown.
  */
 async function archiveWrapper({ jail, app, installed, dataDir }) {
   heading('the installed package builds a wrapper that runs in the hoisted layout');
@@ -433,15 +413,9 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
   assert.match(mutantEntries[0].summary, /node_modules/);
   ok('the 0.3.0 guard re-spliced into this wrapper exits 1 — the step detects the bug');
 
-  // `/bin/sh <script>` rather than the file directly, because that is the form both
-  // backends invoke — so no exec bit is involved either here or there.
-  //
-  // `AGENT_LENS_TRANSCRIPT_ROOT` is an honest deviation from production and worth
-  // naming: the wrapper bakes `--dataDir` but NOT the transcript root, so a real
-  // pass resolves `~/.claude/projects`. This step therefore proves the wrapper runs
-  // and copies, not that production finds the source root. Belt and braces anyway —
-  // `jailedEnv` points HOME at `jail/home`, so even a dropped variable resolves
-  // inside the jail rather than at the developer's real corpus.
+  // `/bin/sh <script>` is the form both backends invoke, so no exec bit is involved.
+  // `AGENT_LENS_TRANSCRIPT_ROOT` is set here but not in production, where a real pass
+  // resolves `~/.claude/projects`.
   writeFileSync(wrapperPath, wrapper);
   const pass = spawnSync('/bin/sh', [wrapperPath], {
     encoding: 'utf8',

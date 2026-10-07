@@ -32,9 +32,8 @@ if (!Number.isInteger(major) || major < MIN_NODE_MAJOR) {
   process.exitCode = 1;
 } else {
   // Dynamic, so the guard above runs first — a static import would hoist past it.
-  // The generated archive wrapper guards a built install on this very specifier
-  // before it runs: BUILT_CLI_ENTRY in src/cli/commands/schedule, held in step
-  // with this line by src/packaging.test.
+  // The generated archive wrapper guards an install on this specifier — keep
+  // BUILT_CLI_ENTRY in step with it.
   const { main } = await import('../dist/src/cli/index.js');
   // Setting the code and returning, rather than terminating the process here:
   // the abrupt form truncates piped stdout mid-write. Exit codes 0/1/3 from

@@ -13,11 +13,7 @@
 // Describe 17 pins that exception by grepping this file for `runMain` calls naming
 // the command, so prose here must never spell a call shape the grep reads as code.
 //
-// Running the GENERATED wrapper under `/bin/sh` is not a second exception to that
-// rule. The rule names three binaries and two directories; `/bin/sh` is in neither
-// class, exactly as the real `date` this file already runs is in neither. Such a run
-// evaluates the wrapper's preconditions against a sandbox tree and exits before it
-// would reach `node`, so it loads nothing and arms nothing.
+// Running the generated wrapper under `/bin/sh` exits before `node`, so it arms nothing.
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -341,10 +337,7 @@ describe('4 — the generated artifacts are well-formed and non-stale (AC1, AC4)
     // `$ROOT/node_modules` here FATALs on a perfectly good install.
     expect(wrapper).not.toContain('$ROOT/node_modules');
     expect(wrapper).not.toContain('node_modules missing');
-    // `-f` on the file the shim imports, not `-d dist`: a directory test passes on
-    // an empty `dist/` and the failure then arrives as a stack trace. Spelled
-    // LITERALLY, not through `BUILT_CLI_ENTRY`: interpolating the constant would
-    // make this assertion true of whatever the constant later became.
+    // Spelled literally, not via `BUILT_CLI_ENTRY`: the pin must not track the constant.
     expect(wrapper).toContain('[ -f "$ROOT/dist/src/cli/index.js" ]');
   });
 });
@@ -739,19 +732,7 @@ const WRAPPER_GOLDEN_96cbd39 = [
   '',
 ].join('\n');
 
-// ★ The same pin for the BUILT layout, which had no byte golden until now — which
-// is how a guard that was wrong for every published install shipped while the
-// source-layout golden above stayed green.
-//
-// NAMING, deliberately different from the two constants that bracket it: no sha
-// suffix, because the generating commit cannot be known before it exists, and no
-// task pointer. The `96cbd39` names are back-fills that recorded the commit whose
-// output they captured after the fact; this one is written in the same commit as
-// the builder change it pins, so there is nothing to back-fill. Do not "fix" the
-// inconsistency by inventing a sha for this one.
-//
-// It must differ from WRAPPER_GOLDEN_96cbd39 in EXACTLY three lines — the entry
-// test, the fourth precondition, and the `OUT=` run line — and nowhere else.
+// The same byte pin for the BUILT layout.
 const WRAPPER_BUILT_GOLDEN = [
   '#!/bin/sh',
   '# agent-lens archive — unattended pass, invoked by the launchd agent',
@@ -1475,14 +1456,7 @@ describe('20 — escapeUnitValue and the pure unit builders', () => {
 });
 
 describe('21 — a built layout whose compiled entry is absent FATALs loudly (AC3)', () => {
-  /**
-   * A package root shaped like a published install with its `dist/` gone: the
-   * `bin/` shim is present, so only the fourth precondition can catch it.
-   *
-   * `nodePath: process.execPath` is load-bearing. The bed default is
-   * `/test/bin/node`, which does not exist, so `[ -x "$NODE" ]` would fire first
-   * and the test would assert the wrong FATAL and pass for the wrong reason.
-   */
+  /** `nodePath: process.execPath`, or `[ -x "$NODE" ]` fires first on the bed default. */
   function probe(s: Sandbox): { wrapperPath: string; logPath: string; packageRoot: string } {
     const packageRoot = join(s.root, 'published-pkg');
     mkdirSync(join(packageRoot, 'bin'), { recursive: true });
@@ -1549,10 +1523,6 @@ describe('21 — a built layout whose compiled entry is absent FATALs loudly (AC
 
 describe('22 — turn-on hands the builder its four inputs on a built moduleUrl (AC2)', () => {
   it('the wrapper on disk is exactly what those four inputs produce', async () => {
-    // The one compound the packed-tarball smoke cannot reach: that the turn-on
-    // composes `resolveArchiveInvocation(deps.moduleUrl)` with the node path, the
-    // data dir and the log path. Pinned with `toBe` against the builder itself, so
-    // no real launchctl, systemctl or unit dir is involved.
     const s = sb();
     const builtUrl = pathToFileURL(
       join(s.root, 'pkg', 'dist', 'src', 'cli', 'commands', 'schedule.js'),

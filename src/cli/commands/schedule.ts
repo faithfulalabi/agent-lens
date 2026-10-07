@@ -40,14 +40,7 @@ export const LEGACY_LABEL = 'com.faithful.agent-lens.archive';
 const START_INTERVAL_SECONDS = 900;
 /** Pinned: `parseCronLog` anchors on this exact shape, colon-less offset included. */
 export const CRON_STAMP_FORMAT = '+%Y-%m-%dT%H:%M:%S%z';
-/**
- * The compiled entry `bin/agent-lens.js` imports, relative to the package root.
- *
- * The only literal of this path in `src/`: the generated wrapper guards a built
- * layout on it, and `bin/agent-lens.js` imports it. `packaging.test.ts` asserts
- * the shim's source contains `../${BUILT_CLI_ENTRY}`, so the two sites cannot
- * drift apart without reddening.
- */
+/** The compiled entry `bin/agent-lens.js` imports, relative to the package root. */
 export const BUILT_CLI_ENTRY = 'dist/src/cli/index.js';
 export const WAKE_TIME_CAVEAT =
   'a wall-clock schedule does not fire while the machine is asleep — treat the interval as a bound on wake time, not on elapsed time';
@@ -209,16 +202,8 @@ export function buildWrapperScript(opts: WrapperOptions): string {
     kind === 'source'
       ? '"$NODE" --import tsx "$ROOT/src/cli/index.ts" archive --dataDir "$DATA_DIR"'
       : '"$NODE" "$ROOT/bin/agent-lens.js" archive --dataDir "$DATA_DIR"';
-  // The fourth precondition is the ONE thing the two layouts genuinely disagree
-  // about, and hardcoding the source answer is what made every published install
-  // FATAL on a correct tree. A checkout needs `tsx`, a devDependency, so it lives
-  // only in that checkout's own `node_modules`. A published install needs the
-  // compiled file its shim imports; its two runtime deps are hoisted to an
-  // ANCESTOR of `$ROOT` that Node's resolver reaches unaided, so `$ROOT/node_modules`
-  // neither exists nor needs to. `-f` on the entry rather than `-d dist`: an empty
-  // or half-extracted `dist/` passes a directory test and then dies inside the
-  // shim's `await import` as ERR_MODULE_NOT_FOUND, which the `case` below reports
-  // as a status token plus a stack trace instead of naming the path and the remedy.
+  // A checkout needs `tsx` from its own `node_modules`; an install's deps are hoisted
+  // above `$ROOT`, so guard the shim's entry with `-f` — an empty `dist/` passes `-d`.
   const requirement =
     kind === 'source'
       ? '[ -d "$ROOT/node_modules" ] || { say "FATAL node_modules missing — run npm install in $ROOT"; exit 1; }'
