@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/faithfulalabi/agent-lens/compare/v0.4.0...v0.4.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **schedule:** correct the wrapper guard for hoisted install layouts ([#116](https://github.com/faithfulalabi/agent-lens/issues/116)) ([77bfea9](https://github.com/faithfulalabi/agent-lens/commit/77bfea9655a4949d29dca8ddee63407adda8757a))
+
 ## [0.4.0](https://github.com/faithfulalabi/agent-lens/compare/v0.3.0...v0.4.0) (2026-10-05)
 
 
