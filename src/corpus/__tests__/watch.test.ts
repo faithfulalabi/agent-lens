@@ -676,7 +676,7 @@ describe('hand-off #1 — events.src_len is never NULL and never 0', () => {
   });
 });
 
-describe('task 7.5 — wave 2 drains the spill index at its tail', () => {
+describe('wave 2 drains the spill index at its tail', () => {
   const SPILLER = 'cccccccc-3333-4333-8333-cccccccccccc';
 
   /** A top-level session with two spilled Bash results, both bodies mirrored. */

@@ -108,7 +108,7 @@ describe('AC1 — the eight query families return the spec shapes', () => {
     expect(keysOf(page.items[0]!)).toEqual(SESSION_ROW_KEYS);
   });
 
-  it('1b. models and sub_models reach the wire as id arrays, never [id, calls] pairs (Task 0.17)', () => {
+  it('1b. models and sub_models reach the wire as id arrays, never [id, calls] pairs', () => {
     const parent = seedSessionRow(db, { id: 's1' });
     db.prepare('UPDATE sessions SET models = ?, sub_models = ? WHERE id = ?').run(
       '[["claude-opus-5-5",160],["claude-fable-5-1",67]]',
@@ -876,7 +876,7 @@ describe('AC1 — searchEvents answers real query shapes instead of throwing', (
 
 // --- Task 7.5: the spill arm ------------------------------------------------
 
-describe('task 7.5 — searchEvents reads spill_fts as a second arm', () => {
+describe('searchEvents reads spill_fts as a second arm', () => {
   const PATH = '/archive/-slug/s/tool-results/spilled.txt';
 
   /** A tool_call spill row with no text, plus its body in `spill_fts`. */

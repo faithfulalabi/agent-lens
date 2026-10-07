@@ -357,7 +357,7 @@ describe('AC9 — turn kinds, turn ids and the header envelope', () => {
   });
 });
 
-describe('Task 5.1 — turns.parent_event_id names the Agent call a machinery turn answers', () => {
+describe('turns.parent_event_id names the Agent call a machinery turn answers', () => {
   it('stamps the Agent call, across turns', () => {
     // `toolu_marker` is called in turn 0 and answered in turn 4, which is the
     // whole reason the index is built over the finished event array rather than
@@ -546,7 +546,7 @@ describe('AC10 — src_offset and src_len are the emitting LINE’s', () => {
   );
 });
 
-describe('Task 0.13 — which model the whole file folds to', () => {
+describe('which model the whole file folds to', () => {
   it('names the model that did the work, not the marker on the last line', () => {
     const result = project('model-last-synthetic.jsonl');
 

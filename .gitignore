@@ -22,7 +22,11 @@ dist/
 build/
 
 # Node
-node_modules/
+# NO trailing slash, deliberately: a trailing-slash pattern is directory-only, so a `node_modules`
+# SYMLINK — what you get when you point a throwaway worktree at an existing install — stayed
+# unignored and `git add -A` staged it. A bare name with no slash matches a directory, symlink or
+# file at EVERY depth, so this one line also covers `ui/node_modules`.
+node_modules
 *.tsbuildinfo
 
 # Build / coverage
@@ -43,7 +47,7 @@ playwright-report/
 # The leading `**/` is load-bearing: a pattern with an interior slash is
 # ROOT-anchored, so the old `fixtures/raw/` did NOT ignore
 # experiments/tracer-bullet/fixtures/raw/ — which is exactly where capture.mjs
-# wrote during Task 1.5's live run. Asserted by experiments/.../gitignore.test.mjs.
+# wrote during a live run. Asserted by experiments/.../gitignore.test.mjs.
 **/fixtures/raw/
 **/.capture-scratch/
 

@@ -36,7 +36,7 @@ function modelCells(markup: string): Array<{ count: number; text: string; title?
   });
 }
 
-describe('the session list shows a Model column (Task 0.17)', () => {
+describe('the session list shows a Model column', () => {
   it('★ one cell per row: single model, two models dominant first, and none', () => {
     const markup = markupOf([
       makeSessionRow({ id: 'one' }),

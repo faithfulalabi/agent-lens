@@ -244,7 +244,7 @@ describe('the spawned binary carries the code (AC2)', () => {
     expect(existsSync(archivePath(s, SESSION))).toBe(true);
   });
 
-  it("task 1.4's leaf-symlink refusal is archive-side, so it exits 3", async () => {
+  it('the leaf-symlink refusal is archive-side, so it exits 3', async () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(3));
     writeSource(s, OTHER, jsonLines(2));
@@ -266,7 +266,7 @@ describe('the spawned binary carries the code (AC2)', () => {
     expect(existsSync(archivePath(s, OTHER))).toBe(true);
   });
 
-  it("task 1.5's log-leaf refusal is log-side, so it exits 0", async () => {
+  it('the log-leaf refusal is log-side, so it exits 0', async () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(3));
     const decoy = decoyPath(s, 'log-target.txt');
@@ -281,7 +281,7 @@ describe('the spawned binary carries the code (AC2)', () => {
     expect(result.errors).toHaveLength(1); // non-vacuity: the refusal really happened
     expect(result.errors[0]?.origin).toBe('log');
     expect(result.logged).toBe(false);
-    // The bytes the pass already copied are not costed by the log refusal (1.5's Ruling 2).
+    // The bytes the pass already copied are not costed by the log refusal.
     expect(readFileSync(decoy, 'utf8')).toBe('ORIGINAL-LOG');
     expect(existsSync(archivePath(s, SESSION))).toBe(true);
   });

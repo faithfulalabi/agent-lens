@@ -108,7 +108,7 @@ describe('App routes the session URLs to the session view (Test 20)', () => {
  * app may never act on. Without these two cases the only thing that would catch
  * a missing branch is the render gate, a browser away.
  */
-describe('App routes Task 7.2 search and event URLs (Test 18)', () => {
+describe('App routes search and event URLs (Test 18)', () => {
   it('renders /search as the search screen and NOT as the session view', () => {
     const markup = renderAt('/search');
     expect(markup).toContain('data-slot="app-shell"');

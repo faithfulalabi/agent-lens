@@ -260,7 +260,7 @@ describe('7 — bare arguments land where each parser actually reads them (OQ4)'
   });
 
   it.each([[['--dataDir=/x', 'abc']], [['--dataDir', '/x', 'abc']]])(
-    'rebuild accepts %j — the id lands at any index, as prune already allows (task 0.15)',
+    'rebuild accepts %j — the id lands at any index, as prune already allows',
     (args) => {
       expect(validateArgs(specOf('rebuild'), args)).toEqual({ ok: true });
     },

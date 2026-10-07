@@ -58,7 +58,7 @@ describe('estimateCost — AC2: unknown model is null, never zero', () => {
     expect(cost).toBeCloseTo(30, 10);
   });
 
-  it('carries claude-opus-5 at the four published rates (Task 0.8b)', () => {
+  it('carries claude-opus-5 at the four published rates', () => {
     // Anthropic public pricing page, read 2026-09-22: $5 / $25 / $0.50 / $6.25
     // (5-minute cache write) per MTok.
     expect(PRICING_TABLE['claude-opus-5']).toEqual({

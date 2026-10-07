@@ -408,7 +408,7 @@ function foundReport(partial: {
   };
 }
 
-describe('task 0.10 — doctor reports time since the last successful pass', () => {
+describe('doctor reports time since the last successful pass', () => {
   it('a recent all-ok, 0-bytes-copied log renders as healthy — never as a failure', () => {
     // 36 of 36 passes on 2026-08-29 were `ok … 0 bytes copied`; that is the
     // healthy steady state, and the section keys on the status token alone.

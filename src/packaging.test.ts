@@ -200,7 +200,7 @@ describe('one Playwright driver, two entry points (AC3)', () => {
   });
 });
 
-describe('the MIT license is on record and consistent (task 1.1)', () => {
+describe('the MIT license is on record and consistent', () => {
   it('ships the standard MIT text at the repo root', () => {
     const license = read('LICENSE');
     expect(license).toContain('MIT License');
@@ -217,7 +217,7 @@ describe('the MIT license is on record and consistent (task 1.1)', () => {
   });
 });
 
-describe('the publish metadata names a real release (task 8.4)', () => {
+describe('the publish metadata names a real release', () => {
   it('publishes under the founder scope, publicly', () => {
     // npm refused the unscoped `agent-lens` as too similar to `agentlens`.
     expect(MANIFEST.name).toBe('@faithfulalabi/agent-lens');
@@ -265,7 +265,7 @@ describe('the smoke abstains from port 4470 (AC4)', () => {
 // definition of "shipped"; these tests hold it against the compiler, the
 // manifest and the ui build, and pin the workflow shape the release relies on.
 
-describe('the release scope predicate (task 8.5, AC1)', () => {
+describe('the release scope predicate (AC1)', () => {
   it.each([
     'src/cli/index.ts',
     'src/shared/x.ts',
@@ -315,7 +315,7 @@ function readJsonc<T>(...rel: string[]): T {
   return JSON.parse(text) as T;
 }
 
-describe('"what ships" and "what triggers a release" cannot drift (task 8.5, AC2)', () => {
+describe('"what ships" and "what triggers a release" cannot drift (AC2)', () => {
   it('agrees with the compiler on exactly which src files reach dist', () => {
     const tsc = spawnSync(
       process.execPath,
@@ -418,7 +418,7 @@ describe('"what ships" and "what triggers a release" cannot drift (task 8.5, AC2
 const PR_TITLE_WORKFLOW = read('.github', 'workflows', 'pr-title.yml');
 const PR_TITLE_REGEX = new RegExp(/grep -Eq '([^']+)'/.exec(PR_TITLE_WORKFLOW)![1]!);
 
-describe('the PR title is the squash commit release-please reads (task 8.5, AC3)', () => {
+describe('the PR title is the squash commit release-please reads (AC3)', () => {
   it('checks the title in a job named pr-title, on every title edit', () => {
     expect(PR_TITLE_WORKFLOW).toContain('  pr-title:\n    name: pr-title');
     expect(PR_TITLE_WORKFLOW).toMatch(/types: \[[^\]]*\bedited\b[^\]]*\]/);
@@ -443,7 +443,7 @@ describe('the PR title is the squash commit release-please reads (task 8.5, AC3)
   );
 });
 
-describe('the version comes from release-please, not by hand (task 8.5, AC3)', () => {
+describe('the version comes from release-please, not by hand (AC3)', () => {
   const releaseManifest = JSON.parse(read('.release-please-manifest.json')) as Record<
     string,
     string
@@ -483,7 +483,7 @@ function job(name: string): string {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
-describe('publish ships the smoke-tested tarball from CI over OIDC (task 8.5, AC4-AC8)', () => {
+describe('publish ships the smoke-tested tarball from CI over OIDC (AC4-AC8)', () => {
   const JOBS = ['lint', 'test', 'smoke', 'release', 'automerge', 'publish-check', 'publish'];
 
   it('keeps the required-check job names lint, test and smoke', () => {

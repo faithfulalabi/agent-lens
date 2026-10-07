@@ -583,7 +583,7 @@ describe('buildReport (AC5)', () => {
     expect(probe?.actual).toContain('toolu_1');
   });
 
-  it('asserts the thread reading, and names both of its clauses (AC-R1, task 5.4)', () => {
+  it('asserts the thread reading, and names both of its clauses (AC-R1)', () => {
     const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
@@ -630,7 +630,7 @@ describe('buildReport (AC5)', () => {
     expect(report.warnings.join(' ')).not.toContain('thread');
   });
 
-  it('asserts the live tail, and names all three of its clauses (AC-R1, task 6.2)', () => {
+  it('asserts the live tail, and names all three of its clauses (AC-R1)', () => {
     const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
@@ -679,7 +679,7 @@ describe('buildReport (AC5)', () => {
     expect(report.warnings.join(' ')).not.toContain('live');
   });
 
-  it('closes the sub-agent response window BEFORE the live splice (task 6.2)', () => {
+  it('closes the sub-agent response window BEFORE the live splice', () => {
     /*
      * ★ THE ONE 5.5 ASSERTION 6.2 COULD HAVE BROKEN SILENTLY. The splice fetches
      * a page of its own, so a window open to the end of the drive would see two
@@ -838,7 +838,7 @@ describe('buildReport (AC5)', () => {
   });
 });
 
-describe('session-model-column (Task 0.17 AC-R1)', () => {
+describe('session-model-column (AC-R1)', () => {
   const modelColumn = (modelCells: string[], sessionCount = modelCells.length) =>
     reportFor({
       modelCells,

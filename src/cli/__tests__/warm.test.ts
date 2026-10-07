@@ -199,7 +199,7 @@ describe('13 — teardown, and the lock a running server holds (AC3)', () => {
   });
 });
 
-describe('task 7.5 — warm drains the spill index once, after the fixed point', () => {
+describe('warm drains the spill index once, after the fixed point', () => {
   it('indexes a spilled body, says so once, and exits 0', async () => {
     const s = sb();
     const id = 'aaaaaaaa-1111-4111-8111-wm0000000075';

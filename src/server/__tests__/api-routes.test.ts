@@ -759,7 +759,7 @@ describe('10. GET /api/health (spec:394-396)', () => {
   });
 });
 
-describe('task 7.5 — a token only in a spilled body is found by GET /api/search (AC1)', () => {
+describe('a token only in a spilled body is found by GET /api/search (AC1)', () => {
   it('is found after one real sweep tick, and not before — through a SEALED body', async () => {
     const session = 'cccccccc-7575-4757-8757-cccccccccccc';
     const dir = join(sandbox.archiveRoot, '-Users-dev-proj', session);
