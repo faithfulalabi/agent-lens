@@ -19,10 +19,10 @@ application.
 
 - **What did I actually ask for three weeks ago?** The archive still holds the session even once
   Claude Code has expired its copy.
-- **Where did that session go wrong?** Read the turn tree top to bottom: every tool call, its real
-  input, its real output, in order.
-- **What did the sub-agent do?** Open the `Agent` row and the sub-agent's own transcript unfolds in
-  place, under the call that spawned it.
+- **Where did that session go wrong?** Read the session back in order: every tool call, its real
+  input, its real output, where it happened.
+- **What did the sub-agent do?** Open the `Agent` call and read the sub-agent's own transcript —
+  its reasoning, its tools, and what it reported back.
 - **Which session touched this file?** Full-text search across prompts, tool payloads and output
   too large to sit inline.
 - **What is it costing?** Tokens and estimated cost, rolled up per session, per turn and per call.
@@ -40,15 +40,17 @@ Requires Node.js `>=24`.
 
 ## A short tour
 
-**Every call, with its real payload.** Selecting a tool call fills the pane with what actually went
-in and what actually came back, and names where the output was stored.
+**Every call, with its real payload.** The session reads back as a conversation, with the tool calls
+tucked into activity groups between the messages. Open one and it shows what actually went in and
+what actually came back.
 
-![A tool call selected in the turn tree, with its input, its output and its storage shown in the detail pane](https://raw.githubusercontent.com/faithfulalabi/agent-lens/main/docs/images/05-tool-call.png)
+![A session read as a conversation: a prompt, Claude's reply, and an open activity group showing a Read call with its input and its output](https://raw.githubusercontent.com/faithfulalabi/agent-lens/main/docs/images/thread-tool-call.png)
 
-**Sub-agents unfold in place.** An `Agent` row expands into that sub-agent's own transcript, nested
-under the call that spawned it, without leaving the session.
+**Sub-agents keep their own transcript.** An `Agent` call links straight to the session the
+sub-agent ran, with its own messages, its own tool calls and its own cost — and a way back to the
+parent.
 
-![An Agent row expanded in the turn tree, with the sub-agent's own events nested beneath it](https://raw.githubusercontent.com/faithfulalabi/agent-lens/main/docs/images/07-subagent.png)
+![A sub-agent's own session: a back link to the parent session, the sub-agent's opening message, its Glob and Grep calls with payloads, and the findings it reported](https://raw.githubusercontent.com/faithfulalabi/agent-lens/main/docs/images/thread-subagent.png)
 
 **Search reaches the payloads, not just the prompts.** Hits land on the event that carried them, and
 the match is highlighted in place. The screen below is search scoped to one open session; search

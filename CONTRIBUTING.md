@@ -27,12 +27,13 @@ built around one:
 npm run dev                        # collector + Vite UI against your real sessions
 npm run dev:ui                     # the Vite UI alone, for CSS work
 npm run render-gate -- --task 0.3  # drive the real UI in Chrome and assert what rendered
-npm run demo:capture               # the same drive against an invented corpus, for docs/images/
+npm run demo:capture               # drive an invented corpus instead, for docs/images/
 ```
 
 `demo:capture` is what regenerates the screenshots in the README. It plants the synthetic corpus in
-`scripts/demo-corpus.mjs` into a throwaway data directory, drives the real UI against it, and copies
-four shots into `docs/images/`. Run it after any UI change that would date them, and read every
+`scripts/demo-corpus.mjs` into a throwaway data directory, drives the real UI against it twice — the
+thread shots first, then the render gate — and copies four shots into `docs/images/`. Run it after
+any UI change that would date them, and read every
 copied image at full size before committing it — no test reads a PNG, so that check is yours.
 
 `render-gate` is the one that matters for UI changes. It boots the app, drives Chrome, and asserts
