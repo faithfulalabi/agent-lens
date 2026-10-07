@@ -332,9 +332,7 @@ describe('4 — the generated artifacts are well-formed and non-stale (AC1, AC4)
     });
     expect(wrapper).toContain('"$NODE" "$ROOT/bin/agent-lens.js" archive --dataDir "$DATA_DIR"');
     expect(wrapper).not.toContain('tsx');
-    // ★ The defect this task fixes. npm hoists the package's dependencies to an
-    // ANCESTOR of `$ROOT` in every published layout, so demanding
-    // `$ROOT/node_modules` here FATALs on a perfectly good install.
+    // npm hoists deps to an ancestor of `$ROOT`, so demanding them here FATALs a good install.
     expect(wrapper).not.toContain('$ROOT/node_modules');
     expect(wrapper).not.toContain('node_modules missing');
     // Spelled literally, not via `BUILT_CLI_ENTRY`: the pin must not track the constant.

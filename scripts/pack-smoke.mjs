@@ -367,7 +367,7 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
     `{ say "FATAL built CLI missing: $ROOT/${BUILT_CLI_ENTRY} — ` +
     `reinstall @faithfulalabi/agent-lens"; exit 1; }`;
   for (const absent of ['$ROOT/node_modules', 'node_modules missing']) {
-    assert.ok(!wrapper.includes(absent), `the wrapper still carries the 0.3.0 guard: ${absent}`);
+    assert.ok(!wrapper.includes(absent), `the wrapper still carries the old node_modules guard: ${absent}`);
   }
   for (const present of [fixedGuard, `ROOT='${installed}'`]) {
     assert.ok(wrapper.includes(present), `the wrapper is missing: ${present}`);
@@ -379,7 +379,7 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
   );
 
   // ★ MUTATION CONTROL, to the standard `mutationControl` sets above: splice the
-  // guard 0.3.0 actually shipped back in and require this step to CATCH it. Without
+  // guard that actually shipped back in and require this step to CATCH it. Without
   // this, a green step proves only that today's wrapper runs — not that the step
   // would have stopped the bug. Its own log path, so the real cron.log below stays
   // pristine and the `exactly one entry` assertion keeps its meaning.
@@ -392,7 +392,7 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
   const mutant = unmutated.replace(fixedGuard, shipped030Guard);
   // A `replace` whose needle has drifted silently no-ops, and a mutation control
   // that mutates nothing passes forever. This is what stops that.
-  assert.notEqual(mutant, unmutated, `the 0.3.0 guard was never spliced in; needle: ${fixedGuard}`);
+  assert.notEqual(mutant, unmutated, `the old guard was never spliced in; needle: ${fixedGuard}`);
 
   mkdirSync(dirname(wrapperPath), { recursive: true });
   writeFileSync(mutantPath, mutant);
@@ -404,14 +404,14 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
   assert.equal(
     mutantRun.status,
     1,
-    `the 0.3.0 guard did NOT fail on this layout, so this step is not a detector of ` +
+    `the old guard did NOT fail on this layout, so this step is not a detector of ` +
       `the bug it claims to cover\nmutant.log:\n${mutantLog}`,
   );
   const mutantEntries = parseCronLog(mutantLog);
   assert.equal(mutantEntries.length, 1, `expected one mutant entry:\n${mutantLog}`);
   assert.equal(mutantEntries[0].status, 'FATAL');
   assert.match(mutantEntries[0].summary, /node_modules/);
-  ok('the 0.3.0 guard re-spliced into this wrapper exits 1 — the step detects the bug');
+  ok('the old node_modules guard re-spliced into this wrapper exits 1 — the step detects the bug');
 
   // `/bin/sh <script>` is the form both backends invoke, so no exec bit is involved.
   // `AGENT_LENS_TRANSCRIPT_ROOT` is set here but not in production, where a real pass
