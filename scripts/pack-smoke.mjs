@@ -35,7 +35,8 @@ import {
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseCronLog } from '../src/archive/cron-log.js';
 import { readConfig } from '../src/server/config.js';
 import { SLUG, sessionRecords, writeSession } from '../src/corpus/__tests__/fixtures.js';
 
@@ -267,6 +268,12 @@ async function smoke(jail) {
   );
   ok(`${files.length} installed files, none naming a home directory`);
 
+  // BEFORE the synthetic plant below, deliberately: the pass runs against a
+  // pristine archive root, so the file count it reports is deterministic. The
+  // plant then adds to the same archive, which the UI drive is indifferent to
+  // (`smoke/cold-run.spec.ts` asserts only that the count is non-zero).
+  await archiveWrapper({ jail, app, installed, dataDir });
+
   heading('lay down a synthetic archive');
   // The generator is imported, never re-written: `src/corpus/__tests__/fixtures.ts`
   // already owns the transcript shape. Only the Sandbox's roots are re-pointed at
@@ -288,6 +295,167 @@ async function smoke(jail) {
 
   await boot({ jail, app, dataDir });
   return tgz;
+}
+
+/**
+ * The generated archive wrapper, built by the installed package and run for real
+ * against the hoisted layout. No scheduler binary and no unit file: both reach
+ * machine-global state that survives this script's teardown.
+ */
+async function archiveWrapper({ jail, app, installed, dataDir }) {
+  heading('the installed package builds a wrapper that runs in the hoisted layout');
+
+  // ★ A SECOND sandbox-shaped object, and the reason is not stylistic. The corpus
+  // fixtures' `writeSession` writes under `sandbox.archiveRoot`; the literal further
+  // down sets that to the archive DESTINATION. Reusing it here would plant the
+  // transcripts in the very directory the pass copies TO, and the pass would copy 0
+  // files and still log `ok` — a step that asserts nothing while looking green.
+  const corpus = join(jail, 'corpus');
+  const corpusSandbox = { root: jail, sourceRoot: corpus, dataDir, archiveRoot: corpus };
+  const now = Date.now();
+  for (let i = 0; i < 3; i += 1) {
+    const started = new Date(now - (i + 1) * 60_000).toISOString();
+    const ended = new Date(now - (i + 1) * 60_000 + 1_000).toISOString();
+    writeSession(
+      corpusSandbox,
+      `cron-session-${i}`,
+      sessionRecords(`cron-call-${i}`, started, ended),
+      SLUG,
+    );
+  }
+
+  // The bug's premise, stated as a checked fact rather than assumed. If npm ever
+  // nests instead of hoisting, this step stops exercising the broken layout and
+  // must say so out loud rather than keep passing.
+  assert.ok(
+    !existsSync(join(installed, 'node_modules')),
+    `npm nested dependencies under ${installed}; the hoisted layout this step exists ` +
+      'to cover is no longer what an install produces',
+  );
+
+  // The installed package's OWN builders, handed the installed module's own file
+  // URL — the exact composition the turn-on performs, where `import.meta.url` is
+  // this same string. Asserted before importing so a future `files` narrowing fails
+  // with a path instead of a resolver error.
+  const scheduleJs = join(installed, 'dist', 'src', 'cli', 'commands', 'schedule.js');
+  const pathsJs = join(installed, 'dist', 'src', 'archive', 'paths.js');
+  for (const path of [scheduleJs, pathsJs]) {
+    assert.ok(existsSync(path), `the tarball shipped no ${relative(installed, path)}`);
+  }
+  const moduleUrl = pathToFileURL(scheduleJs).href;
+  const { BUILT_CLI_ENTRY, buildWrapperScript, resolveArchiveInvocation } = await import(moduleUrl);
+  const { resolveCronLogPath, resolveScheduleWrapperPath } = await import(
+    pathToFileURL(pathsJs).href
+  );
+
+  const invocation = resolveArchiveInvocation(moduleUrl);
+  assert.deepEqual(invocation, { packageRoot: installed, kind: 'built' });
+
+  const cronLogPath = resolveCronLogPath(dataDir);
+  const wrapperPath = resolveScheduleWrapperPath(dataDir);
+  const build = (logPath) =>
+    buildWrapperScript({ nodePath: process.execPath, invocation, dataDir, cronLogPath: logPath });
+  const wrapper = build(cronLogPath);
+
+  // ★ EXACT strings, never a bare `node_modules` search. `installed` is itself
+  // `app/node_modules/@faithfulalabi/agent-lens`, so the generated `ROOT='…'` line
+  // CONTAINS that substring: `!wrapper.includes('node_modules')` would red on a
+  // perfectly correct wrapper. What must be absent is the old guard's path
+  // EXPRESSION and the old FATAL's wording.
+  const fixedGuard =
+    `[ -f "$ROOT/${BUILT_CLI_ENTRY}" ] || ` +
+    `{ say "FATAL built CLI missing: $ROOT/${BUILT_CLI_ENTRY} — ` +
+    `reinstall @faithfulalabi/agent-lens"; exit 1; }`;
+  for (const absent of ['$ROOT/node_modules', 'node_modules missing']) {
+    assert.ok(!wrapper.includes(absent), `the wrapper still carries the old node_modules guard: ${absent}`);
+  }
+  for (const present of [fixedGuard, `ROOT='${installed}'`]) {
+    assert.ok(wrapper.includes(present), `the wrapper is missing: ${present}`);
+  }
+  assert.ok(
+    !wrapper.includes(REPO_ROOT),
+    'the generated wrapper names the repo checkout, so the no-checkout-on-the-' +
+      'resolution-path claim does not hold for the artifact the timer would run',
+  );
+
+  // ★ MUTATION CONTROL, to the standard `mutationControl` sets above: splice the
+  // guard that actually shipped back in and require this step to CATCH it. Without
+  // this, a green step proves only that today's wrapper runs — not that the step
+  // would have stopped the bug. Its own log path, so the real cron.log below stays
+  // pristine and the `exactly one entry` assertion keeps its meaning.
+  const mutantLogPath = join(dataDir, 'logs', 'mutant.log');
+  const mutantPath = join(dataDir, 'schedule', 'mutant.sh');
+  const shipped030Guard =
+    '[ -d "$ROOT/node_modules" ] || ' +
+    '{ say "FATAL node_modules missing — run npm install in $ROOT"; exit 1; }';
+  const unmutated = build(mutantLogPath);
+  const mutant = unmutated.replace(fixedGuard, shipped030Guard);
+  // A `replace` whose needle has drifted silently no-ops, and a mutation control
+  // that mutates nothing passes forever. This is what stops that.
+  assert.notEqual(mutant, unmutated, `the old guard was never spliced in; needle: ${fixedGuard}`);
+
+  mkdirSync(dirname(wrapperPath), { recursive: true });
+  writeFileSync(mutantPath, mutant);
+  const mutantRun = spawnSync('/bin/sh', [mutantPath], {
+    encoding: 'utf8',
+    env: jailedEnv(jail, { AGENT_LENS_DIR: dataDir, AGENT_LENS_TRANSCRIPT_ROOT: corpus }),
+  });
+  const mutantLog = existsSync(mutantLogPath) ? readFileSync(mutantLogPath, 'utf8') : '';
+  assert.equal(
+    mutantRun.status,
+    1,
+    `the old guard did NOT fail on this layout, so this step is not a detector of ` +
+      `the bug it claims to cover\nmutant.log:\n${mutantLog}`,
+  );
+  const mutantEntries = parseCronLog(mutantLog);
+  assert.equal(mutantEntries.length, 1, `expected one mutant entry:\n${mutantLog}`);
+  assert.equal(mutantEntries[0].status, 'FATAL');
+  assert.match(mutantEntries[0].summary, /node_modules/);
+  ok('the old node_modules guard re-spliced into this wrapper exits 1 — the step detects the bug');
+
+  // `/bin/sh <script>` is the form both backends invoke, so no exec bit is involved.
+  // `AGENT_LENS_TRANSCRIPT_ROOT` is set here but not in production, where a real pass
+  // resolves `~/.claude/projects`.
+  writeFileSync(wrapperPath, wrapper);
+  const pass = spawnSync('/bin/sh', [wrapperPath], {
+    encoding: 'utf8',
+    env: jailedEnv(jail, { AGENT_LENS_DIR: dataDir, AGENT_LENS_TRANSCRIPT_ROOT: corpus }),
+  });
+  const log = existsSync(cronLogPath) ? readFileSync(cronLogPath, 'utf8') : '';
+  assert.equal(
+    pass.status,
+    0,
+    `the wrapper exited ${pass.status}\ncron.log:\n${log}\n` +
+      `stdout:\n${pass.stdout}\nstderr:\n${pass.stderr}`,
+  );
+
+  // The `ok` line must be evidence of WORK, not of mere survival: a pass that copied
+  // nothing also exits 0 and also logs `ok`. The count and the non-zero byte total
+  // are the whole difference between this assertion and a tautology.
+  const entries = parseCronLog(log);
+  assert.equal(entries.length, 1, `expected exactly one pass entry:\n${log}`);
+  assert.equal(entries[0].status, 'ok', `cron.log:\n${log}`);
+  assert.match(entries[0].summary, /^agent-lens archive: 3 files, [1-9]\d* bytes copied$/);
+  ok(`one real pass, logged as: ${entries[0].summary}`);
+
+  // AC5: the real `doctor`, spawned the way `boot` spawns the CLI. NOT `--json`,
+  // which bypasses `formatLastPassSection` entirely — the formatter is the thing
+  // under test, because it is what a human reads.
+  heading('the installed doctor reports that pass from the wrapper’s cron.log');
+  const doctored = spawnSync(join(app, 'node_modules', '.bin', 'agent-lens'), ['doctor'], {
+    cwd: app,
+    encoding: 'utf8',
+    env: jailedEnv(jail, { AGENT_LENS_DIR: dataDir, AGENT_LENS_TRANSCRIPT_ROOT: corpus }),
+  });
+  assert.equal(
+    doctored.status,
+    0,
+    `doctor exited ${doctored.status}\n${doctored.stdout}\n${doctored.stderr}`,
+  );
+  for (const line of [`archive job: ${cronLogPath}`, 'last successful pass:']) {
+    assert.ok(doctored.stdout.includes(line), `doctor never printed "${line}":\n${doctored.stdout}`);
+  }
+  ok('doctor names the cron.log and reports the last successful pass');
 }
 
 async function boot({ jail, app, dataDir }) {

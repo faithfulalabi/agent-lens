@@ -40,6 +40,8 @@ export const LEGACY_LABEL = 'com.faithful.agent-lens.archive';
 const START_INTERVAL_SECONDS = 900;
 /** Pinned: `parseCronLog` anchors on this exact shape, colon-less offset included. */
 export const CRON_STAMP_FORMAT = '+%Y-%m-%dT%H:%M:%S%z';
+/** The compiled entry `bin/agent-lens.js` imports, relative to the package root. */
+export const BUILT_CLI_ENTRY = 'dist/src/cli/index.js';
 export const WAKE_TIME_CAVEAT =
   'a wall-clock schedule does not fire while the machine is asleep — treat the interval as a bound on wake time, not on elapsed time';
 /** Quoted verbatim by `README.md` and pinned by `docs.test.ts` — never retype it. */
@@ -200,6 +202,12 @@ export function buildWrapperScript(opts: WrapperOptions): string {
     kind === 'source'
       ? '"$NODE" --import tsx "$ROOT/src/cli/index.ts" archive --dataDir "$DATA_DIR"'
       : '"$NODE" "$ROOT/bin/agent-lens.js" archive --dataDir "$DATA_DIR"';
+  // A checkout needs `tsx` from its own `node_modules`; an install's deps are hoisted
+  // above `$ROOT`, so guard the shim's entry with `-f` — an empty `dist/` passes `-d`.
+  const requirement =
+    kind === 'source'
+      ? '[ -d "$ROOT/node_modules" ] || { say "FATAL node_modules missing — run npm install in $ROOT"; exit 1; }'
+      : `[ -f "$ROOT/${BUILT_CLI_ENTRY}" ] || { say "FATAL built CLI missing: $ROOT/${BUILT_CLI_ENTRY} — reinstall @faithfulalabi/agent-lens"; exit 1; }`;
   return `#!/bin/sh
 # agent-lens archive — unattended pass, invoked by the launchd agent
 # ${SCHEDULE_LABEL} every ${START_INTERVAL_SECONDS / 60} minutes.
@@ -237,7 +245,7 @@ say() { printf '%s %s\\n' "$(stamp)" "$1" >>"$LOG"; }
 [ -d "$ROOT" ]              || { say "FATAL package root missing: $ROOT"; exit 1; }
 [ -x "$NODE" ]              || { say "FATAL node missing: $NODE"; exit 1; }
 [ -e "${entry}" ] || { say "FATAL entry missing: ${entry}"; exit 1; }
-[ -d "$ROOT/node_modules" ] || { say "FATAL node_modules missing — run npm install in $ROOT"; exit 1; }
+${requirement}
 
 cd "$ROOT" || { say "FATAL cannot cd to $ROOT"; exit 1; }
 

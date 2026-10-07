@@ -17,6 +17,9 @@ import {
   SHIPPED_FILES,
   isShipped,
 } from '../scripts/release-scope.js';
+// Imported, never retyped, so the shim and the generated archive wrapper cannot
+// name different compiled entries — the `docs.test.ts:32` idiom, applied to code.
+import { BUILT_CLI_ENTRY } from './cli/commands/schedule.js';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 
@@ -84,7 +87,7 @@ describe('the published manifest is exactly the shipping shape (AC1, AC2)', () =
 
 describe('bin/agent-lens.js resolves the built CLI in-process (AC2)', () => {
   it('imports the compiled entry and names neither tsx nor the source tree', () => {
-    expect(BIN_SOURCE).toContain('../dist/src/cli/index.js');
+    expect(BIN_SOURCE).toContain(`../${BUILT_CLI_ENTRY}`);
     expect(BIN_SOURCE).not.toContain('tsx');
     // Not a bare `src/cli` pin: the BUILT path nests that substring
     // (`dist/src/cli/index.js`), because `tsconfig.node.json`'s `rootDir: "."`
