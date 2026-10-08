@@ -1305,3 +1305,40 @@ describe('every status on one page renders its own treatment', () => {
     expect(markup.match(/bg-error\/8/g) ?? []).toHaveLength(2);
   });
 });
+
+/* ------------------- the row marks a call the harness rewrote -------------- */
+
+describe('a rewritten call is marked on the row, not only in the pane', () => {
+  it('carries span-wire when the executed form differs', () => {
+    const markup = eventRowMarkup({
+      name: 'Bash',
+      input: '{"command":"ls"}',
+      wire_input: '{"command":"cd /Users/dev/proj && ls"}',
+      wire_input_storage: 'inline',
+    });
+
+    expect(markup).toContain('data-slot="span-wire"');
+    // A marker, not a payload: the executed command itself is NOT on the row.
+    expect(markup).not.toContain('cd /Users/dev/proj');
+  });
+
+  it('carries no marker when the two agree', () => {
+    const markup = eventRowMarkup({ name: 'Bash', input: '{"command":"ls"}', wire_input: null });
+
+    expect(markup).not.toContain('span-wire');
+    // Non-vacuity: the payload line still rendered, so the absence is a decision.
+    expect(markup).toContain('data-slot="span-input"');
+  });
+
+  it('renders the payload line for a marked row that has no input or output preview', () => {
+    const markup = eventRowMarkup({
+      input: null,
+      text: null,
+      wire_input: '{"command":"cd /x && ls"}',
+      wire_input_storage: 'inline',
+    });
+
+    expect(markup).toContain('data-slot="span-payload"');
+    expect(markup).toContain('data-slot="span-wire"');
+  });
+});

@@ -40,6 +40,7 @@ import {
   type SubagentProbe,
   type ThreadProbe,
   type ToolCallProbe,
+  type WireInputProbe,
 } from './report.js';
 
 /**
@@ -70,6 +71,7 @@ export const SELECTORS = {
   traceExpand: 'trace-expand',
   spanRow: 'span-row',
   spanExpand: 'span-expand',
+  spanWire: 'span-wire',
   spanDetail: 'span-detail',
   threadToggle: 'thread-toggle',
   driftBanner: 'drift-banner',
@@ -353,6 +355,8 @@ export interface WireEvent {
   text: string | null;
   /** The word the detail pane has to print. Null on every non-tool row. */
   output_storage: string | null;
+  /** The executed form. Null — the majority — means it agreed with `input`. */
+  wire_input: string | null;
 }
 
 /** One `tool_call` row the virtualizer actually rendered, as read off the page. */
@@ -400,6 +404,37 @@ export function pickPayloadRow(
     const { input, text, output_storage } = wire;
     if (input === null || text === null || output_storage === null) continue;
     return { ...wire, input, text, output_storage };
+  }
+  return null;
+}
+
+/** A `WireEvent` whose call the harness rewrote. See `pickWireRow`. */
+export interface WireDivergentEvent extends WireEvent {
+  wire_input: string;
+}
+
+/**
+ * The first rendered row whose call the harness REWROTE.
+ *
+ * A sibling of `pickPayloadRow` rather than a widening of it: that one picks the
+ * row both payload cross-checks share, and this one needs a row with a property
+ * only about half of all tool calls have. Making it one predicate would narrow
+ * the payload probe's candidate set for no reason and couple two assertions that
+ * are about different things.
+ *
+ * Rendered rows first, for the reason `pickPayloadRow` states: a `.click()` on a
+ * row the virtualizer never emitted fails the drive instead of degrading.
+ */
+export function pickWireRow(
+  rows: readonly RenderedRow[],
+  payloads: ReadonlyMap<string, WireEvent>,
+): WireDivergentEvent | null {
+  for (const row of rows) {
+    const wire = payloads.get(row.id);
+    if (wire === undefined) continue;
+    const { wire_input } = wire;
+    if (wire_input === null || wire_input === '') continue;
+    return { ...wire, wire_input };
   }
   return null;
 }
@@ -570,9 +605,14 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   // moves the selection: every reading above is already taken, so nothing
   // either of them does can disturb an assertion.
   const events: readonly WireEvent[] = (await wireEvents) ?? [];
-  const found = await findPayloadRow(page, new Map(events.map((event) => [event.id, event])));
+  const byId = new Map(events.map((event) => [event.id, event]));
+  const found = await findPayloadRow(page, byId);
   const toolCallInline = toolCallProbe(found);
   const eventDetail = await probeEventDetail(page, found, shoot);
+  // AFTER the pane probe, whose shot and assertions are already taken, and
+  // BEFORE the `detailResponsesAtLoad` read below: a row click issues no
+  // `/api/sessions/:id` request, so this moves neither reading.
+  const wireInput = await probeWireInput(page, byId);
 
   // AFTER the detail probe, because opening a sub-agent inserts rows and would
   // move the row that probe clicks; BEFORE the thread probe, because that one
@@ -627,6 +667,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       detailResponsesBeforeLive,
       listPaths,
       toolCallInline,
+      wireInput,
       eventDetail,
       subagentExpansion,
       threadInline,
@@ -754,6 +795,56 @@ async function probeEventDetail(
     storageMatched: pane.includes(wire.output_storage),
   };
 }
+
+/**
+ * AC-R1 for this task: a call the harness REWROTE is marked on its row and the
+ * executed form is in the pane.
+ *
+ * The row is found among the ones already rendered and is clicked only after the
+ * marker is confirmed, so the two readings are about one event. `null` when no
+ * divergent row is in the window — a fact about the corpus, which `report.ts`
+ * records as an observation rather than a pass, on `toolCallAssertions`' terms.
+ *
+ * Runs on the tree, so it has to come before the thread toggle swaps the tree
+ * away; it opens no turn and scrolls nothing, so it moves no other reading.
+ */
+async function probeWireInput(
+  page: Page,
+  payloads: ReadonlyMap<string, WireEvent>,
+): Promise<WireInputProbe | null> {
+  if (payloads.size === 0) return null;
+
+  const rows = await page.$$eval('[data-event-kind="tool_call"]', (nodes) =>
+    nodes.map((node) => ({
+      id: node.getAttribute('data-event-id') ?? '',
+      text: node.textContent ?? '',
+    })),
+  );
+  const wire = pickWireRow(rows, payloads);
+  if (wire === null) return null;
+
+  const onThisEvent = `[data-event-id="${cssAttrValue(wire.id)}"]`;
+  const row = page.locator(`${slot(SELECTORS.spanRow)}${onThisEvent}`);
+  const rowMarked = (await row.locator(slot(SELECTORS.spanWire)).count()) === 1;
+
+  await row.click();
+  await page.waitForSelector(`${slot(SELECTORS.spanDetail)}${onThisEvent}`);
+  const pane = oneLine(await page.locator(slot(SELECTORS.spanDetail)).innerText());
+
+  const panePrefix = oneLine(wire.wire_input).slice(0, PAYLOAD_PREFIX_CHARS);
+  return {
+    eventId: wire.id,
+    rowMarked,
+    panePrefix,
+    paneMatched: panePrefix !== '' && pane.includes(panePrefix),
+    // The heading is the whole point: a pane that shows the bytes without saying
+    // which of the two ran has not discharged the AC.
+    headingShown: pane.includes(WHAT_RAN_HEADING),
+  };
+}
+
+/** The pane heading `EventDetail.tsx` prints over the executed form. */
+const WHAT_RAN_HEADING = 'WHAT RAN';
 
 /** One scroll step, and how many of them the search will take. */
 const SUBAGENT_SCROLL_STEPS = 12;

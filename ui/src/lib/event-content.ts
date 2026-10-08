@@ -169,3 +169,24 @@ function columnOf(event: EventRow, field: ContentField): string | null {
 function columnStorageOf(event: EventRow, field: ContentField): string | null {
   return field === 'input' ? event.input_storage : event.output_storage;
 }
+
+/** The executed form, or null when there is nothing to show. */
+export interface WireDivergence {
+  readonly body: string;
+  /** What the body is short of, on `ContentState.note`'s terms. Null when nothing. */
+  readonly note: string | null;
+}
+
+/**
+ * What the harness actually SENT, when that is not what the model asked for.
+ *
+ * NULL `wire_input` is the majority and means the two agreed — so the answer is
+ * `null` and the pane renders no third section. It is deliberately NOT routed
+ * through `contentStateOf`: there is no refetch route for this half, so the six
+ * arms and `canRefetch` would all be answering a question nothing can ask.
+ */
+export function wireDivergenceOf(event: EventRow): WireDivergence | null {
+  const body = event.wire_input;
+  if (body === null || body === '') return null;
+  return { body, note: event.wire_input_storage === 'line_ref' ? HEAD_PREVIEW : null };
+}

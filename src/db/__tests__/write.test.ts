@@ -27,6 +27,7 @@ import {
   nextUuid,
   openCache,
   parseJsonl,
+  rewrittenToolCallLine,
   seedIndexRow,
   seedSessionRow,
   seedSidecarRow,
@@ -1614,5 +1615,84 @@ describe('AC4 — projectSession stays time-invariant over spill bodies', () => 
     writeFile(body, 'a much longer body with entirely different bytes in it '.repeat(40));
     project(db, id, path);
     expect(all()).toEqual(before);
+  });
+});
+
+describe('the wire-input columns round-trip through the writer', () => {
+  it('stores the executed form on the divergent row and NULL on the agreeing one', () => {
+    const db = cache();
+    const { path } = plant('wire', [
+      humanLine('run both', TS(0)),
+      rewrittenToolCallLine(
+        'toolu_diverged',
+        'Bash',
+        TS(1),
+        { command: 'ls' },
+        {
+          command: `cd ${CWD} && ls`,
+        },
+      ),
+      toolResultLine('toolu_diverged', 'a b c', TS(2)),
+      rewrittenToolCallLine(
+        'toolu_agreed',
+        'Bash',
+        TS(3),
+        { command: 'pwd' },
+        {
+          command: 'pwd',
+        },
+      ),
+      toolResultLine('toolu_agreed', CWD, TS(4)),
+    ]);
+    project(db, seedIndexRow(db, path), path);
+
+    const diverged = eventRow(db, 'toolu_diverged');
+    expect(diverged.input).toBe('{"command":"ls"}');
+    expect(diverged.wire_input).toBe(`{"command":"cd ${CWD} && ls"}`);
+    expect(diverged.wire_input_storage).toBe('inline');
+    expect(diverged.wire_input_bytes).toBe(Buffer.byteLength(String(diverged.wire_input), 'utf8'));
+
+    // The majority case: no second payload, and no storage word to render.
+    const agreed = eventRow(db, 'toolu_agreed');
+    expect(agreed.input).toBe('{"command":"pwd"}');
+    expect(agreed.wire_input).toBeNull();
+    expect(agreed.wire_input_bytes).toBeNull();
+    expect(agreed.wire_input_storage).toBeNull();
+  });
+
+  it('leaves the wire columns NULL on a line that carries no wireToolInputs', () => {
+    const db = cache();
+    const { path } = plant('no-wire', simpleSession('toolu_plain'));
+    project(db, seedIndexRow(db, path), path);
+
+    const row = eventRow(db, 'toolu_plain');
+    expect(row.input).toBeDefined();
+    expect(row.wire_input).toBeNull();
+    expect(row.wire_input_storage).toBeNull();
+  });
+
+  it('indexes the REQUEST in FTS and not the wire form — events_fts is unchanged', () => {
+    // Stated scope: the executed command is not searchable in this change. A
+    // regression that quietly widened the virtual table would red here.
+    const db = cache();
+    const { path } = plant('wire-fts', [
+      humanLine('search me', TS(0)),
+      rewrittenToolCallLine(
+        'toolu_fts',
+        'Bash',
+        TS(1),
+        { command: 'zzrequesttoken' },
+        {
+          command: `cd ${CWD} && zzrequesttoken`,
+        },
+      ),
+      toolResultLine('toolu_fts', 'done', TS(2)),
+    ]);
+    project(db, seedIndexRow(db, path), path);
+
+    expect(searchEvents(db, { q: 'zzrequesttoken', limit: 50 }).map((hit) => hit.event_id)).toEqual(
+      ['toolu_fts'],
+    );
+    expect(() => ftsIntegrityCheck(db)).not.toThrow();
   });
 });

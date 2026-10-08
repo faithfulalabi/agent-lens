@@ -23,7 +23,7 @@ const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const HASHED_TREES = ['transcript', 'project'] as const;
 
 /** The committed pair. Both change together or this file reds. */
-const PROJECTOR_SOURCE_SHA = 'd9218496838669d87ec6f6b761a9d4a399cb0e917382cc2ae951194c7fd7e575';
+const PROJECTOR_SOURCE_SHA = '8bb1f065077e96d32839737eeb4f0b4392767c3db7055ae7ab4ba2b45e97014f';
 
 interface HashedFile {
   path: string;

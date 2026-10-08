@@ -153,3 +153,50 @@ describe('the three inclusions that cost plan 001 three revise rounds (AC4)', ()
     expect(noLoading).toBe(true);
   });
 });
+
+describe('the pane says what actually ran, and only when that differs', () => {
+  it('renders WHAT RAN with the executed command beside the request', () => {
+    const event = makeEventRow({
+      name: 'Bash',
+      input: '{"command":"ls -a"}',
+      input_storage: 'inline',
+      wire_input: '{"command":"cd /Users/dev/proj && ls -a"}',
+      wire_input_storage: 'inline',
+    });
+
+    const html = render(<EventDetail event={event} fetched={null} />);
+
+    expect(html).toContain('WHAT RAN');
+    expect(html).toContain('data-slot="detail-wire-input"');
+    expect(html).toContain('cd /Users/dev/proj &amp;&amp; ls -a');
+    // Both halves stay on screen: the divergence is the finding, so a reader has
+    // to be able to tell which is which.
+    expect(html).toContain('INPUT');
+    expect(html).toContain('{&quot;command&quot;:&quot;ls -a&quot;}');
+  });
+
+  it('renders no third section when the harness sent what was asked for', () => {
+    const html = render(<EventDetail event={makeEventRow({ wire_input: null })} fetched={null} />);
+
+    expect(html).not.toContain('WHAT RAN');
+    expect(html).not.toContain('detail-wire-input');
+    // Non-vacuity: the pane did render, so the absence is a decision and not an
+    // empty render.
+    expect(html).toContain('INPUT');
+    expect(html).toContain('OUTPUT');
+  });
+
+  it('notes a stored head when the executed form was too big to keep whole', () => {
+    const html = render(
+      <EventDetail
+        event={makeEventRow({ wire_input: 'cd /x && big', wire_input_storage: 'line_ref' })}
+        fetched={null}
+      />,
+    );
+
+    expect(html).toContain('data-slot="detail-wire-note"');
+    // No refetch control on this half: there is no route behind it.
+    const wire = html.slice(html.indexOf('detail-wire-input'));
+    expect(wire.slice(0, wire.indexOf('OUTPUT'))).not.toContain('detail-show-full');
+  });
+});

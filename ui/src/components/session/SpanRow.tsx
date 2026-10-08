@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatCost, formatDurationMs, formatTokens, previewOf } from '@/lib/format';
+import { wireDivergenceOf } from '@/lib/event-content';
 import { agentStatusOf } from '@/lib/subagent';
 import {
   durationSourceOf,
@@ -101,6 +102,18 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
   const durationLabel = DURATION_LABELS[durationSource];
   const input = previewOf(event.input);
   const output = previewOf(event.text);
+  /*
+   * A MARKER, never a second payload. The row shows ~96 characters of a command,
+   * and truncating a second one beside it would put two differently-wrong
+   * commands on one line. The bytes live in the detail pane; this says only that
+   * the command on this row is not the one that executed — which is the whole
+   * point, because the reader who copies the chip never opens the pane.
+   *
+   * The PREDICATE is the pane's own, not a second reading of the column: a row
+   * marked where the pane renders nothing is the one failure mode that leaves a
+   * reader worse off than no marker at all.
+   */
+  const rewritten = wireDivergenceOf(event) !== null;
   /*
    * Keyed on `child_session_id`, never on `kind`. Every one of these rows is a
    * `tool_call`, so the kind says nothing; naming a child session is what makes
@@ -234,8 +247,17 @@ export function TreeSpanRow({ row, selected, focused, onSelect, onToggle }: Tree
         </span>
       </div>
 
-      {input === null && output === null ? null : (
+      {input === null && output === null && !rewritten ? null : (
         <div data-slot="span-payload" className="flex items-center gap-2 pb-1 pl-6 pr-2">
+          {rewritten ? (
+            <span
+              data-slot="span-wire"
+              title="The harness rewrote this call; the executed form is in the detail pane"
+              className={cn('shrink-0', SPAN_VISUALS.payloadChip)}
+            >
+              ≠ what ran
+            </span>
+          ) : null}
           {input === null ? null : (
             <span
               data-slot="span-input"

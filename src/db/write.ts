@@ -152,12 +152,13 @@ const INSERT_TURN_SQL = `INSERT INTO turns
 
 const INSERT_EVENT_SQL = `INSERT INTO events
     (id, session_id, turn_id, seq, kind, ts, request_id, block_index, name, status,
-     duration_ms, duration_source, input, input_bytes, input_storage, text, text_bytes,
+     duration_ms, duration_source, input, input_bytes, input_storage,
+     wire_input, wire_input_bytes, wire_input_storage, text, text_bytes,
      output_storage, spill_path, spill_bytes, src_offset, src_len, result_offset,
      result_len, result_block, model, tokens_in, tokens_out, tokens_cache_read,
      tokens_cache_write, est_cost, child_session_id, agent_type, agent_status, raw_type,
      raw_subtype, attrs)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 // FTS population costs 8-14x the `events` INSERT (5.6 -> 43.8 ms measured, and
 // re-measured 10.6x / 15.3x / 11.2x on the three largest transcripts). READ THE
@@ -409,6 +410,9 @@ function insertEvents(
       event.input ?? null,
       event.input_bytes ?? null,
       event.input_storage ?? null,
+      event.wire_input ?? null,
+      event.wire_input_bytes ?? null,
+      event.wire_input_storage ?? null,
       // NULL on every spill row, resolved and missing alike. Filling it would
       // mean opening the spill file, which the boolean-probe contract forbids
       // and which would make the projection time-varying. `spill_path` IS the

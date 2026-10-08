@@ -58,6 +58,29 @@ export interface ToolCallProbe {
 }
 
 /**
+ * A call the harness REWROTE, read in both places it has to show: the row's
+ * marker and the pane's executed form.
+ *
+ * Both halves in one probe because they are one question — can a reader who is
+ * looking at this row find out that the command on it is not the one that ran.
+ * A marked row with an empty pane, or a filled pane behind an unmarked row,
+ * leaves that reader exactly where they started.
+ *
+ * `null` means no divergent row was in the window, which is a fact about the
+ * corpus rather than a pass — `ToolCallProbe`'s terms, not `ThreadProbe`'s.
+ */
+export interface WireInputProbe {
+  eventId: string;
+  /** The row carried `span-wire`. */
+  rowMarked: boolean;
+  /** Whitespace-normalised prefix of the executed form that was looked for. */
+  panePrefix: string;
+  paneMatched: boolean;
+  /** The pane said WHAT RAN, so the reader can tell the two halves apart. */
+  headingShown: boolean;
+}
+
+/**
  * AC-R1 itself: clicking that row filled the DETAIL PANE with the event's real
  * input, its real output, and the word naming where the output was stored.
  *
@@ -279,6 +302,7 @@ export interface Observations {
   listPaths: readonly string[];
   /** `null` when no rendered tool_call row carried both halves. See the type. */
   toolCallInline: ToolCallProbe | null;
+  wireInput: WireInputProbe | null;
   /** The same row, read in the detail pane instead of the tree. See the type. */
   eventDetail: EventDetailProbe | null;
   /** The sub-agent expansion. `null` is a warning — see the type. */
@@ -480,6 +504,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
       expected: 'exactly one GET /api/sessions/:id response before any expansion',
     },
     ...toolCallAssertions(result.toolCallInline),
+    ...wireInputAssertions(result.wireInput),
     ...slashCommandTitleAssertions(result.slashCommandTitles),
     ...eventDetailAssertions(result.eventDetail),
     ...subagentAssertions(
@@ -572,6 +597,31 @@ function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
         `(${quote(probe.inputPrefix)}), output ${probe.outputMatched ? 'found' : 'MISSING'} ` +
         `(${quote(probe.outputPrefix)})`,
       expected: 'the rendered row text contains a prefix of both its input and its output',
+    },
+  ];
+}
+
+/**
+ * The divergence is reachable from the row a reader is actually looking at.
+ *
+ * All three clauses in one record, like `eventDetailAssertions`: they are one
+ * question, and a partial pass is not a state anybody would act on differently.
+ *
+ * Asserted only when the window held a rewritten call, on `toolCallAssertions`'
+ * terms — a check that cannot fail is not a pass.
+ */
+function wireInputAssertions(probe: WireInputProbe | null): AssertionRecord[] {
+  if (probe === null) return [];
+  const found = (ok: boolean): string => (ok ? 'found' : 'MISSING');
+  return [
+    {
+      name: 'wire-input-divergence',
+      ok: probe.rowMarked && probe.paneMatched && probe.headingShown,
+      actual:
+        `${probe.eventId}: row marker ${found(probe.rowMarked)}, ` +
+        `executed form ${found(probe.paneMatched)} (${quote(probe.panePrefix)}), ` +
+        `heading ${found(probe.headingShown)}`,
+      expected: 'the row is marked, and the pane names the executed form under its own heading',
     },
   ];
 }
@@ -889,6 +939,14 @@ function driveWarnings(result: DriveResult): string[] {
       'tool-call-inline: none in window — OBSERVED, NOT ASSERTED. No rendered ' +
         'tool_call row carried both an input and an output, so the payload ' +
         'cross-check had nothing to look at on this session.',
+    );
+  }
+  if (result.wireInput === null) {
+    warnings.push(
+      'wire-input-divergence: none in window — OBSERVED, NOT ASSERTED. No ' +
+        'rendered tool_call row carried a wire_input, so there was no rewritten ' +
+        'call to check. About half of all tool calls carry one, so this reads as ' +
+        'a narrow window rather than a harness that stopped rewriting.',
     );
   }
   if (result.slashCommandTitles.length === 0) {

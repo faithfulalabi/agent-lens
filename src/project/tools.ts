@@ -35,6 +35,7 @@ import {
   claimsPersistedOutput,
   type TaskNotification,
 } from '../transcript/agents.js';
+import { sameValue } from '../transcript/wire.js';
 // `pipeline.ts` imports this module back: the two files are one projector split
 // for size, so the dependency is mutual by design. Safe because nothing here
 // reads a `pipeline.ts` binding at module-evaluation time — `epochMs` is called
@@ -85,6 +86,29 @@ export const NO_INPUT: ProjectedInput = Object.freeze({
   input_storage: undefined,
 });
 
+/**
+ * The same three columns again, over the form the harness actually SENT.
+ *
+ * All three are undefined whenever the wire form and the request say the same
+ * thing — which is the majority — so an empty group means "the two agreed", never
+ * "nothing was recorded".
+ *
+ * `absent` is deliberately NOT an arm, unlike `ProjectedInput`'s: a wire form
+ * that was never sent is the undefined group, so the one caller reaches
+ * `toolInput`'s `absent` clause never.
+ */
+export interface ProjectedWireInput {
+  wire_input: string | undefined;
+  wire_input_bytes: number | undefined;
+  wire_input_storage: 'inline' | 'line_ref' | undefined;
+}
+
+export const NO_WIRE_INPUT: ProjectedWireInput = Object.freeze({
+  wire_input: undefined,
+  wire_input_bytes: undefined,
+  wire_input_storage: undefined,
+});
+
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
@@ -123,6 +147,33 @@ export function toolInput(input: Readonly<Record<string, unknown>> | undefined):
   return bytes > INLINE_MAX
     ? { input: headPreview(text), input_bytes: bytes, input_storage: 'line_ref' }
     : { input: text, input_bytes: bytes, input_storage: 'inline' };
+}
+
+/**
+ * The wire form, stored only where it DISAGREES with what the model asked for.
+ *
+ * The comparison is `sameValue`'s and therefore structural: the harness reorders
+ * keys, so a serialized comparison would publish a divergence on a call that ran
+ * exactly as requested and put a second identical command on the screen.
+ *
+ * The storage ladder is `toolInput`'s, called rather than restated, so the cap,
+ * the character-boundary preview and the three storage words are decided in one
+ * place for both halves.
+ */
+export function wireInput(
+  wire: Readonly<Record<string, unknown>> | undefined,
+  request: Readonly<Record<string, unknown>> | undefined,
+): ProjectedWireInput {
+  if (wire === undefined || sameValue(wire, request)) return NO_WIRE_INPUT;
+
+  // `wire` is defined here, so `toolInput` cannot answer `absent` and the
+  // narrowing below discards an arm rather than hiding one.
+  const stored = toolInput(wire);
+  return {
+    wire_input: stored.input,
+    wire_input_bytes: stored.input_bytes,
+    wire_input_storage: stored.input_storage === 'line_ref' ? 'line_ref' : 'inline',
+  };
 }
 
 /**
