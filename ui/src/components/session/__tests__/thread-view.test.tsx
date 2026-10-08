@@ -195,7 +195,7 @@ describe('thinking rows carry the marker, and none is empty (Test 8, AC3)', () =
 
 describe('an unrecognized record is shown, never swallowed (Test 10/11, AC3)', () => {
   const markup = threadMarkup([
-    { kind: 'unknown', raw_type: 'system', raw_subtype: 'turn_duration' },
+    { kind: 'unknown', raw_type: 'system', raw_subtype: 'turn_duration', text: null },
   ]);
 
   it('names the type and the subtype on screen', () => {
@@ -276,5 +276,30 @@ describe('the view toggle is props-in and reachable (Test 12, AC-R1)', () => {
     const markup = renderToStaticMarkup(<SessionHeader session={session} now={NOW} />);
     expect(markup).not.toContain('data-slot="thread-toggle"');
     expect(markup).toContain('data-slot="session-header"');
+  });
+});
+
+describe('a record carrying text puts it on screen', () => {
+  const RENDERED = '15000000 tokens left';
+  const markup = threadMarkup([
+    { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: RENDERED },
+  ]);
+
+  it('draws the text outside the closed disclosure, so it reads without a click', () => {
+    expect(markup).toContain('data-slot="thread-record-text"');
+    expect(markup.indexOf('data-slot="thread-record-text"')).toBeLessThan(
+      markup.indexOf('data-slot="thread-raw"'),
+    );
+    expect(markup).toContain(RENDERED);
+  });
+
+  it('keeps it de-emphasised rather than giving it a message row', () => {
+    expect(markup).toMatch(/data-slot="thread-record-text"[^>]*text-muted/);
+    expect(markup).not.toContain('data-slot="thread-message"');
+  });
+
+  it('does not call a record it is showing unrecognized', () => {
+    expect(markup).not.toContain('unrecognized record');
+    expect(markup).toContain('attachment/date');
   });
 });

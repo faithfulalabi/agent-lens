@@ -125,9 +125,20 @@ export interface RawAttachmentLine {
   gitBranch?: unknown;
   slug?: unknown;
   entrypoint?: unknown;
-  /** The ONLY readable text these lines carry: `message.content` is absent on this type. */
+  /**
+   * A ONE-ELEMENT ARRAY of {@link RawRenderedBlock}, never a string. `message.content` is
+   * absent on this type, so this is the only text the harness renders for these lines — and
+   * it is absent itself on 1,953 of 6,134, which is why `attachment.type` carries the
+   * fallback.
+   */
   rendered?: unknown;
+  /** The same shape, holding a DIFFERENT rendering of the same payload. Read by nothing. */
   renderedInHumanTurn?: unknown;
+}
+
+/** An element of `rendered` / `renderedInHumanTurn`. The measured keys are exactly this one. */
+export interface RawRenderedBlock {
+  content?: unknown;
 }
 
 /** `type: 'mode'` — a mode switch. Carries no uuid and no timestamp. */

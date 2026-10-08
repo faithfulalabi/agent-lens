@@ -579,3 +579,63 @@ describe('which model the whole file folds to', () => {
     expect(result.header?.harness_version).toBe('2.1.213');
   });
 });
+
+describe('an attachment line projects an event that can be read', () => {
+  const projected = (): ProjectedEvent[] =>
+    project('attachment-lines.jsonl').events.filter((event) => event.raw_type === 'attachment');
+
+  it('still projects exactly one event per line, dropping nothing', () => {
+    expect(projected()).toHaveLength(4);
+  });
+
+  it('carries the harness rendering as its text', () => {
+    expect(projected()[0]?.text).toBe(
+      '<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>',
+    );
+  });
+
+  it('carries a placeholder naming the subtype when the harness rendered nothing', () => {
+    expect(projected()[1]?.text).toBe('[attachment deferred_tools_record]');
+  });
+
+  it('carries the bare placeholder when the line names no subtype', () => {
+    expect(projected()[2]?.text).toBe('[attachment]');
+  });
+
+  it('prefers the rendering over the human-turn variant when both are present', () => {
+    expect(projected()[3]?.text).toBe(
+      '<system-reminder>\nthe queued rendering\n</system-reminder>',
+    );
+  });
+
+  it('names its subtype in raw_subtype, verbatim', () => {
+    expect(projected().map((event) => event.raw_subtype)).toEqual([
+      'total_tokens_reminder',
+      'deferred_tools_record',
+      '',
+      'queued_command',
+    ]);
+  });
+
+  it('leaves text_bytes and output_storage unset, exactly as prose rows do', () => {
+    for (const event of projected()) {
+      expect(event.text_bytes).toBeUndefined();
+      expect(event.output_storage).toBeUndefined();
+    }
+  });
+
+  it('no projected event is an empty unknown row because its line was an attachment', () => {
+    for (const name of [
+      'attachment-lines.jsonl',
+      'turn-kinds.jsonl',
+      'tool-join.jsonl',
+      'subagent-launch.jsonl',
+    ]) {
+      const empty = project(name).events.filter(
+        (event) =>
+          event.raw_type === 'attachment' && (event.text === undefined || event.text === ''),
+      );
+      expect(empty, `${name} projected an unreadable attachment row`).toEqual([]);
+    }
+  });
+});

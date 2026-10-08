@@ -241,6 +241,14 @@ function ActivityRow({
           </span>
           <RowTime ts={row.event.ts} startedAt={startedAt} />
         </div>
+        {row.text === null ? null : (
+          <p
+            data-slot="thread-record-text"
+            className="mt-1 whitespace-pre-wrap break-words text-xs text-muted"
+          >
+            {row.text}
+          </p>
+        )}
         <details data-slot="thread-raw" className="mt-2 text-xs text-muted">
           <summary className="cursor-pointer">Raw record</summary>
           <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-2xs">

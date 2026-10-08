@@ -349,6 +349,8 @@ export interface WireEvent {
   id: string;
   /** What the projector called this record. The thread counts `thinking` rows. */
   kind: string;
+  /** The harness's own record type. Which `unknown` rows must read is keyed on it. */
+  raw_type: string;
   input: string | null;
   text: string | null;
   /** The word the detail pane has to print. Null on every non-tool row. */
@@ -1104,6 +1106,15 @@ async function probeThreadInline(
   const thinkingTexts = await page.$$eval('[data-thread-kind="thinking"]', (nodes) =>
     nodes.map((node) => node.textContent ?? ''),
   );
+  // The label and the text are separate slots, so "shows text" is the presence
+  // of the second one — reading `textContent` of the row would always be
+  // non-empty from the label alone and the assertion would pass over the defect.
+  const pinned = await page.$$eval('[data-thread-kind="unknown"]', (nodes) =>
+    nodes.map((node) => ({
+      id: node.getAttribute('data-event-id') ?? '',
+      text: node.querySelector('[data-slot="thread-record-text"]')?.textContent ?? '',
+    })),
+  );
 
   const wire = pickPayloadRow(rows, new Map(events.map((event) => [event.id, event])));
   const row = wire === null ? undefined : rows.find((candidate) => candidate.id === wire.id);
@@ -1121,6 +1132,9 @@ async function probeThreadInline(
   const inputPrefix = oneLine(wire.input).slice(0, PAYLOAD_PREFIX_CHARS);
   const outputPrefix = oneLine(wire.text).slice(0, PAYLOAD_PREFIX_CHARS);
   const marked = thinkingTexts.map(oneLine);
+  const pinnedIds = new Set(
+    events.filter((event) => event.raw_type === PINNED_RECORD_TYPE).map((event) => event.id),
+  );
 
   return {
     eventId: wire.id,
@@ -1132,6 +1146,10 @@ async function probeThreadInline(
     thinkingEvents: events.filter((event) => event.kind === 'thinking').length,
     markerRows: marked.filter((text) => text.includes(REASONING_NOT_RECORDED)).length,
     emptyRows: marked.filter((text) => text === '').length,
+    attachmentRows: pinned.filter((row) => pinnedIds.has(row.id)).length,
+    attachmentEvents: pinnedIds.size,
+    emptyAttachmentRows: pinned.filter((row) => pinnedIds.has(row.id) && oneLine(row.text) === '')
+      .length,
   };
 }
 
@@ -1143,6 +1161,15 @@ async function probeThreadInline(
  * a rename pass on both sides while the screen changed under the reader.
  */
 const REASONING_NOT_RECORDED = 'reasoning not recorded (signature only)';
+
+/**
+ * The harness record type whose rows carry text but no message payload.
+ *
+ * Spelled here for the same reason the string above is: the gate asserts on what
+ * reached the BROWSER, and importing the projector's own vocabulary would let a
+ * rename pass on both sides while the screen changed under the reader.
+ */
+const PINNED_RECORD_TYPE = 'attachment';
 
 /** An id, safe inside a double-quoted CSS attribute selector. */
 function cssAttrValue(value: string): string {

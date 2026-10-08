@@ -1616,3 +1616,84 @@ describe('AC4 — projectSession stays time-invariant over spill bodies', () => 
     expect(all()).toEqual(before);
   });
 });
+
+describe('harness boilerplate reaches the row but not the search index', () => {
+  const RENDERED = 'tokensleftmarker a reminder nobody searched for';
+
+  /** An `attachment` line: real text, and the kind that earns no FTS row. */
+  function pinnedRecord(ts: string): Record<string, unknown> {
+    return {
+      uuid: nextUuid(),
+      version: '2.1.284',
+      cwd: CWD,
+      gitBranch: 'main',
+      type: 'attachment',
+      timestamp: ts,
+      attachment: { type: 'total_tokens_reminder' },
+      rendered: [{ content: RENDERED }],
+    };
+  }
+
+  function projected(): { db: DatabaseSync; id: string } {
+    const db = cache();
+    const { path } = plant('boilerplate', [
+      humanLine('findableprompt please', TS(0)),
+      pinnedRecord(TS(1)),
+    ]);
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+    return { db, id };
+  }
+
+  it('stores the rendered text on the row', () => {
+    const { db } = projected();
+    const row = db.prepare("SELECT text FROM events WHERE raw_type = 'attachment'").get() as {
+      text: string;
+    };
+    expect(row.text).toBe(RENDERED);
+  });
+
+  it('answers no search hit for text only a boilerplate row carries', () => {
+    const { db } = projected();
+    expect(searchEvents(db, { q: 'tokensleftmarker', limit: 10 })).toEqual([]);
+  });
+
+  it('still answers a hit for ordinary prose in the same session', () => {
+    const { db } = projected();
+    expect(searchEvents(db, { q: 'findableprompt', limit: 10 })).toHaveLength(1);
+  });
+
+  it('survives three drop/reproject cycles with an unindexed row present', () => {
+    const db = cache();
+    const { path } = plant('cycles-boilerplate', [
+      humanLine('findableprompt please', TS(0)),
+      pinnedRecord(TS(1)),
+    ]);
+    const id = seedIndexRow(db, path);
+
+    project(db, id, path);
+    expect(() => ftsIntegrityCheck(db)).not.toThrow();
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      deleteSessionProjection(db, id);
+      project(db, id, path);
+      expect(() => ftsIntegrityCheck(db), `cycle ${cycle}`).not.toThrow();
+    }
+    expect(searchEvents(db, { q: 'findableprompt', limit: 10 })).toHaveLength(1);
+  });
+
+  it('still INDEXES the boilerplate row, because external content must be covered', () => {
+    // The writer may not leave a row out: the index has to mirror `events`
+    // exactly or `integrity-check` reports the database malformed. So the row is
+    // indexed and the READ is what declines to answer with it.
+    const { db } = projected();
+    const indexed = db
+      .prepare(
+        `SELECT e.kind AS kind FROM events_fts f
+           JOIN events e ON e.rowid = f.rowid
+          WHERE f.events_fts MATCH 'findableprompt OR tokensleftmarker'
+          ORDER BY e.seq`,
+      )
+      .all() as { kind: string }[];
+    expect(indexed.map((row) => row.kind)).toEqual(['prompt', 'unknown']);
+  });
+});
