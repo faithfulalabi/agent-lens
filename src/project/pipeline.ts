@@ -25,6 +25,7 @@
 // names none of them. `src/__tests__/one-door.test.ts` enforces that.
 
 import { asyncAgentLaunch, taskNotification, type TaskNotification } from '../transcript/agents.js';
+import { attachmentRecord } from '../transcript/attachments.js';
 import { type Block, contentBlocks } from '../transcript/blocks.js';
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
@@ -318,7 +319,8 @@ function rawTypeOf(line: ParsedLine): string {
 
 function rawSubtypeOf(line: ParsedLine): string | undefined {
   if (line.kind === 'unknown') return line.raw_subtype;
-  return line.kind === 'system' ? line.subtype : undefined;
+  if (line.kind === 'system') return line.subtype;
+  return attachmentRecord(line)?.subtype;
 }
 
 /** The ladder, in order. `MACHINERY_TAGS` decides the middle two, not a second regex. */
@@ -464,6 +466,11 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     const blocks = blocksAt[index]!;
     const human = humanAt[index]!;
     const usage = usageAt.get(index);
+    // The line's OWN text, for a kind whose payload is not a message at all.
+    // Gated on the blockless case rather than trusted to it: a block's own text
+    // must always win, and a harness that starts sending both would otherwise
+    // leak this onto a block row.
+    const lineText = blocks.length === 0 ? attachmentRecord(line)?.text : undefined;
     let stamped = false;
 
     const emit = (block: Block | undefined, blockIndex: number): void => {
@@ -502,7 +509,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         agent_type: undefined,
         // The input is the CALL's half, so it is known here and never moves.
         ...(block?.kind === 'tool_use' ? toolInput(block.input) : NO_INPUT),
-        text: kind === 'tool_call' ? undefined : blockText(block),
+        text: kind === 'tool_call' ? undefined : (blockText(block) ?? lineText),
         text_bytes: undefined,
         output_storage: kind === 'tool_call' ? 'absent' : undefined,
         spill_path: undefined,

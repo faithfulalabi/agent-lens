@@ -600,6 +600,81 @@ const SUPPRESSIONS: readonly Suppression[] = [
     line: "origin: { kind: 'human' },",
     why: 'CONSTRUCTS harness-shaped input, never reads it. A builder that writes the field is the opposite of a read behind the door: the door governs who may INTERPRET a harness name, and a fixture that emits one is supplying the input `src/transcript/` then interprets. The marker that makes it a human prompt, so the session gets a turn to list.',
   },
+  {
+    key: 'db/__tests__/write.test.ts#attachment#1',
+    line: '/** An `attachment` line: real text, and the kind that earns no FTS row. */',
+    why: 'doc comment on a fixture BUILDER. The builder constructs harness-shaped input rather than reading it, which is the category this list already recognises.',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#attachment#2',
+    line: "type: 'attachment',",
+    why: 'the `type` the builder EMITS, so the classifier has a record of this kind to classify. Construction, not interpretation.',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#attachment#3',
+    line: "attachment: { type: 'total_tokens_reminder' },",
+    why: 'the payload the builder EMITS. The only reader of it is `src/transcript/attachments.ts`, behind the door.',
+  },
+  {
+    key: 'db/__tests__/write.test.ts#attachment#4',
+    line: 'const row = db.prepare("SELECT text FROM events WHERE raw_type = \'attachment\'").get() as {',
+    why: 'reads OUR `events.raw_type` column out of SQLite to find the row under test. The harness name reaches it only because the projector stores the type verbatim; nothing here interprets a transcript.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#1',
+    line: "describe('an attachment line projects an event that can be read', () => {",
+    why: 'names the record kind the block is about. A test name, reading nothing.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#2',
+    line: "project('attachment-lines.jsonl').events.filter((event) => event.raw_type === 'attachment');",
+    why: 'a fixture filename, plus a filter on OUR `raw_type` field of OUR projected event. The transcript was interpreted by `src/transcript/`; this reads the result.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#3',
+    line: "expect(projected()[1]?.text).toBe('[attachment deferred_tools_record]');",
+    why: 'asserts the literal placeholder the projector writes. The string is OUR output, and pinning it here is what stops a silent rewording.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#4',
+    line: "expect(projected()[2]?.text).toBe('[attachment]');",
+    why: 'the degraded form of the same placeholder, pinned for the same reason.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#5',
+    line: "it('no projected event is an empty unknown row because its line was an attachment', () => {",
+    why: 'a test name stating the invariant. Reads nothing.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#6',
+    line: "'attachment-lines.jsonl',",
+    why: 'a fixture filename in the list the invariant sweeps.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#7',
+    line: "event.raw_type === 'attachment' && (event.text === undefined || event.text === ''),",
+    why: 'the invariant itself, over OUR projected rows. `raw_type` is our column; the harness value in it arrived through the door.',
+  },
+  {
+    key: 'project/__tests__/pipeline.test.ts#attachment#8',
+    line: 'expect(empty, `${name} projected an unreadable attachment row`).toEqual([]);',
+    why: 'the failure message for that invariant.',
+  },
+  {
+    key: 'render-gate/__tests__/render-gate.test.ts#attachment#1',
+    line: "expect(names).toContain('thread-attachment-text');",
+    why: "an ASSERTION NAME in the gate's own report, not a transcript field.",
+  },
+  {
+    key: 'render-gate/index.ts#attachment#1',
+    line: "const PINNED_RECORD_TYPE = 'attachment';",
+    why: "the gate asserts on what reached the BROWSER, so it holds this one string itself on `REASONING_NOT_RECORDED`'s established precedent: importing the projector's vocabulary would let a rename pass on both sides while the screen changed under the reader.",
+  },
+  {
+    key: 'render-gate/report.ts#attachment#1',
+    line: "name: 'thread-attachment-text',",
+    why: "an ASSERTION NAME in the gate's own report.",
+  },
 ];
 
 // The helpers below are what the real assertions and their mutation controls

@@ -597,6 +597,23 @@ function ftsPhrase(q: string): string {
   return `"${q.replaceAll('"', '""')}"`;
 }
 
+/**
+ * Which indexed rows a search may answer with.
+ *
+ * `events_fts` is external-content, so the WRITER cannot leave a row out — the
+ * index must cover `events` exactly or `integrity-check` reports the database
+ * malformed. So the filter lives here, on the read, and `db/write.ts` indexes
+ * everything.
+ *
+ * `kind <> 'unknown'` drops harness-injected boilerplate. One reminder the
+ * harness repeats on nearly every request is 48% of those rows, so without this
+ * a string the user never wrote outranks every real hit. Stated on OUR kind
+ * rather than the harness's record type, so this SQL names no harness
+ * vocabulary; the cost is that an `unknown` row which later carries text worth
+ * finding stays unfindable until it earns a kind of its own.
+ */
+const SEARCHABLE = `e.kind <> 'unknown'`;
+
 // The session clause goes on BOTH arms or neither: node:sqlite throws on a bound
 // key the SQL lacks, so the SQL and the bind object come from one flag.
 function searchSql(scoped: boolean): string {
@@ -607,7 +624,7 @@ function searchSql(scoped: boolean): string {
     ` e.ts AS ts, ${SNIPPET} AS snippet, rank AS score` +
     ` FROM events_fts JOIN events e ON e.rowid = events_fts.rowid` +
     ` JOIN sessions s ON s.id = e.session_id` +
-    ` WHERE events_fts MATCH :q${scope}`;
+    ` WHERE events_fts MATCH :q AND ${SEARCHABLE}${scope}`;
   // Joined on the LIVE pointer, so a row the reconcile has not reached never surfaces.
   const spills =
     `SELECT e.session_id, s.title, s.project_path, e.turn_id, e.id, e.seq, e.kind, e.name,` +
@@ -615,6 +632,10 @@ function searchSql(scoped: boolean): string {
     ` FROM spill_fts JOIN events e ON e.id = spill_fts.event_id` +
     ` AND e.output_storage = 'spill' AND e.spill_path = spill_fts.spill_path` +
     ` JOIN sessions s ON s.id = e.session_id` +
+    // No `SEARCHABLE` here, and that is not an omission: the join already
+    // requires `output_storage = 'spill'`, which `project/tools.ts` sets only
+    // while folding a tool result, so every row this arm can reach is a
+    // `tool_call`. The predicate could never fire.
     ` WHERE spill_fts MATCH :q${scope}`;
   return (
     `SELECT session_id, session_title, project_path, turn_id, event_id, seq, kind, name, ts,` +

@@ -16,9 +16,9 @@
  * All seven `EventKind`s are handled, and the four that are prose — `prompt`,
  * `text`, `error`, `compaction` — share one arm rather than being filtered out.
  * A `kind='unknown'` record draws a labelled row carrying its `raw_type` and
- * `raw_subtype` verbatim, which is how transcript format drift shows up in the
- * product on the first session opened after a harness update, instead of as a
- * silent hole found three months later.
+ * `raw_subtype` verbatim, plus any text the projector gave it, which is how
+ * transcript format drift shows up in the product on the first session opened
+ * after a harness update, instead of as a silent hole found three months later.
  *
  * ===========================================================================
  * THE REASONING MARKER IS KEYED ON THE TEXT, NEVER ON THE KIND.
@@ -101,12 +101,20 @@ export interface ThreadThinkingRow extends ThreadRowBase {
   readonly recorded: boolean;
 }
 
-/** A record this build does not understand, shown rather than swallowed. */
+/** A record no row renderer claims, shown rather than swallowed. */
 export interface ThreadUnknownRow extends ThreadRowBase {
   readonly kind: 'unknown';
-  /** `unrecognized record (type=system/turn_duration)`. */
+  /**
+   * `unrecognized record (type=system/turn_duration)` for a record with nothing
+   * to read, and the bare `attachment/date` for one carrying {@link text}. The
+   * two cases must not share a word: a record whose content is on screen is one
+   * this build DID recognise, and calling it unrecognized is a claim the reader
+   * can see is false.
+   */
   readonly label: string;
-  /** The wire row's own scalars as pretty JSON. There is no payload to show. */
+  /** Whatever the projector gave the row, or null. */
+  readonly text: string | null;
+  /** The wire row's own scalars as pretty JSON. */
   readonly record: string;
 }
 
@@ -137,12 +145,7 @@ function rowFor(event: EventRow): ThreadRow {
     case 'thinking':
       return thinkingRow(event);
     case 'unknown':
-      return {
-        kind: 'unknown',
-        event,
-        label: `unrecognized record (type=${typeOf(event)})`,
-        record: JSON.stringify(scalarsOf(event), null, 2),
-      };
+      return unknownRow(event);
     default:
       return { kind: 'message', event, eventKind: kind, text: proseOf(event.text) };
   }
@@ -163,6 +166,24 @@ function thinkingRow(event: EventRow): ThreadThinkingRow {
   return { kind: 'thinking', event, text: prose, recorded: true };
 }
 
+/**
+ * A record with its own text names itself; one with none says so.
+ *
+ * The projector gives an `attachment` row text no `message.content` could carry,
+ * so `unknown` no longer implies "nothing to read" — it means only that no
+ * dedicated renderer claims the record.
+ */
+function unknownRow(event: EventRow): ThreadUnknownRow {
+  const text = proseOf(event.text);
+  return {
+    kind: 'unknown',
+    event,
+    label: text === null ? `unrecognized record (type=${typeOf(event)})` : typeOf(event),
+    text,
+    record: JSON.stringify(scalarsOf(event), null, 2),
+  };
+}
+
 /** `system/turn_duration` when there is a sub-label, else the bare type. */
 function typeOf(event: EventRow): string {
   const sub = event.raw_subtype;
@@ -170,10 +191,9 @@ function typeOf(event: EventRow): string {
 }
 
 /**
- * The wire row's own scalars — the whole disclosure, because there is nothing
- * else. MEASURED: all 1,577 `unknown` rows carry `text`, `name` and `input` null
- * with empty attributes, so the record IS these seven fields. Task 5.3's pane
- * owns payload disclosure; this shows what the row states about itself.
+ * The wire row's own scalars — what the row states about ITSELF, beside whatever
+ * text it carries. `name` and `input` stay out: they belong to a `tool_call`,
+ * which never reaches this arm. The detail pane owns payload disclosure.
  */
 function scalarsOf(event: EventRow): Record<string, string | number | null> {
   return {
