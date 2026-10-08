@@ -15,6 +15,8 @@ import {
   formatDoctorReport,
   formatLastPassSection,
   readCacheStats,
+  type CacheStats,
+  type HarnessCensusRow,
 } from '../commands/doctor.js';
 import type { LastPassReport } from '../../archive/index.js';
 import {
@@ -36,6 +38,10 @@ import { useSandbox } from '../../archive/__tests__/use-sandbox.js';
 import { sessionRecords, writeSession } from '../../corpus/__tests__/fixtures.js';
 import { createCorpusSweep } from '../../corpus/watch.js';
 import { openDb } from '../../db/open.js';
+// The same specifier `corpus/__tests__/fixtures.ts` uses. A different one for
+// this file resolves to a SECOND module instance with its own `nextUuid` serial,
+// and the duplicate uuids fail projection on `UNIQUE constraint failed: events.id`.
+import { humanLine } from '../../db/__tests__/fixtures/index.js';
 
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
@@ -267,6 +273,11 @@ function seedProjectedCache(s: Sandbox): void {
     CACHE_TWO,
     sessionRecords('c2', '2026-08-14T09:01:00.000Z', '2026-08-14T09:01:30.000Z'),
   );
+  projectCache(s);
+}
+
+/** Wave 1 indexes, wave 2 projects — the way a boot sweep leaves the cache. */
+function projectCache(s: Sandbox): void {
   const opened = openDb({ dataDir: s.dataDir });
   try {
     createCorpusSweep({ db: opened.db, dataDir: s.dataDir, transcriptRoot: s.sourceRoot }).tick();
@@ -382,6 +393,133 @@ describe('AC2 — doctor reports the cache beside the archive', () => {
     for (const [rel, entry] of before) {
       if (rel.startsWith('archive/')) expect(after.get(rel), rel).toEqual(entry);
     }
+  });
+});
+
+/* ------------------------------------------- the named drift buckets --- */
+
+const CLEAN_VERSION = '2.1.212';
+const DRIFTING_VERSION = '2.1.284';
+
+/** Records restamped onto one release, so the census has more than one row. */
+function onVersion(records: readonly unknown[], version: string): unknown[] {
+  return records.map((record) => ({ ...(record as Record<string, unknown>), version }));
+}
+
+/**
+ * One clean session, and one that drifts on a made-up record type and a made-up
+ * top-level field.
+ *
+ * INVENTED names, never harness ones: a real name is absorbed into `knownFields`
+ * by the PR that classifies it, so a test pinned to one reds on that PR.
+ * `extraTypes` adds further distinct names, for the capped rendering.
+ */
+function seedDriftingCache(s: Sandbox, extraTypes: readonly string[] = []): void {
+  writeSession(
+    s,
+    CACHE_ONE,
+    sessionRecords('c1', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:30.000Z'),
+  );
+  writeSession(
+    s,
+    CACHE_TWO,
+    onVersion(
+      [
+        ...sessionRecords('c2', '2026-08-14T09:01:00.000Z', '2026-08-14T09:01:30.000Z'),
+        { type: 'holographic-preview', frames: 3, codec: 'x' },
+        { type: 'holographic-preview', frames: 4, codec: 'x' },
+        { ...humanLine('later', '2026-08-14T09:02:00.000Z'), novelField: 7 },
+        ...extraTypes.map((type) => ({ type })),
+      ],
+      DRIFTING_VERSION,
+    ),
+  );
+  projectCache(s);
+}
+
+function censusOf(output: string): HarnessCensusRow[] {
+  const json = JSON.parse(output) as { cache: { stats: CacheStats } };
+  return json.cache.stats.harness;
+}
+
+function rowFor(rows: readonly HarnessCensusRow[], version: string): HarnessCensusRow {
+  const row = rows.find((candidate) => candidate.version === version);
+  if (row === undefined) throw new Error(`no census row for ${version}: ${JSON.stringify(rows)}`);
+  return row;
+}
+
+describe('the drift census names what each release drifted on', () => {
+  it('--json names the record types and the top-level fields, per harness version', async () => {
+    const s = sb();
+    seedDriftingCache(s);
+
+    const rows = censusOf(await runDoctor(argsFor(s, ['--json'])));
+
+    expect(rowFor(rows, DRIFTING_VERSION)).toEqual({
+      version: DRIFTING_VERSION,
+      projected: 1,
+      drifting: 1,
+      unknown_line_types: { 'holographic-preview': 2 },
+      unknown_top_level_fields: { novelField: 1 },
+    });
+  });
+
+  it('a version that drifted on nothing keeps exactly the three keys it always had', async () => {
+    const s = sb();
+    seedDriftingCache(s);
+
+    const clean = rowFor(censusOf(await runDoctor(argsFor(s, ['--json']))), CLEAN_VERSION);
+
+    // The KEY SET, not merely the values: an undrifted bucket must be ABSENT,
+    // never an empty object a script would have to special-case.
+    expect(Object.keys(clean).sort()).toEqual(['drifting', 'projected', 'version']);
+    expect(clean).toEqual({ version: CLEAN_VERSION, projected: 1, drifting: 0 });
+  });
+
+  it('a clean cache gains no bucket key on any row', async () => {
+    const s = sb();
+    seedProjectedCache(s);
+
+    const rows = censusOf(await runDoctor(argsFor(s, ['--json'])));
+
+    expect(rows.map((row) => Object.keys(row).sort())).toEqual([
+      ['drifting', 'projected', 'version'],
+    ]);
+  });
+
+  it('the rendered report names them under the release that drifted, and nowhere else', async () => {
+    const s = sb();
+    seedDriftingCache(s);
+
+    const lines = (await runDoctor(argsFor(s))).split('\n');
+    const at = lines.findIndex((line) => line.includes(`${DRIFTING_VERSION}: `));
+
+    expect(lines[at]).toBe(`    ${DRIFTING_VERSION}: 1 projected, 1 drifting`);
+    expect(lines[at + 1]).toBe('      unknown record types (1): holographic-preview 2');
+    expect(lines[at + 2]).toBe('      unknown top-level fields (1): novelField 1');
+    const cleanAt = lines.findIndex((line) => line.includes(`${CLEAN_VERSION}: `));
+    expect(lines[cleanAt + 1]).not.toContain('unknown ');
+  });
+
+  it('many distinct names cap in the rendered report and stay whole in --json', async () => {
+    const s = sb();
+    seedDriftingCache(s, ['alpha-shape', 'beta-shape', 'gamma-shape', 'delta-shape']);
+
+    const text = await runDoctor(argsFor(s));
+    const rows = censusOf(await runDoctor(argsFor(s, ['--json'])));
+
+    // Ordered by COUNT first, so the cap keeps the worst names and not the
+    // alphabetically luckiest ones.
+    expect(text).toContain(
+      '      unknown record types (5): holographic-preview 2, alpha-shape 1, beta-shape 1, … and 2 more',
+    );
+    expect(rowFor(rows, DRIFTING_VERSION).unknown_line_types).toEqual({
+      'holographic-preview': 2,
+      'alpha-shape': 1,
+      'beta-shape': 1,
+      'gamma-shape': 1,
+      'delta-shape': 1,
+    });
   });
 });
 
