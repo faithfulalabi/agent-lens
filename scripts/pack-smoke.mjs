@@ -367,7 +367,10 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
     `{ say "FATAL built CLI missing: $ROOT/${BUILT_CLI_ENTRY} — ` +
     `reinstall @faithfulalabi/agent-lens"; exit 1; }`;
   for (const absent of ['$ROOT/node_modules', 'node_modules missing']) {
-    assert.ok(!wrapper.includes(absent), `the wrapper still carries the old node_modules guard: ${absent}`);
+    assert.ok(
+      !wrapper.includes(absent),
+      `the wrapper still carries the old node_modules guard: ${absent}`,
+    );
   }
   for (const present of [fixedGuard, `ROOT='${installed}'`]) {
     assert.ok(wrapper.includes(present), `the wrapper is missing: ${present}`);
@@ -453,7 +456,10 @@ async function archiveWrapper({ jail, app, installed, dataDir }) {
     `doctor exited ${doctored.status}\n${doctored.stdout}\n${doctored.stderr}`,
   );
   for (const line of [`archive job: ${cronLogPath}`, 'last successful pass:']) {
-    assert.ok(doctored.stdout.includes(line), `doctor never printed "${line}":\n${doctored.stdout}`);
+    assert.ok(
+      doctored.stdout.includes(line),
+      `doctor never printed "${line}":\n${doctored.stdout}`,
+    );
   }
   ok('doctor names the cron.log and reports the last successful pass');
 }

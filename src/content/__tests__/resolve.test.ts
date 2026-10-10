@@ -360,12 +360,7 @@ describe('AC1 — line_ref preads the archive', () => {
     expect(wrong.content).toBe(content.text);
 
     // And the block index discriminates too.
-    const wrongBlock = resolveContent(
-      { ...content, result_block: 99 },
-      'text',
-      path,
-      sandboxEnv(),
-    );
+    const wrongBlock = resolveContent({ ...content, result_block: 99 }, 'text', path, sandboxEnv());
     expect(wrongBlock.content).toBe(content.text);
   });
 
@@ -520,12 +515,7 @@ describe('AC1 — spill resolves, archive mirror first', () => {
     const content = contentRow(db, 'toolu_spill');
     const hijacked = writeFile(join(sb().root, 'loose', 'tool-results', SPILL_NAME), 'HIJACK');
 
-    const slice = resolveContent(
-      { ...content, spill_path: hijacked },
-      'text',
-      path,
-      sandboxEnv(),
-    );
+    const slice = resolveContent({ ...content, spill_path: hijacked }, 'text', path, sandboxEnv());
     expect(slice.spill_path).toBe(mirror);
     expect(slice.content).toBe(BODY);
   });
@@ -779,8 +769,7 @@ describe('AC4 — a sealed archive answers byte-identically to a hot one', () =>
     ]);
     const content = contentRow(db, 'toolu_seal');
 
-    const hot = (field: ContentField) =>
-      resolveContent(content, field, path, sandboxEnv());
+    const hot = (field: ContentField) => resolveContent(content, field, path, sandboxEnv());
     const hotText = hot('text');
     const hotInput = hot('input');
 

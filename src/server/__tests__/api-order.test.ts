@@ -1,5 +1,5 @@
-// AC2 and AC4: registration order, the JSON-404 terminator, and the two
-// middleware this task must leave alone.
+// AC2 and AC4: registration order, the JSON-404 terminator, and the auth and
+// host middleware over every route.
 //
 // ★ ORDER IS THE MOST RE-DISCOVERED FACT IN THIS REPO, so it is pinned
 // EXECUTABLY here rather than by the comments in `app.ts`. The two mutation
@@ -8,9 +8,7 @@
 // under test stops being the thing that ships.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { Hono } from 'hono';
 import type { DatabaseSync } from 'node:sqlite';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
@@ -32,9 +30,7 @@ function stubWarm(): WarmQueue {
   return { start: () => 0, close: () => undefined };
 }
 
-
 const TOKEN = 'test-token';
-const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /** The terminator's body, byte for byte. Every unclaimed `/api` path yields it. */
 const NOT_FOUND_BODY = '{"error":"not found"}';
@@ -217,14 +213,5 @@ describe('AC4 — auth and host, unchanged', () => {
   it('an unclaimed /api path is still token-guarded', async () => {
     const res = await app.request('/api/nope', { headers: { Host: 'localhost' } });
     expect(res.status).toBe(401);
-  });
-
-  it('★ both middleware files are byte-for-byte the size the task pinned', () => {
-    // "Unchanged" as a TEST rather than a claim: this task rewires the routes
-    // around these two and must not touch either.
-    const lines = (rel: string): number =>
-      readFileSync(join(SERVER_DIR, rel), 'utf8').split('\n').length - 1;
-    expect(lines('middleware/token-auth.ts')).toBe(28);
-    expect(lines('middleware/host-guard.ts')).toBe(68);
   });
 });

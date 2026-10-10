@@ -128,17 +128,14 @@ describe('host-header guard', () => {
     expect(await sessionCount(server)).toBe(0);
   });
 
-  it.each(['localhost', '127.0.0.1', '[::1]'])(
-    'allows loopback Host %s',
-    async (host) => {
-      server = await bootTestServer();
-      const res = await rawRequest(server.handle.port, '/api/sessions', {
-        [TOKEN_HEADER]: server.token,
-        host: `${host}:${server.handle.port}`,
-      });
-      expect(res.status).toBe(200);
-    },
-  );
+  it.each(['localhost', '127.0.0.1', '[::1]'])('allows loopback Host %s', async (host) => {
+    server = await bootTestServer();
+    const res = await rawRequest(server.handle.port, '/api/sessions', {
+      [TOKEN_HEADER]: server.token,
+      host: `${host}:${server.handle.port}`,
+    });
+    expect(res.status).toBe(200);
+  });
 
   // `hostGuard` is registered as `app.use('*', ...)`, so Task 5.1b's UI routes
   // inherit it for free — but "for free" is only true while something asserts

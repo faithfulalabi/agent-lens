@@ -2,13 +2,7 @@
 // time, written to `<dataDir>/config.json` so the hook adapter (Task 1.4) can
 // discover the actual port without re-probing. Atomic (temp + rename) and 0600.
 
-import {
-  chmodSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** The runtime config contract read by Task 1.4's hook adapter. */
@@ -33,9 +27,7 @@ export function writeConfig(dataDir: string, config: RuntimeConfig): void {
 /** Read the runtime config, or `null` if it does not exist. */
 export function readConfig(dataDir: string): RuntimeConfig | null {
   try {
-    return JSON.parse(
-      readFileSync(join(dataDir, CONFIG_FILE), 'utf8'),
-    ) as RuntimeConfig;
+    return JSON.parse(readFileSync(join(dataDir, CONFIG_FILE), 'utf8')) as RuntimeConfig;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;

@@ -81,9 +81,7 @@ export function makeFakeUiDist(dir = mkdtempSync(join(tmpdir(), 'agent-lens-ui-'
  * would otherwise walk synchronously before the socket binds. A fresh EMPTY root
  * plus the sweep OFF means a test opts IN and says exactly what it feeds it.
  */
-export async function bootTestServer(
-  options: string | BootOptions = {},
-): Promise<TestServer> {
+export async function bootTestServer(options: string | BootOptions = {}): Promise<TestServer> {
   const opts: BootOptions = typeof options === 'string' ? { dataDir: options } : options;
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'agent-lens-'));
   const uiDir = opts.uiDir ?? makeFakeUiDist();
@@ -170,19 +168,16 @@ export function rawRequest(
   body?: string,
 ): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
-    const req = request(
-      { host: '127.0.0.1', port, path, method, headers, agent: false },
-      (res) => {
-        let text = '';
-        res.setEncoding('utf8');
-        res.on('data', (chunk: string) => {
-          text += chunk;
-        });
-        res.on('end', () =>
-          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }),
-        );
-      },
-    );
+    const req = request({ host: '127.0.0.1', port, path, method, headers, agent: false }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => {
+        text += chunk;
+      });
+      res.on('end', () =>
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }),
+      );
+    });
     req.on('error', reject);
     if (body !== undefined) req.write(body);
     req.end();

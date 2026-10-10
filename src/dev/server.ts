@@ -66,9 +66,7 @@ export function resolveUiViteEsm(uiDir: string): string {
 }
 
 /** Boot the collector, then Vite. Rejects leaving nothing running. */
-export async function startDevServer(
-  options: DevServerOptions = {},
-): Promise<DevServerHandle> {
+export async function startDevServer(options: DevServerOptions = {}): Promise<DevServerHandle> {
   const dataDir =
     options.dataDir ?? process.env.AGENT_LENS_DEV_DIR ?? join(repoRoot(), '.agent-lens-dev');
   refuseIfOwned(dataDir);
@@ -157,8 +155,7 @@ function refuseIfOwned(dataDir: string): void {
     // `readConfig` rethrows anything but ENOENT, so a 0600 file left by another
     // uid would otherwise surface as a raw EACCES stack.
     throw new Error(
-      `agent-lens dev: cannot read ${configPath} (${String(err)}). ` +
-        remediation(configPath),
+      `agent-lens dev: cannot read ${configPath} (${String(err)}). ` + remediation(configPath),
     );
   }
   if (prior !== null && pidIsLive(prior.pid)) {
@@ -305,9 +302,6 @@ async function main(): Promise<void> {
   }
 }
 
-if (
-  process.argv[1] !== undefined &&
-  pathToFileURL(process.argv[1]).href === import.meta.url
-) {
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
   await main();
 }

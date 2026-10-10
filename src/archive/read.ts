@@ -102,7 +102,9 @@ export function decompressSealedFrame(
     out = zstdDecompressSync(frame, { maxOutputLength: maxBytes });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'Z_BUF_ERROR') throw error;
-    throw new Error(`truncated sealed archive ${label}: declares ${declared} bytes but 0 decompressed`);
+    throw new Error(
+      `truncated sealed archive ${label}: declares ${declared} bytes but 0 decompressed`,
+    );
   }
   if (out.length !== declared) {
     throw new Error(

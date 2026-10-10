@@ -45,7 +45,6 @@ function stubWarm(): WarmQueue {
   return { start: () => 0, close: () => undefined };
 }
 
-
 // The real implementation still runs; only the call list and the override are
 // new. `{ spy: true }` is what lets the control neuter one function and restore.
 vi.mock('../../db/freshness.js', { spy: true });
