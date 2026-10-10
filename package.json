@@ -47,6 +47,7 @@
     "lint": "eslint .",
     "prepublishOnly": "npm run build",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "prepare": "npm --prefix ui install"
   },
   "dependencies": {
