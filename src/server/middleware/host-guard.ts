@@ -5,12 +5,7 @@
 import { networkInterfaces } from 'node:os';
 import type { MiddlewareHandler } from 'hono';
 
-const ALLOWED_HOSTNAMES = new Set([
-  'localhost',
-  '127.0.0.1',
-  '[::1]',
-  '::1',
-]);
+const ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 /** A bind host that keeps the default loopback-only allowlist. */
 function isLoopbackBind(host: string): boolean {

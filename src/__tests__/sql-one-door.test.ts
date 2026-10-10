@@ -97,9 +97,7 @@ function describeHit(hit: Hit): string {
 }
 
 /** Unreviewed SQL, plus the rot direction of the quarantine. */
-function unreviewed(
-  hits: readonly Hit[] = scanAll(),
-): { unexpected: string[] } {
+function unreviewed(hits: readonly Hit[] = scanAll()): { unexpected: string[] } {
   return { unexpected: hits.map(describeHit).sort() };
 }
 

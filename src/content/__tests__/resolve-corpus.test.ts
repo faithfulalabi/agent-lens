@@ -83,7 +83,10 @@ describe('the resolver over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => 
       const { db, rows } = corpus();
       expect(rows.length).toBeGreaterThan(0);
 
-      const env = createContentEnv(createArchiveReader(), [resolveArchiveRoot(), resolveTranscriptRoot()]);
+      const env = createContentEnv(createArchiveReader(), [
+        resolveArchiveRoot(),
+        resolveTranscriptRoot(),
+      ]);
       const byStorage = new Map<string, number>();
 
       for (const { row, archivePath } of rows) {
@@ -147,7 +150,10 @@ describe('the resolver over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => 
         return;
       }
 
-      const env = createContentEnv(createArchiveReader(), [resolveArchiveRoot(), resolveTranscriptRoot()]);
+      const env = createContentEnv(createArchiveReader(), [
+        resolveArchiveRoot(),
+        resolveTranscriptRoot(),
+      ]);
       const started = performance.now();
       for (const { row, archivePath } of refs) {
         resolveContent(row, row.output_storage === 'line_ref' ? 'text' : 'input', archivePath, env);
