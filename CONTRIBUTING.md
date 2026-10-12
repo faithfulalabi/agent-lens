@@ -97,9 +97,10 @@ that makes regenerating them routine.
 Conventional Commits for the subject line (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`,
 `perf:`), scoped to the module rather than the filename.
 
-Before you open one: `npm test`, `npm run typecheck`, `npm run lint`. If your change touches
-anything that reads the corpus, say in the PR what you measured it against — this repo has retracted
-measurements before, and a number without a stated method is treated as unmeasured.
+Before you open one: `npm test`, `npm run typecheck`, `npm run lint`, `npm run format:check`. If
+your change touches anything that reads the corpus, say in the PR what you measured it against —
+this repo has retracted measurements before, and a number without a stated method is treated as
+unmeasured.
 
 **Pull requests are squash-merged, and the PR title becomes the commit.** `main` accepts squash
 merges only, with the PR title as the commit subject and the PR description as its body. The

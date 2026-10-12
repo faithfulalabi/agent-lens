@@ -58,6 +58,9 @@ jobs:
       # so one `npm ci` installs both trees — no separate ui install step.
       - run: npm ci
       - run: npm run lint
+      # Prettier is pinned exactly, so a red here can only be a skipped
+      # `npm run format` — never the formatter moving under the repo.
+      - run: npm run format:check
 
   test:
     name: test
