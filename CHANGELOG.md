@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/faithfulalabi/agent-lens/compare/v0.4.1...v0.5.0) (2026-10-12)
+
+
+### Features
+
+* **doctor:** name the drift buckets per harness version ([#119](https://github.com/faithfulalabi/agent-lens/issues/119)) ([287f255](https://github.com/faithfulalabi/agent-lens/commit/287f255960ccaac46fe632c4437641d0ac78105f))
+* **transcript:** give attachment events text instead of an empty row ([#120](https://github.com/faithfulalabi/agent-lens/issues/120)) ([3d90e4c](https://github.com/faithfulalabi/agent-lens/commit/3d90e4c193c1db647cb30f0d93a44a01ebfb5724))
+
 ## [0.4.1](https://github.com/faithfulalabi/agent-lens/compare/v0.4.0...v0.4.1) (2026-10-07)
 
 
