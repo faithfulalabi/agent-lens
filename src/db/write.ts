@@ -171,6 +171,11 @@ const INSERT_EVENT_SQL = `INSERT INTO events
 // there because the tick reads the ARCHIVE, which an external 15-minute job
 // moves, so a session is reprojected about once per 900 ticks; 2 of 312 sessions
 // exceed `live.ts`'s 100 ms backoff, and that backoff contains them.
+//
+// EVERY row of the session, with no predicate. `events_fts` is external-content,
+// so its index must cover the content table exactly: a row left out fails
+// `integrity-check` with `database disk image is malformed`. Excluding anything
+// from search is therefore the READER's job — see `read.ts`'s `SEARCHABLE`.
 const POPULATE_FTS_SQL = `INSERT INTO events_fts(rowid, text, input)
   SELECT rowid, text, input FROM events WHERE session_id = ?`;
 

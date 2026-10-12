@@ -9,6 +9,7 @@ import {
   SESSION_VIEW_MODES,
   THREAD_PREVIEW_CHARS,
   buildThread,
+  groupThread,
   type ThreadRow,
 } from '../thread';
 import { makeDetail, makeEventRow, makeTurnRow, stubApiClient } from './fixtures';
@@ -243,7 +244,11 @@ describe('an unrecognized record names its type and its subtype (Test 10, AC3)',
   ])('raw_type=%s raw_subtype=%s reads as %s', (rawType, rawSubtype, label) => {
     // Without the subtype, 601 of 1,577 unknown rows collapse onto `type=system`
     // and the drift alarm cannot tell four different records apart.
-    const [row] = rowsFor([{ kind: 'unknown', raw_type: rawType, raw_subtype: rawSubtype }]);
+    // `text: null` is the premise, not a detail: a record that HAS text is named
+    // rather than disowned, which the describe below owns.
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: rawType, raw_subtype: rawSubtype, text: null },
+    ]);
 
     expect(row?.kind === 'unknown' && row.label).toBe(label);
   });
@@ -281,6 +286,51 @@ describe('the unknown row discloses the wire fields it has (Test 11, AC3)', () =
      */
     expect(record).not.toContain('output_storage');
     expect(record).not.toContain('spill_path');
+  });
+});
+
+describe('a record that carries text shows it, and is not called unrecognized', () => {
+  const RENDERED = '<system-reminder>\n15000000 tokens left\n</system-reminder>';
+
+  it('carries the text through to the row', () => {
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: RENDERED },
+    ]);
+    expect(row?.kind === 'unknown' && row.text).toBe(RENDERED);
+  });
+
+  it('names the record rather than disowning it', () => {
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: RENDERED },
+    ]);
+    expect(row?.kind === 'unknown' && row.label).toBe('attachment/date');
+  });
+
+  it('keeps calling a record with no text unrecognized', () => {
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: 'system', raw_subtype: 'away_summary', text: null },
+    ]);
+    expect(row?.kind === 'unknown' && row.label).toBe(
+      'unrecognized record (type=system/away_summary)',
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['empty', ''],
+    ['all whitespace', '   \n  '],
+  ])('reports %s text as absent', (_label, text) => {
+    const [row] = rowsFor([{ kind: 'unknown', raw_type: 'attachment', text }]);
+    expect(row?.kind === 'unknown' && row.text).toBeNull();
+  });
+
+  it('stays in the activity fold rather than becoming a message', () => {
+    const rows = rowsFor([
+      { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: RENDERED },
+    ]);
+    const sections = groupThread(rows);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.kind).toBe('activity');
   });
 });
 

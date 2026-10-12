@@ -106,6 +106,15 @@ export interface ThreadProbe {
   markerRows: number;
   /** Of those rows, how many render no text at all. Must be zero. */
   emptyRows: number;
+  /** `[data-thread-kind="unknown"]` rows whose wire event is a pinned record. */
+  attachmentRows: number;
+  /** Those same records in the one detail response. */
+  attachmentEvents: number;
+  /**
+   * Of those rows, how many show nothing but their own label. Must be zero —
+   * that empty row is the whole defect this probe exists to catch.
+   */
+  emptyAttachmentRows: number;
 }
 
 /**
@@ -714,6 +723,20 @@ function threadAssertions(probe: ThreadProbe | null): AssertionRecord[] {
         `${probe.thinkingRows} row(s) for ${probe.thinkingEvents} event(s); ` +
         `${probe.markerRows} carry the marker, ${probe.emptyRows} render empty`,
       expected: 'one marker per thinking event, every one carrying the string, none empty',
+    },
+    {
+      // Not vacuous by corpus: 63 of 64 archived files carry one of these
+      // records, and the gate drives the newest session. A zero reading here is
+      // a dead drive, which is why it fails rather than warning.
+      name: 'thread-attachment-text',
+      ok:
+        probe.attachmentEvents > 0 &&
+        probe.attachmentRows === probe.attachmentEvents &&
+        probe.emptyAttachmentRows === 0,
+      actual:
+        `${probe.attachmentRows} row(s) for ${probe.attachmentEvents} record(s); ` +
+        `${probe.emptyAttachmentRows} show only a label`,
+      expected: 'one row per pinned record, every one showing text beside its label',
     },
   ];
 }
