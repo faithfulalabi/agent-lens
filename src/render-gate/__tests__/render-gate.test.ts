@@ -134,6 +134,9 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       thinkingEvents: 3,
       markerRows: 3,
       emptyRows: 0,
+      attachmentRows: 4,
+      attachmentEvents: 4,
+      emptyAttachmentRows: 0,
     },
     liveUpdate: {
       before: 30,
@@ -598,6 +601,7 @@ describe('buildReport (AC5)', () => {
 
     expect(names).toContain('thread-tool-inline');
     expect(names).toContain('thread-thinking-markers');
+    expect(names).toContain('thread-attachment-text');
     expect(report.assertions.find((a) => a.name === 'thread-tool-inline')?.actual).toContain(
       'toolu_1',
     );
@@ -616,6 +620,11 @@ describe('buildReport (AC5)', () => {
     ['a thinking event rendered no row', { thinkingRows: 2 }],
     ['a thinking row carried something other than the marker', { markerRows: 2 }],
     ['a thinking row rendered empty', { emptyRows: 1, markerRows: 2 }],
+    ['a pinned record rendered no row', { attachmentRows: 3 }],
+    ['a pinned record rendered only its label', { emptyAttachmentRows: 1 }],
+    // Zero is a dead drive, not a clean corpus: 63 of 64 archived files carry
+    // one of these records and the gate opens the newest session.
+    ['no pinned record reached the thread at all', { attachmentRows: 0, attachmentEvents: 0 }],
   ])('reds when %s', (_label, overrides) => {
     const threadInline = { ...passingObservations().threadInline!, ...overrides };
     const report = reportFor({ threadInline });
@@ -1070,6 +1079,7 @@ describe('the gate source itself (AC6)', () => {
   describe('pickPayloadRow — which rendered row is worth clicking (AC-R1)', () => {
     const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
       kind: 'tool_call',
+      raw_type: 'assistant',
       input: '{"file_path":"a.txt"}',
       text: 'ok',
       output_storage: 'inline',
@@ -1198,6 +1208,7 @@ describe('the gate source itself (AC6)', () => {
   describe('pickSearchTerm — the query, derived from the wire (Test 27)', () => {
     const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
       kind: 'tool_call',
+      raw_type: 'assistant',
       input: null,
       text: null,
       output_storage: 'inline',
@@ -1440,6 +1451,7 @@ describe('.render-gate/ is ignored (AC5)', () => {
 describe('the wire-input probe decides which row proves the divergence', () => {
   const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
     kind: 'tool_call',
+    raw_type: 'assistant',
     input: '{"command":"ls"}',
     text: 'a b c',
     output_storage: 'inline',

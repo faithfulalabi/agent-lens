@@ -75,7 +75,7 @@ describe('the seams no server render can reach are pinned to the source', () => 
     // no effect runs under `environment: 'node'`, so `create` is never called and
     // the socket, the subscription and this dispatch are all unreachable at
     // runtime. `live.test.ts` carries the behaviour the frames feed.
-    expect(SOURCE).toContain("busRef.current.publish({ event, data: data as WarmProgressFrame })");
+    expect(SOURCE).toContain('busRef.current.publish({ event, data: data as WarmProgressFrame })');
   });
 });
 

@@ -177,7 +177,7 @@
       "wire_input": null,
       "wire_input_bytes": null,
       "wire_input_storage": null,
-      "text": null,
+      "text": "[attachment deferred_tools_delta]",
       "text_bytes": null,
       "output_storage": null,
       "spill_path": null,
@@ -197,7 +197,7 @@
       "agent_type": null,
       "agent_status": null,
       "raw_type": "attachment",
-      "raw_subtype": null,
+      "raw_subtype": "deferred_tools_delta",
       "attrs": "{}"
     },
     {
@@ -219,7 +219,7 @@
       "wire_input": null,
       "wire_input_bytes": null,
       "wire_input_storage": null,
-      "text": null,
+      "text": "[attachment agent_listing_delta]",
       "text_bytes": null,
       "output_storage": null,
       "spill_path": null,
@@ -239,7 +239,7 @@
       "agent_type": null,
       "agent_status": null,
       "raw_type": "attachment",
-      "raw_subtype": null,
+      "raw_subtype": "agent_listing_delta",
       "attrs": "{}"
     },
     {
@@ -261,7 +261,7 @@
       "wire_input": null,
       "wire_input_bytes": null,
       "wire_input_storage": null,
-      "text": null,
+      "text": "[attachment skill_listing]",
       "text_bytes": null,
       "output_storage": null,
       "spill_path": null,
@@ -281,7 +281,7 @@
       "agent_type": null,
       "agent_status": null,
       "raw_type": "attachment",
-      "raw_subtype": null,
+      "raw_subtype": "skill_listing",
       "attrs": "{}"
     },
     {

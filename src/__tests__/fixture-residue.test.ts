@@ -56,8 +56,14 @@ const DETECT_RULES = [
     name: 'detect-email',
     pattern: '[A-Za-z0-9._%+-]{1,64}@(?!example\\.com\\b)[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}',
   },
-  { name: 'detect-private-ip-10', pattern: '\\b10\\.(?!0\\.0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b' },
-  { name: 'detect-private-ip-192-168', pattern: '\\b192\\.168\\.(?!0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\b' },
+  {
+    name: 'detect-private-ip-10',
+    pattern: '\\b10\\.(?!0\\.0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b',
+  },
+  {
+    name: 'detect-private-ip-192-168',
+    pattern: '\\b192\\.168\\.(?!0\\.0\\b)\\d{1,3}\\.\\d{1,3}\\b',
+  },
   {
     name: 'detect-private-ip-172',
     pattern: '\\b172\\.(?!16\\.0\\.0\\b)(?:1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}\\b',

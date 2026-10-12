@@ -23,7 +23,7 @@ const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const HASHED_TREES = ['transcript', 'project'] as const;
 
 /** The committed pair. Both change together or this file reds. */
-const PROJECTOR_SOURCE_SHA = '8bb1f065077e96d32839737eeb4f0b4392767c3db7055ae7ab4ba2b45e97014f';
+const PROJECTOR_SOURCE_SHA = '1bf5f0c38342f6606afab8401752ee6085b04b396a586a1bc46eefa4459de7a4';
 
 interface HashedFile {
   path: string;
@@ -94,6 +94,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     expect(paths).toEqual(expect.arrayContaining(['transcript/version.ts']));
     for (const module of [
       'accessors',
+      'attachments',
       'blocks',
       'drift',
       'human',

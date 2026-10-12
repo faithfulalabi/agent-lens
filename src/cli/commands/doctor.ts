@@ -21,7 +21,7 @@ import { CACHE_DB_FILE, openReadOnlyDb } from '../../db/open.js';
 import { readDriftRows, readHealthCounts, readMeta } from '../../db/read.js';
 // Deep import, never the `server/index.js` barrel: that barrel loads the HTTP
 // server, and with it `hono/streaming`, into a command that binds no socket.
-import { aggregateDrift } from '../../server/drift-report.js';
+import { aggregateDrift, mergeBucket } from '../../server/drift-report.js';
 import { parseStringFlag } from './archive.js';
 
 /** Long lists are capped so a 30-day-old machine does not print thousands of rows. */
@@ -55,6 +55,23 @@ export interface HarnessCensusRow {
   version: string;
   projected: number;
   drifting: number;
+  // Both are ABSENT rather than `{}` when this version drifted on nothing of
+  // that kind: `--json` is consumed by scripts, and an empty bucket is a case
+  // every one of them would have to special-case.
+  unknown_line_types?: Record<string, number>;
+  unknown_top_level_fields?: Record<string, number>;
+}
+
+type NamedBucket = 'unknown_line_types' | 'unknown_top_level_fields';
+
+/** Creates the bucket only when there is a name for it, so `{}` never ships. */
+function mergeNamed(
+  row: HarnessCensusRow,
+  key: NamedBucket,
+  from: Record<string, number> | undefined,
+): void {
+  if (from === undefined || Object.keys(from).length === 0) return;
+  mergeBucket((row[key] ??= {}), from);
 }
 
 export interface CacheStats {
@@ -91,10 +108,18 @@ export function readCacheStats(dataDir?: string): CacheReport {
     if (db === undefined) return { state: 'absent', path };
     const counts = readHealthCounts(db);
     const drift = aggregateDrift(readDriftRows(db));
-    const drifting = new Map<string, number>();
+    // Seeded from the census, so every projected version gets a row whether or
+    // not it drifted — and a drifting session always finds one to merge into.
+    const census = new Map<string, HarnessCensusRow>();
+    for (const [version, projected] of Object.entries(drift.harness_versions)) {
+      census.set(version, { version, projected, drifting: 0 });
+    }
     for (const session of drift.sessions_with_drift) {
-      const version = session.harness_version ?? 'unknown';
-      drifting.set(version, (drifting.get(version) ?? 0) + 1);
+      const row = census.get(session.harness_version ?? 'unknown');
+      if (row === undefined) continue;
+      row.drifting += 1;
+      mergeNamed(row, 'unknown_line_types', session.counts.unknown_line_types);
+      mergeNamed(row, 'unknown_top_level_fields', session.counts.unknown_top_level_fields);
     }
     return {
       state: 'ready',
@@ -105,13 +130,7 @@ export function readCacheStats(dataDir?: string): CacheReport {
         sessions_projected: counts.sessions_projected,
         schema_version: readMeta(db, 'schema_version'),
         projector_version: readMeta(db, 'projector_version'),
-        harness: Object.entries(drift.harness_versions)
-          .map(([version, projected]) => ({
-            version,
-            projected,
-            drifting: drifting.get(version) ?? 0,
-          }))
-          .sort((a, b) => (a.version < b.version ? -1 : 1)),
+        harness: [...census.values()].sort((a, b) => (a.version < b.version ? -1 : 1)),
       },
     };
   } catch (error) {
@@ -119,6 +138,22 @@ export function readCacheStats(dataDir?: string): CacheReport {
   } finally {
     if (db?.isOpen === true) db.close();
   }
+}
+
+/** The text form leads with the worst names; `--json` is the complete one. */
+const MAX_NAMED_DRIFT = 3;
+
+/**
+ * One line: how many distinct names, then the heaviest few. Ordered by COUNT so
+ * the cap keeps the worst offenders rather than the alphabetically luckiest,
+ * and by name within a tie so two runs over one cache render identically.
+ */
+function namedDrift(label: string, bucket: Record<string, number> | undefined): string[] {
+  const names = Object.entries(bucket ?? {}).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  if (names.length === 0) return [];
+  const shown = names.slice(0, MAX_NAMED_DRIFT).map(([name, n]) => `${name} ${n}`);
+  if (names.length > MAX_NAMED_DRIFT) shown.push(`… and ${names.length - MAX_NAMED_DRIFT} more`);
+  return [`      ${label} (${names.length}): ${shown.join(', ')}`];
 }
 
 /**
@@ -154,6 +189,8 @@ export function formatCacheSection(cache: CacheReport): string[] {
   lines.push('  drift by harness version (the census counts clean rows too):');
   for (const row of stats.harness) {
     lines.push(`    ${row.version}: ${row.projected} projected, ${row.drifting} drifting`);
+    lines.push(...namedDrift('unknown record types', row.unknown_line_types));
+    lines.push(...namedDrift('unknown top-level fields', row.unknown_top_level_fields));
   }
   return lines;
 }
