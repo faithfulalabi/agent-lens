@@ -137,7 +137,7 @@ function assertProperty<T>(arb: fc.Arbitrary<T>, predicate: (value: T) => void):
 
 // --- (a) the pure half ------------------------------------------------------
 
-describe('reprojecting N times equals reprojecting once (AC2)', () => {
+describe('reprojecting N times equals reprojecting once', () => {
   it('runPipeline is stable under repetition, over generated sessions', () => {
     // Every call gets its OWN DriftCounter, the way `createProjectionEnv` gives
     // each read one. Sharing it would make pass N legitimately differ from pass 1
@@ -202,7 +202,7 @@ function projectTimes(archivePath: string, passes: number): string {
   }
 }
 
-describe('whole-file reprojection equals cold projection (AC2)', () => {
+describe('whole-file reprojection equals cold projection', () => {
   it('re-projecting an unchanged file changes nothing it wrote', () => {
     let withContent = 0;
 

@@ -92,7 +92,7 @@ function assertNonVacuous(population: Population): void {
   expect(population.scored.filter((row) => !row.oracleHuman).length).toBeGreaterThan(0);
 }
 
-describe('AC9 — the golden scorer (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
+describe('the golden scorer (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(
     'scores the FALLBACK in isolation against origin.kind: FP = 0 and FN = 0',
     () => {

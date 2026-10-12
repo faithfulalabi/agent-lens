@@ -21,7 +21,7 @@ import { makeEventContent, makeEventRow } from './fixtures';
  * — is drivable by calling it twice with different third arguments.
  */
 
-describe('storageOf narrows the wire word (AC3)', () => {
+describe('storageOf narrows the wire word', () => {
   it('keeps the four values that mean something different to a reader', () => {
     for (const known of ['inline', 'line_ref', 'spill', 'missing'] as const) {
       expect(storageOf(known)).toBe(known);
@@ -44,7 +44,7 @@ describe('storageOf narrows the wire word (AC3)', () => {
   });
 });
 
-describe('the bytes check runs before the storage check (AC3)', () => {
+describe('the bytes check runs before the storage check', () => {
   it('a NULL-storage row with text returns the body, not a blank', () => {
     // 4,585 rows: the assistant's own prose, which the projector never
     // classified because `pipeline.ts:490` writes the column on tool calls only.
@@ -97,7 +97,7 @@ describe('the bytes check runs before the storage check (AC3)', () => {
   });
 });
 
-describe('every storage value reaches a labelled arm (AC3)', () => {
+describe('every storage value reaches a labelled arm', () => {
   /*
    * The whole vocabulary, crossed with "holds bytes" and "holds none". The
    * without-bytes column is where a storage-only dispatch fails, and the
@@ -139,7 +139,7 @@ describe('every storage value reaches a labelled arm (AC3)', () => {
   });
 });
 
-describe('the reply prose arrives uncut (AC1, AC2)', () => {
+describe('the reply prose arrives uncut', () => {
   it('returns every character of a 4,000-character body', () => {
     // The restatement of the starred AC: a test that only checks the fetcher
     // exists would pass against a build that renders nothing. This one reads
@@ -153,7 +153,7 @@ describe('the reply prose arrives uncut (AC1, AC2)', () => {
   });
 });
 
-describe('the states that point somewhere else (AC3)', () => {
+describe('the states that point somewhere else', () => {
   it('a spill row with no text keeps its own arm and offers the refetch', () => {
     // 55 rows. `tools.ts:160-162` nulls the column when it writes the file, so
     // the pane has nothing to preview — but "empty" would be a lie about a body
@@ -182,7 +182,7 @@ describe('the states that point somewhere else (AC3)', () => {
   });
 });
 
-describe('folding a refetched body in is the whole of "Show full" (AC3)', () => {
+describe('folding a refetched body in is the whole of "Show full"', () => {
   const head = 'HEAD-'.repeat(10);
 
   it('offers the control against the stored preview', () => {
@@ -239,7 +239,7 @@ describe('folding a refetched body in is the whole of "Show full" (AC3)', () => 
   });
 });
 
-describe('the input half reads its own column (AC1)', () => {
+describe('the input half reads its own column', () => {
   it('reads input/input_storage, never the output pair', () => {
     const event = makeEventRow({
       input: '{"file_path":"a.txt"}',

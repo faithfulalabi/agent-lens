@@ -85,7 +85,7 @@ function userVersion(db: DatabaseSync): number {
   return Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
 }
 
-describe('a version mismatch removes and recreates (AC3)', () => {
+describe('a version mismatch removes and recreates', () => {
   it('drops the stale projection, and the sidecars are gone only after close()', () => {
     const s = sb();
     const first = open({ dataDir: s.dataDir });
@@ -123,7 +123,7 @@ describe('a version mismatch removes and recreates (AC3)', () => {
   });
 });
 
-describe('★ the lock is taken before the database is opened (AC4)', () => {
+describe('★ the lock is taken before the database is opened', () => {
   it('a refused open creates no cache.db at all', () => {
     // Behavioural, not a source grep: a lock taken AFTER the constructor leaves
     // the file behind, so this assertion is what separates the two orders.
@@ -170,7 +170,7 @@ describe('★ the lock is taken before the database is opened (AC4)', () => {
   });
 });
 
-describe('★ the unlink forks the database, and the lock is what stops it (AC4)', () => {
+describe('★ the unlink forks the database, and the lock is what stops it', () => {
   it('WITHOUT a lock the writes vanish, and nothing throws to say so', () => {
     const s = sb();
     ensureDir(s.dataDir);
@@ -206,7 +206,7 @@ describe('★ the unlink forks the database, and the lock is what stops it (AC4)
   });
 });
 
-describe('the second instance refuses explicitly (AC5)', () => {
+describe('the second instance refuses explicitly', () => {
   it('names the CALLER’S intended port, never a port anything is listening on', () => {
     // Deterministic holder: a real sleeping process, so the liveness row fires
     // with no timing assumption (lock.test.ts:217-239).
@@ -252,7 +252,7 @@ describe('the second instance refuses explicitly (AC5)', () => {
   }, 60000);
 });
 
-describe('the connection pragmas are applied on EVERY open (AC6)', () => {
+describe('the connection pragmas are applied on EVERY open', () => {
   it('★ busy_timeout reads 5000 after a first open AND after close + reopen', () => {
     const s = sb();
     const first = open({ dataDir: s.dataDir });
@@ -314,7 +314,7 @@ describe('the connection pragmas are applied on EVERY open (AC6)', () => {
   });
 });
 
-describe('two writers through applyConnectionPragmas (AC6)', () => {
+describe('two writers through applyConnectionPragmas', () => {
   // NOT through openDb, and saying why is the point: AC4's lock refuses the
   // second process before it ever opens the file, so the production two-writer
   // case is unreachable by construction and the pragma would ship untested.
@@ -439,7 +439,7 @@ process.stdout.write(JSON.stringify({ committed, busy, other }));
   }, 60000);
 });
 
-describe('the inherited stale-lock policy, through the LockIdentity seam (AC4)', () => {
+describe('the inherited stale-lock policy, through the LockIdentity seam', () => {
   // No real pids and no sleeps: rows 2, 3 and 5 of archive/lock.ts:111-119,
   // reached through openDb rather than re-argued here.
 

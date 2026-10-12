@@ -30,7 +30,7 @@ function rowsFor(events: Partial<EventRow>[]): ThreadRow[] {
 
 /* ------------------------------------ Test 1 — one response, both views --- */
 
-describe('one response fills both views (Test 1, AC1)', () => {
+describe('one response fills both views (Test 1)', () => {
   it('feeds the thread and the tree from a single getSession call', async () => {
     let calls = 0;
     const turn = makeTurnRow({ id: 'seed-s0:0', seq: 0 });
@@ -58,7 +58,7 @@ describe('one response fills both views (Test 1, AC1)', () => {
 
 /* --------------------------------------- Test 2 — `seq` is the order --- */
 
-describe('`seq` is the total order (Test 2, AC1)', () => {
+describe('`seq` is the total order (Test 2)', () => {
   it('reads shuffled events back in ascending seq, one row each', () => {
     const shuffled = [5, 1, 4, 0, 3, 2].map((seq) => makeEventRow({ id: `ev-${seq}`, seq }));
     const rows = buildThread(shuffled);
@@ -83,7 +83,7 @@ describe('`seq` is the total order (Test 2, AC1)', () => {
 
 /* ------------------------- Test 3 — nothing dropped, nothing invented --- */
 
-describe('every event reaches exactly one row (Test 3, AC1, AC3)', () => {
+describe('every event reaches exactly one row (Test 3)', () => {
   it('maps all seven wire kinds, and the id sets are equal', () => {
     const events = EVENT_KINDS.map((kind, i) =>
       makeEventRow({ id: `ev-${kind}`, seq: i, kind, text: 'body' }),
@@ -119,7 +119,7 @@ describe('every event reaches exactly one row (Test 3, AC1, AC3)', () => {
 
 /* ------------------------------------------ Test 4/6 — the tool row --- */
 
-describe('a tool call carries its four facts (Test 4, AC2)', () => {
+describe('a tool call carries its four facts (Test 4)', () => {
   it('names the tool, its status, its input and its output', () => {
     const [row] = rowsFor([
       { kind: 'tool_call', name: 'Bash', status: 'ok', input: '{"cmd":"ls"}', text: 'a.txt' },
@@ -138,7 +138,7 @@ describe('a tool call carries its four facts (Test 4, AC2)', () => {
     expect(row?.kind === 'tool' && row.name).toBe('tool_call');
   });
 
-  it('reports an unmeasured duration as absent, never as zero (Test 6, AC2)', () => {
+  it('reports an unmeasured duration as absent, never as zero (Test 6)', () => {
     // `eventChips` coalesces to `undefined` so `formatDurationMs` spells the em
     // dash. A `0ms` on a row nobody timed is the precise-looking lie the tree
     // refuses, and the thread may not reintroduce it.
@@ -177,7 +177,7 @@ describe('the thread reads wider than the tree scans (F4)', () => {
 
 /* --------------------------------------- Test 8/9 — the reasoning row --- */
 
-describe('a thinking event renders one marker, never a blank row (Test 8, AC3)', () => {
+describe('a thinking event renders one marker, never a blank row (Test 8)', () => {
   it('gives every thinking event its own row carrying the copy verbatim', () => {
     // MEASURED: 8,047 of 8,047 rows arrive with this exact string, one distinct
     // value, zero null and zero empty — the projector elided them at ingest.
@@ -210,7 +210,7 @@ describe('a thinking event renders one marker, never a blank row (Test 8, AC3)',
   });
 });
 
-describe('recorded reasoning renders as prose, not as the marker (Test 9, AC3)', () => {
+describe('recorded reasoning renders as prose, not as the marker (Test 9)', () => {
   it('keys on the TEXT, so real reasoning is never labelled "not recorded"', () => {
     // The forward-compatibility guard. `src/transcript/blocks.ts` will emit real
     // reasoning the moment a harness records it, and a kind-keyed design would
@@ -235,7 +235,7 @@ describe('recorded reasoning renders as prose, not as the marker (Test 9, AC3)',
 
 /* ------------------------------------ Test 10/11 — the unknown record --- */
 
-describe('an unrecognized record names its type and its subtype (Test 10, AC3)', () => {
+describe('an unrecognized record names its type and its subtype (Test 10)', () => {
   it.each([
     ['attachment', null, 'unrecognized record (type=attachment)'],
     ['system', 'turn_duration', 'unrecognized record (type=system/turn_duration)'],
@@ -254,7 +254,7 @@ describe('an unrecognized record names its type and its subtype (Test 10, AC3)',
   });
 });
 
-describe('the unknown row discloses the wire fields it has (Test 11, AC3)', () => {
+describe('the unknown row discloses the wire fields it has (Test 11)', () => {
   const [row] = rowsFor([
     {
       kind: 'unknown',

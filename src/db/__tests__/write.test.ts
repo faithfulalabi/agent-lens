@@ -101,7 +101,7 @@ function simpleSession(callId = 'toolu_one'): readonly unknown[] {
   ];
 }
 
-describe('projectSession is one unit of work (AC1)', () => {
+describe('projectSession is one unit of work', () => {
   it('a throw mid-insert leaves zero rows and no freshness stamp', () => {
     const db = cache();
     const { path } = plant('atomic', simpleSession('toolu_boom'));
@@ -247,7 +247,7 @@ describe('projectSession is one unit of work (AC1)', () => {
   });
 });
 
-describe('deleteSessionProjection runs the FTS delete idiom first (AC2)', () => {
+describe('deleteSessionProjection runs the FTS delete idiom first', () => {
   /** The inverted order: the rows are gone before the idiom that de-indexes them. */
   function invertedDrop(db: DatabaseSync, id: string): void {
     db.prepare('DELETE FROM events WHERE session_id = ?').run(id);
@@ -290,7 +290,7 @@ describe('deleteSessionProjection runs the FTS delete idiom first (AC2)', () => 
   });
 });
 
-describe('projectSession resolves the spill half of the seam (AC5)', () => {
+describe('projectSession resolves the spill half of the seam', () => {
   const DECLARED_SIZE = 123456;
   const SPILL_BODY = 'the whole output, on disk and never read by this task';
 
@@ -374,7 +374,7 @@ describe('projectSession resolves the spill half of the seam (AC5)', () => {
   });
 });
 
-describe('every NOT NULL column has a stated value, and project_path is READ (AC6)', () => {
+describe('every NOT NULL column has a stated value, and project_path is READ', () => {
   function notNullNoDefault(db: DatabaseSync): string[] {
     return (
       db.prepare(`SELECT name, "notnull", dflt_value FROM pragma_table_info('sessions')`).all() as {
@@ -457,7 +457,7 @@ describe('every NOT NULL column has a stated value, and project_path is READ (AC
   });
 });
 
-describe('a headerless file is tombstoned, never deleted (AC6)', () => {
+describe('a headerless file is tombstoned, never deleted', () => {
   const ARMS: readonly [string, readonly unknown[]][] = [
     [
       'timestamps but zero events',
@@ -501,7 +501,7 @@ describe('a headerless file is tombstoned, never deleted (AC6)', () => {
   });
 });
 
-describe('drift_json carries what BOTH stages counted (AC7)', () => {
+describe('drift_json carries what BOTH stages counted', () => {
   const DRIFTY: readonly unknown[] = [
     humanLine('go', TS(0)),
     {
@@ -588,7 +588,7 @@ describe('drift_json carries what BOTH stages counted (AC7)', () => {
   });
 });
 
-describe('recomputeSessionRollups (AC8)', () => {
+describe('recomputeSessionRollups', () => {
   it('turn_count counts HUMAN turns only', () => {
     const db = cache();
     const { path } = plant('rollups', [
@@ -751,7 +751,7 @@ describe('sessions.models: every model the file used, most calls first', () => {
     return [toolCallLine(callId, 'Grep', TS(at), model), toolResultLine(callId, 'ok', TS(at + 1))];
   }
 
-  it('★ two models, dominant first by calls, <synthetic> absent, [0] agrees with model (AC2, AC3)', () => {
+  it('★ two models, dominant first by calls, <synthetic> absent, [0] agrees with model', () => {
     const db = cache();
     const { path } = plant('twomodels', [
       humanLine('go', TS(0)),
@@ -793,7 +793,7 @@ describe('sessions.models: every model the file used, most calls first', () => {
     expect(sessionRow(db, id).model).toBe('claude-haiku-4-5');
   });
 
-  it("a file that names only <synthetic> writes '[]', after a projection that ran (AC3)", () => {
+  it("a file that names only <synthetic> writes '[]', after a projection that ran", () => {
     const db = cache();
     const { path } = plant('allsynthetic', [humanLine('go', TS(0)), syntheticLine(TS(1))]);
     const id = seedIndexRow(db, path);
@@ -905,7 +905,7 @@ describe('mixed-model pricing: the session is the sum of its parts', () => {
     ];
   }
 
-  it('★ prices each model at its own rate, never total_tokens × one rate (AC1)', () => {
+  it('★ prices each model at its own rate, never total_tokens × one rate', () => {
     const db = cache();
     const { path } = plant('mixed', mixedSession());
     const id = seedIndexRow(db, path);
@@ -923,7 +923,7 @@ describe('mixed-model pricing: the session is the sum of its parts', () => {
     expect(sessionRow(db, id).model).not.toBeNull();
   });
 
-  it('writes model and est_cost onto the event, and est_cost onto its turn (AC2)', () => {
+  it('writes model and est_cost onto the event, and est_cost onto its turn', () => {
     const db = cache();
     const { path } = plant('percall', mixedSession());
     const id = seedIndexRow(db, path);
@@ -952,7 +952,7 @@ describe('mixed-model pricing: the session is the sum of its parts', () => {
     expect(turns).toEqual([{ est_cost: 1 }, { est_cost: 10 }]);
   });
 
-  it('★ a real-but-unpriceable part makes the roll-up NULL, never a low number (AC3)', () => {
+  it('★ a real-but-unpriceable part makes the roll-up NULL, never a low number', () => {
     const db = cache();
     const { path } = plant('partial', [
       humanLine('go', TS(0)),
@@ -989,7 +989,7 @@ describe('mixed-model pricing: the session is the sum of its parts', () => {
     expect(sessionRow(db, id).est_cost).toBeNull();
   });
 
-  it('a zero-token part never blocks the sum, and an all-zero turn stays NULL (AC3)', () => {
+  it('a zero-token part never blocks the sum, and an all-zero turn stays NULL', () => {
     const db = cache();
     const { path } = plant('zeropart', [
       humanLine('go', TS(0)),
@@ -1096,7 +1096,7 @@ describe('sub_est_cost follows the same rule: real spend blocks, zero spend neve
   });
 });
 
-describe('a sidecar IS a sessions row (AC1, AC2, AC3)', () => {
+describe('a sidecar IS a sessions row', () => {
   /** The launch result text, exactly as the harness writes it. */
   function launched(agentId: string): string {
     return `Async agent launched successfully.\nagentId: ${agentId}`;
@@ -1407,7 +1407,7 @@ describe('upsertSessionIndex is the Tier-A writer', () => {
 // over the preview cap. The projector still keeps `text` NULL on every spill row;
 // the body reaches search only through the spill drain, outside the projection.
 
-describe('AC2 — a token that appears only in tool output is found by q', () => {
+describe('a token that appears only in tool output is found by q', () => {
   const INLINE_TOKEN = 'zzinlinetoken';
   const HEAD_TOKEN = 'zzheadtoken';
   const TAIL_TOKEN = 'zztailtoken';
@@ -1506,7 +1506,7 @@ function plantSpill(name: string, call: string, marker: string): { path: string;
   ]);
 }
 
-describe('AC3 — deleting a spill file corrupts no index and fails no projection', () => {
+describe('deleting a spill file corrupts no index and fails no projection', () => {
   const TOKEN = 'zzkidtoken';
   const find = (db: DatabaseSync): string[] =>
     searchEvents(db, { q: TOKEN, limit: 50 }).map((hit) => hit.event_id);
@@ -1586,7 +1586,7 @@ describe('AC3 — deleting a spill file corrupts no index and fails no projectio
 
 // `live.test.ts`'s byte-identity would pass a projector that read spill bodies
 // consistently on both sides; these two would not.
-describe('AC4 — projectSession stays time-invariant over spill bodies', () => {
+describe('projectSession stays time-invariant over spill bodies', () => {
   it('(a) projects a spill row with NO body on disk — nothing could have read it', () => {
     const db = cache();
     const ghost = join(sb().root, 'nowhere', 'tool-results', 'ghost.txt');

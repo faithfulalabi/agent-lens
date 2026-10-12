@@ -16,7 +16,7 @@ const S = Symbol('fallback');
 
 const ONE_MB_STRING = 'x'.repeat(1024 * 1024);
 
-describe('AC3 — no accessor coerces across types', () => {
+describe('no accessor coerces across types', () => {
   // Lazy thunks, not pre-computed values: a throw must fail the case that named
   // it rather than the whole table's construction.
   it.each([
@@ -79,7 +79,7 @@ describe('AC3 — no accessor coerces across types', () => {
   });
 });
 
-describe('AC4 — isoTs returns the harness string verbatim', () => {
+describe('isoTs returns the harness string verbatim', () => {
   it('returns the very same string reference for a valid timestamp', () => {
     const stamp = '2026-08-11T12:00:00.000Z';
     expect(Object.is(isoTs(stamp, S), stamp)).toBe(true);

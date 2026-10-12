@@ -80,7 +80,7 @@ describe('printingHub — renders warm_progress and nothing else', () => {
   });
 });
 
-describe('10 + 12 — frames run to done == total, and a warm corpus says so (AC3)', () => {
+describe('10 + 12 — frames run to done == total, and a warm corpus says so', () => {
   it('renders 1..N against a constant total and ends at { N, N }', async () => {
     const s = sb();
     const ids = ['aaaaaaaa-1111-4111-8111-wm0000000001', 'aaaaaaaa-1111-4111-8111-wm0000000002'];
@@ -130,7 +130,7 @@ describe('10 + 12 — frames run to done == total, and a warm corpus says so (AC
   });
 });
 
-describe('11 — convergence, not one shot (AC3)', () => {
+describe('11 — convergence, not one shot', () => {
   it('keeps going while projecting parents discovers children, and stops on the repeated set', async () => {
     const s = sb();
     seedTree(s, 'aaaaaaaa-1111-4111-8111-wm0000000005', 2);
@@ -162,7 +162,7 @@ describe('11 — convergence, not one shot (AC3)', () => {
   });
 });
 
-describe('13 — teardown, and the lock a running server holds (AC3)', () => {
+describe('13 — teardown, and the lock a running server holds', () => {
   it('closes the queue before the database and leaves nothing pending', async () => {
     const s = sb();
     for (let i = 0; i < 4; i += 1) {

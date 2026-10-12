@@ -95,7 +95,7 @@ describe('enclosingSubagentsDir resolves one directory at every depth', () => {
   });
 });
 
-describe('AC1 — the walk enumerates metas, and links what carries a key', () => {
+describe('the walk enumerates metas, and links what carries a key', () => {
   it('a matched sidecar becomes a descriptor with its span and its mirrored source path', () => {
     const tree = plantTree();
     writeSidecarTranscript(tree.subagents, 'A1', sidecarRecords(10, 250));
@@ -145,7 +145,7 @@ describe('AC1 — the walk enumerates metas, and links what carries a key', () =
   });
 });
 
-describe('AC2 — malformed inputs yield no descriptor and no throw', () => {
+describe('malformed inputs yield no descriptor and no throw', () => {
   it('a keyless workflow meta is skipped', () => {
     const tree = plantTree();
     writeSidecarTranscript(tree.subagents, 'WF', sidecarRecords(10, 20));
@@ -253,7 +253,7 @@ describe('AC2 — malformed inputs yield no descriptor and no throw', () => {
   });
 });
 
-describe('AC3 — the head/tail answer, and what it cost', () => {
+describe('the head/tail answer, and what it cost', () => {
   it('equals the full-file fold, over a file whose stamps run backwards', () => {
     // `foldSessionEnvelope`'s timestamp limbs are a strict MIN/MAX, which is what
     // makes "the two ends agree with the whole file" structural rather than a
@@ -338,7 +338,7 @@ describe('AC3 — the head/tail answer, and what it cost', () => {
   });
 });
 
-describe('AC3 — the resolver preads only the sidecars this session launched', () => {
+describe('the resolver preads only the sidecars this session launched', () => {
   /** Five sidecars in one directory; the parent below launches exactly two. */
   function plantFive(): Tree {
     const tree = plantTree('fanout');

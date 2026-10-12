@@ -96,7 +96,7 @@ function rowFor(rows: readonly SidecarSessionRow[], id: string): SidecarSessionR
   return row;
 }
 
-describe('AC1 — one join key, and the row it writes', () => {
+describe('one join key, and the row it writes', () => {
   it('links the sidecar onto the Agent call its meta names', () => {
     const result = project('subagent-launch.jsonl');
     const rows = linkSubagents(
@@ -191,7 +191,7 @@ describe('AC1 — one join key, and the row it writes', () => {
   });
 });
 
-describe('AC1 — depth is recorded, never branched on', () => {
+describe('depth is recorded, never branched on', () => {
   it('a sidecar that spawns a sidecar links through the same function', () => {
     // The SAME `linkSubagents` call, over a sub-agent's OWN transcript. Nothing
     // is passed to say which generation this is, and depth 3 is unwitnessed in
@@ -219,7 +219,7 @@ describe('AC1 — depth is recorded, never branched on', () => {
   });
 });
 
-describe('AC2 — the agent id is a cross-check, never a gate', () => {
+describe('the agent id is a cross-check, never a gate', () => {
   it('a synchronous Agent call, with no launch marker at all, still links', () => {
     const result = project('subagent-launch.jsonl');
     // 41 of 258 measured `Agent` calls are synchronous and carry no agent id, so
@@ -284,7 +284,7 @@ describe('AC2 — the agent id is a cross-check, never a gate', () => {
   });
 });
 
-describe('AC3 — the span is the sub-agent’s own', () => {
+describe('the span is the sub-agent’s own', () => {
   it('is the envelope subtraction, stamped sidecar_span', () => {
     const result = project('subagent-launch.jsonl');
     linkSubagents(
@@ -348,7 +348,7 @@ describe('AC3 — the span is the sub-agent’s own', () => {
   });
 });
 
-describe('AC2 — a meta with no join key is not a descriptor', () => {
+describe('a meta with no join key is not a descriptor', () => {
   it('is skipped, and never becomes an undefined map key', () => {
     const result = project('subagent-launch.jsonl');
     const rows = linkSubagents(
@@ -375,7 +375,7 @@ describe('AC2 — a meta with no join key is not a descriptor', () => {
   });
 });
 
-describe('AC4 — the spawning tool is the literal Agent', () => {
+describe('the spawning tool is the literal Agent', () => {
   it('no Task tool-name literal survives behind the door or in the projector', () => {
     // Plan 001's RFC and its task 4.1 both named `Task`. Measured archive-wide
     // it is `Agent` 258 of 258 and `Task` 0, so anything inherited from them is

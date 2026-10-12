@@ -76,7 +76,7 @@ function firstCwd(archivePath: string): string | undefined {
   return undefined;
 }
 
-describe('AC2 — the walk over the real archive', () => {
+describe('the walk over the real archive', () => {
   runIt('classifies every walked file, with zero unaccounted', () => {
     const { db, result } = coldScan();
     try {
@@ -133,7 +133,7 @@ describe('AC2 — the walk over the real archive', () => {
   });
 });
 
-describe('AC1 — the slug encoding over the real corpus', () => {
+describe('the slug encoding over the real corpus', () => {
   runIt('encode agrees with every slug whose sessions carry a cwd', () => {
     const { db, result } = coldScan();
     try {
@@ -196,7 +196,7 @@ describe('AC1 — the slug encoding over the real corpus', () => {
   });
 });
 
-describe('AC3 — the journal exclusion over the real archive', () => {
+describe('the journal exclusion over the real archive', () => {
   runIt('excludes every journal, and keeps its sibling agent transcripts', () => {
     const { db, result } = coldScan();
     try {
@@ -347,7 +347,7 @@ function withinMs(a: string, b: string, tolerance: number): boolean {
   return Math.abs(Date.parse(a) - Date.parse(b)) <= tolerance;
 }
 
-describe('AC5 — the whole sweep over the real archive', () => {
+describe('the whole sweep over the real archive', () => {
   runIt('indexes every top-level transcript, hot and sealed alike', () => {
     const db = openCache();
     const sweep = createCorpusSweep({ db, dataDir: DATA_DIR, transcriptRoot: SOURCE_ROOT });

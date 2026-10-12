@@ -55,7 +55,7 @@ function sourcesUnder(dir: string): { file: string; text: string }[] {
     .map((file) => ({ file, text: readFileSync(join(root, file), 'utf8') }));
 }
 
-describe('the published manifest is exactly the shipping shape (AC1, AC2)', () => {
+describe('the published manifest is exactly the shipping shape', () => {
   it('whitelists only bin, dist and ui/dist', () => {
     expect([...MANIFEST.files].sort()).toEqual(['bin', 'dist', 'ui/dist']);
   });
@@ -85,7 +85,7 @@ describe('the published manifest is exactly the shipping shape (AC1, AC2)', () =
   });
 });
 
-describe('bin/agent-lens.js resolves the built CLI in-process (AC2)', () => {
+describe('bin/agent-lens.js resolves the built CLI in-process', () => {
   it('imports the compiled entry and names neither tsx nor the source tree', () => {
     expect(BIN_SOURCE).toContain(`../${BUILT_CLI_ENTRY}`);
     expect(BIN_SOURCE).not.toContain('tsx');
@@ -114,7 +114,7 @@ describe('bin/agent-lens.js resolves the built CLI in-process (AC2)', () => {
   });
 });
 
-describe('the engine floor is enforced at runtime, not merely declared (AC1)', () => {
+describe('the engine floor is enforced at runtime, not merely declared', () => {
   // npm's `engine-strict` defaults to FALSE, so `engines` alone is an EBADENGINE
   // warning that installs anyway. Without this guard a Node 22 user's first run
   // dies on `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` from deep inside the DB
@@ -154,7 +154,7 @@ describe('the engine floor is enforced at runtime, not merely declared (AC1)', (
   });
 });
 
-describe('one Playwright driver, two entry points (AC3)', () => {
+describe('one Playwright driver, two entry points', () => {
   it('keeps playwright-core as the render gate driver', () => {
     const gate = sourcesUnder('src/render-gate');
     expect(gate.length).toBeGreaterThan(0);
@@ -250,7 +250,7 @@ describe('the publish metadata names a real release', () => {
   });
 });
 
-describe('the smoke abstains from port 4470 (AC4)', () => {
+describe('the smoke abstains from port 4470', () => {
   it('never names the default port', () => {
     // `dev-server.test.ts:194`'s idiom. 4470 is `DEFAULT_PORT` and `port.test.ts:39`
     // deliberately BINDS it in a parallel worker to prove auto-increment. A
@@ -268,7 +268,7 @@ describe('the smoke abstains from port 4470 (AC4)', () => {
 // definition of "shipped"; these tests hold it against the compiler, the
 // manifest and the ui build, and pin the workflow shape the release relies on.
 
-describe('the release scope predicate (AC1)', () => {
+describe('the release scope predicate', () => {
   it.each([
     'src/cli/index.ts',
     'src/shared/x.ts',
@@ -318,7 +318,7 @@ function readJsonc<T>(...rel: string[]): T {
   return JSON.parse(text) as T;
 }
 
-describe('"what ships" and "what triggers a release" cannot drift (AC2)', () => {
+describe('"what ships" and "what triggers a release" cannot drift', () => {
   it('agrees with the compiler on exactly which src files reach dist', () => {
     const tsc = spawnSync(
       process.execPath,
@@ -421,7 +421,7 @@ describe('"what ships" and "what triggers a release" cannot drift (AC2)', () => 
 const PR_TITLE_WORKFLOW = read('.github', 'workflows', 'pr-title.yml');
 const PR_TITLE_REGEX = new RegExp(/grep -Eq '([^']+)'/.exec(PR_TITLE_WORKFLOW)![1]!);
 
-describe('the PR title is the squash commit release-please reads (AC3)', () => {
+describe('the PR title is the squash commit release-please reads', () => {
   it('checks the title in a job named pr-title, on every title edit', () => {
     expect(PR_TITLE_WORKFLOW).toContain('  pr-title:\n    name: pr-title');
     expect(PR_TITLE_WORKFLOW).toMatch(/types: \[[^\]]*\bedited\b[^\]]*\]/);
@@ -446,7 +446,7 @@ describe('the PR title is the squash commit release-please reads (AC3)', () => {
   );
 });
 
-describe('the version comes from release-please, not by hand (AC3)', () => {
+describe('the version comes from release-please, not by hand', () => {
   const releaseManifest = JSON.parse(read('.release-please-manifest.json')) as Record<
     string,
     string
@@ -486,7 +486,7 @@ function job(name: string): string {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
-describe('publish ships the smoke-tested tarball from CI over OIDC (AC4-AC8)', () => {
+describe('publish ships the smoke-tested tarball from CI over OIDC', () => {
   const JOBS = ['lint', 'test', 'smoke', 'release', 'automerge', 'publish-check', 'publish'];
 
   it('keeps the required-check job names lint, test and smoke', () => {

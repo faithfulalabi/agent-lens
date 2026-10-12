@@ -262,7 +262,7 @@ function coldSide(id = SESSION_ID): DatabaseSync {
   return db;
 }
 
-describe('AC2 — a live reprojection is byte-identical to a cold one', () => {
+describe('a live reprojection is byte-identical to a cold one', () => {
   it('a grown file reprojects byte-identically to a cold projection of the same bytes', async () => {
     writeArchived(fixtureLines());
 
@@ -343,7 +343,7 @@ describe('AC2 — a live reprojection is byte-identical to a cold one', () => {
   });
 });
 
-describe('AC2 — a failed projection is retried, never forgotten', () => {
+describe('a failed projection is retried, never forgotten', () => {
   it('keeps a failed session pending and publishes it on the next tick', async () => {
     // ★ THE BUG `pending` EXISTS TO PREVENT. Wave 1 has already cleared the
     // Tier-A diff that offered this id, and wave 2 never revisits a rolled-up
@@ -363,7 +363,7 @@ describe('AC2 — a failed projection is retried, never forgotten', () => {
   });
 });
 
-describe('AC4 — the timer never overlaps two passes', () => {
+describe('the timer never overlaps two passes', () => {
   it('skips a fire while a pass is still in flight, and logs rather than crashing', async () => {
     // The ONLY test here that binds a real timer, and deliberately: `tick` is
     // async, so it returns at its first `await` and the interval keeps firing
@@ -413,7 +413,7 @@ describe('AC4 — the timer never overlaps two passes', () => {
   });
 });
 
-describe('AC3 — `patched` is exactly the running -> not-running set', () => {
+describe('`patched` is exactly the running -> not-running set', () => {
   it('contains exactly the events that stopped being running', async () => {
     const path = writeArchived(fixtureLines());
     const live = liveSide();
@@ -515,7 +515,7 @@ describe('AC3 — `patched` is exactly the running -> not-running set', () => {
   });
 });
 
-describe('AC4 — the 100 ms / 5 s per-session backoff', () => {
+describe('the 100 ms / 5 s per-session backoff', () => {
   it('backs a slow session off to 5 s, and reconsiders it exactly then', async () => {
     let clock = 1_000_000;
     const now = (): number => clock;
@@ -624,7 +624,7 @@ describe('AC4 — the 100 ms / 5 s per-session backoff', () => {
   });
 });
 
-describe('AC4 — a half-written source line never reaches the projector', () => {
+describe('a half-written source line never reaches the projector', () => {
   it('stops the mirror at the last complete newline and leaves the tick unharmed', async () => {
     const s = sb();
     const rel = `${SLUG}/${SESSION_ID}.jsonl`;
@@ -770,7 +770,7 @@ function busiestNotificationSecond(
   return { start: busiest[0]!, end: busiest[busiest.length - 1]! + 1 };
 }
 
-describe('AC3 — the "under 10" bound as a property of the real corpus', () => {
+describe('the "under 10" bound as a property of the real corpus', () => {
   runIt('never back-patches ten or more events in one session', { timeout: 300_000 }, async () => {
     const archiveRoot = join(homedir(), '.agent-lens', 'archive');
     const reader = createArchiveReader();
@@ -912,7 +912,7 @@ function shiftableClock(): { now: () => number; skip: (ms: number) => void } {
   return { now: () => Date.now() + offset, skip: (ms) => (offset += ms) };
 }
 
-describe('AC4(a) — a session that exceeds SLOW_MS is backed off on the next tick', () => {
+describe('a session that exceeds SLOW_MS is backed off on the next tick', () => {
   /** The largest real session, copied whole into a scratch archive with its sidecars. */
   function stage(scratch: string): { row: RealSession; target: string; lines: string[] } {
     const row = realSessions()[0]!;
@@ -1021,7 +1021,7 @@ describe('AC4(a) — a session that exceeds SLOW_MS is backed off on the next ti
   );
 });
 
-describe('AC4(b) — one tick is bounded at wave 1 + DEADLINE_MS + one session', () => {
+describe('one tick is bounded at wave 1 + DEADLINE_MS + one session', () => {
   runIt(
     'a whole-corpus burst drains without any tick exceeding the bound',
     { timeout: 600_000 },

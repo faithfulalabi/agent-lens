@@ -27,7 +27,7 @@ function render(markup: React.ReactElement): string {
   return renderToStaticMarkup(markup);
 }
 
-describe('both halves of an event reach the screen (AC1)', () => {
+describe('both halves of an event reach the screen', () => {
   it('renders the input, the output and a storage word for each', () => {
     const event = makeEventRow({
       input: '{"file_path":"/tmp/plan.md"}',
@@ -87,7 +87,7 @@ describe('both halves of an event reach the screen (AC1)', () => {
   });
 });
 
-describe('the two attributes the render gate waits on (AC-R1)', () => {
+describe('the two attributes the render gate waits on', () => {
   it('carries data-slot="span-detail" and the selected event id', () => {
     // Invariant (a): `SELECTORS.spanDetail` moved here from the aside this task
     // deleted, and `render-gate.test.ts` greps `ui/src` for the value.
@@ -106,7 +106,7 @@ describe('the two attributes the render gate waits on (AC-R1)', () => {
   });
 });
 
-describe('the unselected pane says something, and not either dead literal (AC1)', () => {
+describe('the unselected pane says something, and not either dead literal', () => {
   it('renders a sentence neither `report.ts` regex arm matches', () => {
     /*
      * Asserted against the literal strings rather than against
@@ -124,7 +124,7 @@ describe('the unselected pane says something, and not either dead literal (AC1)'
   });
 });
 
-describe('the raw disclosure shows the stored record, closed (AC4)', () => {
+describe('the raw disclosure shows the stored record, closed', () => {
   it('renders every column of the row inside a collapsed `details`', () => {
     const event = makeEventRow({ spill_path: 'tool-results/abc.txt', spill_bytes: 4_096 });
 
@@ -139,7 +139,7 @@ describe('the raw disclosure shows the stored record, closed (AC4)', () => {
   });
 });
 
-describe('the three inclusions that cost plan 001 three revise rounds (AC4)', () => {
+describe('the three inclusions that cost plan 001 three revise rounds', () => {
   it('ships no context menu, no byte threshold and no async matrix', () => {
     expect(SOURCE).not.toMatch(/ContextMenu|context-menu/);
     expect(SOURCE).not.toMatch(/[Bb]yteThreshold|largePayloadBytes/);

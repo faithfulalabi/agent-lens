@@ -54,7 +54,7 @@ function detailOf(
 
 /* ------------------------------------ Test 4 — one request fills the screen --- */
 
-describe('exactly one request fills the whole screen (Test 4, AC1)', () => {
+describe('exactly one request fills the whole screen (Test 4)', () => {
   it('asks once, at the server’s own ceiling, for a 9,000-event session', async () => {
     const queries: unknown[] = [];
     let calls = 0;
@@ -146,7 +146,7 @@ describe('exactly one request fills the whole screen (Test 4, AC1)', () => {
 
 /* --------------------------------- Test 5 — the cap and the loop are gone --- */
 
-describe('the cap and the paging loop are deleted, not renamed (Test 5, AC1)', () => {
+describe('the cap and the paging loop are deleted, not renamed (Test 5)', () => {
   const LIB = fileURLToPath(new URL('..', import.meta.url));
 
   function libSources(): string[] {
@@ -201,7 +201,7 @@ describe('the view says what it is not showing', () => {
 
 /* ----------------------------------------------------- the drift wording --- */
 
-describe('the alarm speaks only when the row says it should (AC2, AC3)', () => {
+describe('the alarm speaks only when the row says it should', () => {
   it('names the release that wrote the shape this build does not know', () => {
     const notice = driftNotice({ hasDrift: true, harnessVersion: '2.2.0' });
     expect(notice).toContain('2.2.0');

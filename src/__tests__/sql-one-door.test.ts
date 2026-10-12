@@ -101,7 +101,7 @@ function unreviewed(hits: readonly Hit[] = scanAll()): { unexpected: string[] } 
   return { unexpected: hits.map(describeHit).sort() };
 }
 
-describe('AC1 — src/db is the only module that touches SQL', () => {
+describe('src/db is the only module that touches SQL', () => {
   it('finds no SQL outside src/db/', () => {
     const { unexpected } = unreviewed();
 

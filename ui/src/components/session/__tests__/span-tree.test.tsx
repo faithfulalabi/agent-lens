@@ -98,7 +98,7 @@ function turnRowMarkup(turn: Partial<TurnRow>): string {
 
 /* ------------------------------------ Test 4 — virtualization, by SCALING -- */
 
-describe('SpanTree renders O(viewport) rows, not O(n) (Test 4, AC1a)', () => {
+describe('SpanTree renders O(viewport) rows, not O(n) (Test 4)', () => {
   const { rows } = expandedRows(makeLargeTree());
 
   /*
@@ -201,7 +201,7 @@ function bestBuildMs(eventCount: number): number {
   return best;
 }
 
-describe('the row model builds within a complexity budget (Test 5, AC1a)', () => {
+describe('the row model builds within a complexity budget (Test 5)', () => {
   it('costs about five times as much for five times the events, not twenty-five', () => {
     // Floored so the ratio cannot be manufactured by a baseline that rounded to
     // zero — on a fast machine 1,000 events genuinely can measure under 1 ms.
@@ -475,7 +475,7 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
 
 const WIRE_STATUSES = [null, 'ok', 'error', 'denied', 'running', 'wat'] as const;
 
-describe('every event kind and every status renders, including a null one (Test 3, AC2)', () => {
+describe('every event kind and every status renders, including a null one (Test 3)', () => {
   /*
    * ⚠️ THE BLANK-SCREEN GUARD. `status IS NULL` on 14,211 of 30,286 archived
    * events — every `text`, `thinking`, `prompt`, `compaction` and `unknown`
@@ -529,7 +529,7 @@ describe('every event kind and every status renders, including a null one (Test 
 
 /* --------------------------- Test 9 — error and denied rows, AC3 ------------ */
 
-describe('error and denied rows are tinted, glyphed AND named (Test 9, AC3)', () => {
+describe('error and denied rows are tinted, glyphed AND named (Test 9)', () => {
   it.each(['error', 'denied'] as const)('a %s event washes the whole row', (status) => {
     const markup = eventRowMarkup({ status });
     expect(markup).toContain(SPAN_VISUALS.status[status].row);
@@ -582,7 +582,7 @@ describe('error and denied rows are tinted, glyphed AND named (Test 9, AC3)', ()
 
 /* ------------------- Test 7 and 8 — the tool_call row, AC3 ----------------- */
 
-describe('a tool_call row shows what was called and what came back (Test 7, AC3)', () => {
+describe('a tool_call row shows what was called and what came back (Test 7)', () => {
   it('renders the tool name, its status, its input and its output', () => {
     const markup = eventRowMarkup({
       kind: 'tool_call',
@@ -615,7 +615,7 @@ describe('a tool_call row shows what was called and what came back (Test 7, AC3)
   });
 });
 
-describe('the duration is labelled by where it came from (Test 8, AC3)', () => {
+describe('the duration is labelled by where it came from (Test 8)', () => {
   it.each([...Object.keys(DURATION_LABELS)] as (keyof typeof DURATION_LABELS)[])(
     'a %s duration names its source and never says execution',
     (source) => {
@@ -662,7 +662,7 @@ describe('the duration is labelled by where it came from (Test 8, AC3)', () => {
 
 /* ------------------------- the turn header badge, AC2 --------------------- */
 
-describe('a turn that no human started says so (AC2)', () => {
+describe('a turn that no human started says so', () => {
   it.each(['task_notification', 'slash_command', 'compaction', 'system', 'unknown'])(
     'a %s turn carries the badge and names its kind',
     (kind) => {
@@ -873,7 +873,7 @@ describe('the emitted markup is a real ARIA tree (Test 19)', () => {
 
 /* -------------- Test 6 — the header derives its four missing fields -------- */
 
-describe('chips are read off the server’s rollups, never resummed (Test 6, AC1)', () => {
+describe('chips are read off the server’s rollups, never resummed (Test 6)', () => {
   it('a turn header shows the turn’s stored totals, not the sum of its events', () => {
     /*
      * The fixture deliberately DISAGREES with its own events. That disagreement
@@ -928,7 +928,7 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(done).toContain('5m 0s');
   });
 
-  it('a session header shows the session’s stored totals (AC4-render)', () => {
+  it('a session header shows the session’s stored totals', () => {
     const session = makeSessionRow({
       tokens_in: 120_000,
       tokens_out: 3_456,
@@ -949,7 +949,7 @@ describe('chips are read off the server’s rollups, never resummed (Test 6, AC1
     expect(markup).toContain(session.project_path);
   });
 
-  it('a session header offers a way back to the list (AC3, Test 9)', () => {
+  it('a session header offers a way back to the list (Test 9)', () => {
     /*
      * ★ Task 5.1. Before it there was no return control on this screen at all —
      * a reader who opened a session by deep link had the browser's back button
@@ -1137,7 +1137,7 @@ function subagentMarkup(event: Partial<EventRow> = {}, header: Partial<SessionLi
   );
 }
 
-describe('an Agent row names its sub-agent and says how it ended (Test 13, AC3)', () => {
+describe('an Agent row names its sub-agent and says how it ended (Test 13)', () => {
   it.each([
     ['completed', 'completed'],
     ['failed', 'failed'],
@@ -1175,7 +1175,7 @@ describe('an Agent row names its sub-agent and says how it ended (Test 13, AC3)'
   });
 });
 
-describe('the spliced rows say whose transcript they are (AC1, AC-R1c)', () => {
+describe('the spliced rows say whose transcript they are', () => {
   const markup = subagentMarkup();
 
   it('stamps the Agent row with the parent’s id and its own child id', () => {
@@ -1194,7 +1194,7 @@ describe('the spliced rows say whose transcript they are (AC1, AC-R1c)', () => {
   });
 });
 
-describe('the child’s root row carries the sub-agent’s own numbers (Test 14, AC3)', () => {
+describe('the child’s root row carries the sub-agent’s own numbers (Test 14)', () => {
   it('renders the description and the rollup through an UNMODIFIED SpanTree', () => {
     /*
      * `SpanTree` forwards `row` and nothing else, so proving this through the
@@ -1212,7 +1212,7 @@ describe('the child’s root row carries the sub-agent’s own numbers (Test 14,
     expect(markup.match(/data-slot="trace-subagent"/g) ?? []).toHaveLength(1);
   });
 
-  it('spells an unpriced sub-agent as the em dash, never as $0 (Test 15, AC3)', () => {
+  it('spells an unpriced sub-agent as the em dash, never as $0 (Test 15)', () => {
     /*
      * ★ MEASURED 262 of 272 SIDECARS ARE UNPRICED, so this is the common path,
      * not the corner. 283 of 293 sessions run `claude-opus-5`, which task 0.8
@@ -1272,7 +1272,7 @@ describe('the child’s root row carries the sub-agent’s own numbers (Test 14,
   });
 });
 
-describe('nested depth is an inline offset, never a built class (Test 16, AC2)', () => {
+describe('nested depth is an inline offset, never a built class (Test 16)', () => {
   it('indents each spliced level by INDENT_PX and varies no class with depth', () => {
     const markup = subagentMarkup();
     // Agent row at depth 1, the child's root turn at 2, its event at 3.

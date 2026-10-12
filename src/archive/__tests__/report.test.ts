@@ -84,7 +84,7 @@ function corruptArchivedByte(s: Sandbox, rel: string, offset: number): void {
   writeFileSync(path, bytes);
 }
 
-describe('AC1a — integrity recomputes over every archived file with a live source', () => {
+describe('integrity recomputes over every archived file with a live source', () => {
   it('detects and names a deliberately corrupted archived byte', () => {
     const s = sb();
     // 10 KB, so the corruption can sit in the blind band between head and seam.
@@ -145,7 +145,7 @@ function sealForReal(rel: string, body: string = jsonLines(40)): string {
   return `${archivePath(s, rel)}.zst`;
 }
 
-describe('AC3/AC5 — the sidecar is outside the accounting, and the wording stays true', () => {
+describe('the sidecar is outside the accounting, and the wording stays true', () => {
   it('counts the frame alone, while an ordinary archived file beside it is still counted', () => {
     const s = sb();
     const sealedPath = sealForReal(SESSION);
@@ -217,7 +217,7 @@ describe('AC3/AC5 — the sidecar is outside the accounting, and the wording sta
   });
 });
 
-describe('AC1b/AC1c — the unverifiable population is counted, named and never called verified', () => {
+describe('the unverifiable population is counted, named and never called verified', () => {
   it('counts and names both an archive-only file and a sealed one, and the three populations partition', () => {
     const s = sb();
     // An expired file the archive is now the only copy of…
@@ -322,7 +322,7 @@ describe('AC1b/AC1c — the unverifiable population is counted, named and never 
   });
 });
 
-describe('AC1/AC2 — a sealed file is checked against the hash the seal recorded', () => {
+describe('a sealed file is checked against the hash the seal recorded', () => {
   it('verifies a real seal against its own record', () => {
     sealForReal(SESSION);
 
@@ -530,7 +530,7 @@ describe('AC1/AC2 — a sealed file is checked against the hash the seal recorde
   });
 });
 
-describe('AC3 — a sealed file with no usable record is refused before anything is read', () => {
+describe('a sealed file with no usable record is refused before anything is read', () => {
   it('writes nothing while checking one — there is no backfill', () => {
     const s = sb();
     writeArchive(s, `${SESSION}.zst`, Buffer.from('pretend-zstd-bytes'));
@@ -602,7 +602,7 @@ describe('AC3 — a sealed file with no usable record is refused before anything
   });
 });
 
-describe('AC4 — the crash-window pair is never verified on the hot file’s bytes', () => {
+describe('the crash-window pair is never verified on the hot file’s bytes', () => {
   it('reports a garbage frame as diverged even though a valid hot file sits beside it', () => {
     const s = sb();
     const body = jsonLines(20);
@@ -650,7 +650,7 @@ describe('AC4 — the crash-window pair is never verified on the hot file’s by
   });
 });
 
-describe('AC6 — the cost boundary holds over a SEALED corpus, not just a hot one', () => {
+describe('the cost boundary holds over a SEALED corpus, not just a hot one', () => {
   it('reads no content bytes by default, and the whole corpus under --verify', () => {
     // The boundary test above is a hot-only corpus, so it is blind to what a
     // sealed file costs. This is the sealed half of the same claim, and the
@@ -664,7 +664,7 @@ describe('AC6 — the cost boundary holds over a SEALED corpus, not just a hot o
   });
 });
 
-describe('AC2 — coverage, bytes, divergence and retention', () => {
+describe('coverage, bytes, divergence and retention', () => {
   it('counts mirrored out of found, and names what is not mirrored', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(4));

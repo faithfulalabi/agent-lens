@@ -38,7 +38,7 @@ function groupCount(model: TreeModel): number {
 
 /* ------------------------------------------- Test 1 — the group-by is total --- */
 
-describe('tree construction is a group-by on turn_id (Test 1, AC2)', () => {
+describe('tree construction is a group-by on turn_id (Test 1)', () => {
   const SHAPE = [
     { id: 't0', seq: 0, events: [{ name: 'a' }, { name: 'b' }, { name: 'c' }] },
     { id: 't1', seq: 1, events: [{ name: 'd' }, { name: 'e' }] },
@@ -95,7 +95,7 @@ describe('tree construction is a group-by on turn_id (Test 1, AC2)', () => {
 
 /* --------------------------- Test 2 — the deleted paths cannot come back --- */
 
-describe('the orphan and cycle paths are gone, and the model still cannot throw (Test 2, AC2)', () => {
+describe('the orphan and cycle paths are gone, and the model still cannot throw (Test 2)', () => {
   it('counts an event whose turn is not on the page rather than dropping it', () => {
     const turn = makeTurnRow({ id: 'seed-s0:0', seq: 0 });
     const model = buildTurnGroups(
@@ -171,7 +171,7 @@ describe('the orphan and cycle paths are gone, and the model still cannot throw 
 
 /* --------------------------------- the narrows the coalesce moved in here --- */
 
-describe('the wire is narrowed here, because nothing else narrows it (AC2)', () => {
+describe('the wire is narrowed here, because nothing else narrows it', () => {
   it.each([...EVENT_KINDS])('keeps %s', (kind) => {
     expect(eventKindOf(kind)).toBe(kind);
   });
@@ -217,7 +217,7 @@ describe('the wire is narrowed here, because nothing else narrows it (AC2)', () 
 
 /* ------------------------- Test 10 and 11 — the fold, and its false default --- */
 
-describe('task_notification turns fold under their Agent event, and the fold chains (Test 10, AC3)', () => {
+describe('task_notification turns fold under their Agent event, and the fold chains (Test 10)', () => {
   /*
    * The measured shape, in miniature: turn 0 owns an Agent call, turn 1 folds
    * under it, turn 2 folds under an Agent call inside turn 1, and a human turn
@@ -303,7 +303,7 @@ describe('task_notification turns fold under their Agent event, and the fold cha
   });
 });
 
-describe('the fold is false by default and never orphans (Test 11, AC3)', () => {
+describe('the fold is false by default and never orphans (Test 11)', () => {
   it('leaves a task_notification turn with no parent event at the top level', () => {
     const model = modelOf([
       { id: 't0', seq: 0, events: [{ name: 'Read' }] },
@@ -393,7 +393,7 @@ describe('flatten answers to the expansion state', () => {
     expect(empty.unmatchedEventCount).toBe(0);
   });
 
-  it('is unchanged by an empty subtrees map (Test 8, AC1, AC2)', () => {
+  it('is unchanged by an empty subtrees map (Test 8)', () => {
     /*
      * The regression guard on the merged walk. Task 5.5 rewrote both pushes and
      * added an offset that rides through every turn/event alternation, so the
@@ -496,7 +496,7 @@ describe('turnTitle reads the command name out of the slash_command envelope', (
     '<command-name>/run-phase</command-name>\n' +
     '<command-args>@internal_docs/agent-lens/plans/agent-lens-v2.md</command-args>';
 
-  it('extracts the command name from a well-formed envelope (AC1)', () => {
+  it('extracts the command name from a well-formed envelope', () => {
     expect(turnTitle(makeTurnRow({ kind: 'slash_command', title: ENVELOPE }))).toBe('/run-phase');
   });
 
@@ -513,7 +513,7 @@ describe('turnTitle reads the command name out of the slash_command envelope', (
       '<command-message></command-message><command-name> </command-name>',
     ],
     ['plain text', 'run it'],
-  ])('falls through verbatim on %s — visible, never blank (AC4)', (_label, title) => {
+  ])('falls through verbatim on %s — visible, never blank', (_label, title) => {
     expect(turnTitle(makeTurnRow({ kind: 'slash_command', title }))).toBe(title);
   });
 
@@ -529,7 +529,7 @@ describe('turnTitle reads the command name out of the slash_command envelope', (
     expect(turnTitle(makeTurnRow({ kind: 'slash_command', title: capped }))).toBe('/run-phase');
   });
 
-  it('falls through verbatim when the cap chops the name tag away (AC4)', () => {
+  it('falls through verbatim when the cap chops the name tag away', () => {
     // A future long <command-message> can push </command-name> past the cap.
     // The render gate hard-fails on the raw envelope by design; this function
     // must still never answer blank.

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decideCopyEnd, shouldSeal } from '../mirror.js';
 
-describe('decideCopyEnd (AC2) — the one copy rule, per state and not per kind', () => {
+describe('decideCopyEnd — the one copy rule, per state and not per kind', () => {
   const cases: {
     name: string;
     input: Parameters<typeof decideCopyEnd>[0];
@@ -77,7 +77,7 @@ describe('decideCopyEnd (AC2) — the one copy rule, per state and not per kind'
   });
 });
 
-describe('shouldSeal (AC1) — one trigger, and no clock anywhere near it (Test 3)', () => {
+describe('shouldSeal — one trigger, and no clock anywhere near it (Test 3)', () => {
   const cases: {
     name: string;
     input: Parameters<typeof shouldSeal>[0];
@@ -184,7 +184,7 @@ function sealSourceWithoutTheStamp(): string[] {
     .filter((line) => !/sealed_?at/i.test(line));
 }
 
-describe('AC1 — no age or timer input reaches the seal decision (Test 4)', () => {
+describe('no age or timer input reaches the seal decision (Test 4)', () => {
   it('neither shouldSeal nor seal.ts names a clock, once the output stamp is set aside', () => {
     expect(CLOCK_INPUT.test(shouldSealRegion())).toBe(false);
 

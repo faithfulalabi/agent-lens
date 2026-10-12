@@ -234,7 +234,7 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe('parseArgv (AC1)', () => {
+describe('parseArgv', () => {
   it('accepts --task and returns the id', () => {
     expect(parseArgv(['--task', '0.3'])).toEqual({ task: '0.3' });
   });
@@ -254,7 +254,7 @@ describe('parseArgv (AC1)', () => {
   });
 });
 
-describe('the empty-archive precondition (AC-R1)', () => {
+describe('the empty-archive precondition', () => {
   /** A data dir holding an `archive/` with `names` in it. */
   function dataDirWith(names: readonly string[]): string {
     const dir = tempRoot();
@@ -301,7 +301,7 @@ describe('the empty-archive precondition (AC-R1)', () => {
   });
 });
 
-describe('evaluateShot (AC4) — the byte threshold discriminates', () => {
+describe('evaluateShot — the byte threshold discriminates', () => {
   it.each([
     // The measured near-blank 1440x900 Chrome PNG, and the boundary itself.
     [7_150, false],
@@ -315,7 +315,7 @@ describe('evaluateShot (AC4) — the byte threshold discriminates', () => {
   });
 });
 
-describe('a real blank page is under the threshold (AC4)', () => {
+describe('a real blank page is under the threshold', () => {
   // Discharges "a deliberately blanked page fails this check" by measuring it
   // rather than asserting it. A skip here would be the silent-skip failure mode
   // the golden-replay manifest guard exists to prevent, so a missing Chrome is
@@ -350,7 +350,7 @@ describe('a real blank page is under the threshold (AC4)', () => {
   );
 });
 
-describe('buildReport (AC5)', () => {
+describe('buildReport', () => {
   it('caps labels at 25, in data-index order, with the window bounds beside them', () => {
     const labels = Array.from({ length: 40 }, (_, i) => ({
       index: 39 - i,
@@ -533,7 +533,7 @@ describe('buildReport (AC5)', () => {
     expect(report.ok, 'an absent row is not a product failure').toBe(true);
   });
 
-  it('passes slash-command-titles when every rendered title is clean (AC-R1)', () => {
+  it('passes slash-command-titles when every rendered title is clean', () => {
     const report = reportFor({ slashCommandTitles: ['/run-phase', '/approach'] });
     const probe = report.assertions.find((a) => a.name === 'slash-command-titles');
 
@@ -554,7 +554,7 @@ describe('buildReport (AC5)', () => {
     expect(probe?.actual).toContain('<command-message>');
   });
 
-  it('asserts the pane reading, and names all three of its clauses (AC-R1)', () => {
+  it('asserts the pane reading, and names all three of its clauses', () => {
     const report = reportFor();
     const probe = report.assertions.find((a) => a.name === 'detail-event-payload');
 
@@ -595,7 +595,7 @@ describe('buildReport (AC5)', () => {
     expect(probe?.actual).toContain('toolu_1');
   });
 
-  it('asserts the thread reading, and names both of its clauses (AC-R1)', () => {
+  it('asserts the thread reading, and names both of its clauses', () => {
     const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
@@ -648,7 +648,7 @@ describe('buildReport (AC5)', () => {
     expect(report.warnings.join(' ')).not.toContain('thread');
   });
 
-  it('asserts the live tail, and names all three of its clauses (AC-R1)', () => {
+  it('asserts the live tail, and names all three of its clauses', () => {
     const report = reportFor();
     const names = report.assertions.map((a) => a.name);
 
@@ -800,7 +800,7 @@ describe('buildReport (AC5)', () => {
     expect(renderContactSheet(report)).toContain('subagent-expansion: no Agent row');
   });
 
-  it('expects a sub-agent screenshot, so AC-R2 is not decoration (Test 21)', () => {
+  it('expects a sub-agent screenshot, so the visual sign-off is not decoration (Test 21)', () => {
     // Without `07-subagent.png` the founder opens the contact sheet for a
     // sub-agent task and sees pictures of everything but one. The same holds for
     // `06-thread.png` on a thread task, and for `09-drift.png` most of all: the
@@ -856,7 +856,7 @@ describe('buildReport (AC5)', () => {
   });
 });
 
-describe('session-model-column (AC-R1)', () => {
+describe('session-model-column', () => {
   const modelColumn = (modelCells: string[], sessionCount = modelCells.length) =>
     reportFor({
       modelCells,
@@ -883,7 +883,7 @@ describe('session-model-column (AC-R1)', () => {
   });
 });
 
-describe('evaluateDetail (AC3) — the three-state transition', () => {
+describe('evaluateDetail — the three-state transition', () => {
   const distinct = { t0: 'placeholder', t1: 'detail a', t2: 'detail b' };
 
   it('passes on three distinct non-empty strings', () => {
@@ -901,7 +901,7 @@ describe('evaluateDetail (AC3) — the three-state transition', () => {
   });
 });
 
-describe('renderContactSheet (AC5)', () => {
+describe('renderContactSheet', () => {
   const report = reportFor({
     // Real transcript text: a turn label carries harness tags in angle brackets.
     labels: [{ index: 0, text: '<local-command-caveat> & "quoted"' }],
@@ -930,7 +930,7 @@ describe('renderContactSheet (AC5)', () => {
   });
 });
 
-describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
+describe('runRenderGate — the exit code follows the assertions', () => {
   it('resolves 0 and writes both artifacts when every assertion passes', async () => {
     const outRoot = tempRoot();
     const code = await runRenderGate({
@@ -1003,7 +1003,7 @@ describe('runRenderGate (AC1) — the exit code follows the assertions', () => {
   });
 });
 
-describe('the gate source itself (AC6)', () => {
+describe('the gate source itself', () => {
   it('contains no waitForTimeout anywhere', () => {
     const sources = gateSources();
 
@@ -1076,7 +1076,7 @@ describe('the gate source itself (AC6)', () => {
    * live gate run covers the choreography; this covers the decision, which is
    * the split `isSessionDetailPath` already uses.
    */
-  describe('pickPayloadRow — which rendered row is worth clicking (AC-R1)', () => {
+  describe('pickPayloadRow — which rendered row is worth clicking', () => {
     const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
       kind: 'tool_call',
       raw_type: 'assistant',
@@ -1325,7 +1325,7 @@ describe('the gate source itself (AC6)', () => {
   });
 });
 
-describe('install carries no browser download (AC1)', () => {
+describe('install carries no browser download', () => {
   const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
   const lock = JSON.parse(readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'));
 
@@ -1419,7 +1419,7 @@ describe('install carries no browser download (AC1)', () => {
   });
 });
 
-describe('.render-gate/ is ignored (AC5)', () => {
+describe('.render-gate/ is ignored', () => {
   it.each(['.render-gate/0.3/report.json', '.render-gate/0.3/01-sessions.png'])(
     'git check-ignore matches %s',
     (path) => {

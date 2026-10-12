@@ -77,7 +77,7 @@ afterEach(() => {
   cleanup(sandbox);
 });
 
-describe('AC2 — a warm scan returns only what moved', () => {
+describe('a warm scan returns only what moved', () => {
   it('returns the empty set once every row is indexed', () => {
     const cold = scan();
     expect(cold.changed.length).toBeGreaterThan(0);
@@ -123,7 +123,7 @@ describe('AC2 — a warm scan returns only what moved', () => {
   });
 });
 
-describe('AC2 — a cold scan leaves nothing unclassified', () => {
+describe('a cold scan leaves nothing unclassified', () => {
   it('accounts for every walked file exactly once', () => {
     const cold = scan();
     const { walked, accounted } = conserved(cold);
@@ -157,7 +157,7 @@ describe('AC2 — a cold scan leaves nothing unclassified', () => {
   });
 });
 
-describe('AC2/AC1 — a sealed session and its hot twin are one entry', () => {
+describe('a sealed session and its hot twin are one entry', () => {
   it('keys both on the logical path and yields exactly one changed entry', () => {
     const sealedId = 'dddddddd-4444-4444-8444-dddddddddddd';
     const logical = writeSealedSession(
@@ -182,7 +182,7 @@ describe('AC2/AC1 — a sealed session and its hot twin are one entry', () => {
   });
 });
 
-describe('AC3 — the journal is excluded by path, before it is opened', () => {
+describe('the journal is excluded by path, before it is opened', () => {
   it('still lets its sibling agent transcripts through, and defers the rest', () => {
     const result = scan();
     const rels = result.changed.map((entry) => entry.relPath);
@@ -242,7 +242,7 @@ describe('AC3 — the journal is excluded by path, before it is opened', () => {
   });
 });
 
-describe('AC3 — excluded from indexing is NOT excluded from the tree', () => {
+describe('excluded from indexing is NOT excluded from the tree', () => {
   it('foldArchive still sums the journal bytes into its parent', () => {
     const parentPath = join(sandbox.archiveRoot, SLUG, `${PARENT}.jsonl`);
     const journal = join(

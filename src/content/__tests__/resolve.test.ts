@@ -239,7 +239,7 @@ function oversized(seed: string): string {
 
 // --- AC1: every storage state resolves --------------------------------------
 
-describe('AC1 — the column states resolve from the row alone', () => {
+describe('the column states resolve from the row alone', () => {
   // No spill row in this describe, so the containment roots are never consulted.
   const env = createContentEnv(createArchiveReader(), []);
 
@@ -286,7 +286,7 @@ describe('AC1 — the column states resolve from the row alone', () => {
   });
 });
 
-describe('AC1 — line_ref preads the archive', () => {
+describe('line_ref preads the archive', () => {
   const INPUT = { command: oversized('echo the-input-payload '), description: 'big' };
 
   function lineRefInput(): { db: DatabaseSync; id: string; path: string; row: EventContentRow } {
@@ -377,7 +377,7 @@ describe('AC1 — line_ref preads the archive', () => {
   });
 });
 
-describe('AC1 — exactly one call into the line parser, and no SQL', () => {
+describe('exactly one call into the line parser, and no SQL', () => {
   it('7. the module names classifyLine once and imports neither node:sqlite nor a db', () => {
     const source = ts.createSourceFile(RESOLVE_TS, SOURCE, ts.ScriptTarget.ESNext, true);
 
@@ -421,7 +421,7 @@ describe('AC1 — exactly one call into the line parser, and no SQL', () => {
 
 // --- AC1/AC2: spill and missing ---------------------------------------------
 
-describe('AC1 — spill resolves, archive mirror first', () => {
+describe('spill resolves, archive mirror first', () => {
   const BODY = 'the whole spilled output, several lines\nof it\n';
   const SPILL_NAME = 'b1a2c3d4.txt';
   /** The shape every measured row has today: a `~/.claude/` source path, which
@@ -562,7 +562,7 @@ describe('AC1 — spill resolves, archive mirror first', () => {
   });
 });
 
-describe('AC2 — missing is a 200-shaped answer and an ordinary path', () => {
+describe('missing is a 200-shaped answer and an ordinary path', () => {
   it('13. a projected missing row carries no preview, no size and no spill_path key', () => {
     // Driven through the REAL projector, so the row is the one production writes:
     // `write.ts:453` leaves text, spill_path and spill_bytes all NULL.
@@ -654,7 +654,7 @@ describe('AC2 — missing is a 200-shaped answer and an ordinary path', () => {
 
 // --- AC3: the range composition ---------------------------------------------
 
-describe('AC3 — byte_size is the true size, so the route ranges correctly', () => {
+describe('byte_size is the true size, so the route ranges correctly', () => {
   /** What `server/api.ts:471-481` does with a resolved answer. */
   function serve(
     slice: { content: string; byte_size: number },
@@ -752,7 +752,7 @@ describe('AC3 — byte_size is the true size, so the route ranges correctly', ()
 
 // --- AC4: the seal ----------------------------------------------------------
 
-describe('AC4 — a sealed archive answers byte-identically to a hot one', () => {
+describe('a sealed archive answers byte-identically to a hot one', () => {
   /** Replace a hot file with the frame `sealArchiveFile` would have written. */
   function seal(path: string): void {
     writeFileSync(`${path}.zst`, compressLikeSeal(readFileSync(path)));
@@ -815,7 +815,7 @@ describe('AC4 — a sealed archive answers byte-identically to a hot one', () =>
 
 // --- the drift closer -------------------------------------------------------
 
-describe('AC1 — the re-derived resultText agrees with the projector', () => {
+describe('the re-derived resultText agrees with the projector', () => {
   it('24. ★ joins several text children on \\n and does NOT trim', () => {
     // The only thing pinning this module's mapping to `pipeline.ts:264-266`, and
     // it runs under plain `npm test`. A corpus differential closes nothing:

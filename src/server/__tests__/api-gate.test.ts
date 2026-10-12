@@ -106,7 +106,7 @@ function contentOf(body: Detail): string {
   return body.events.map((e) => `${e.text ?? ''} ${e.input ?? ''}`).join('\n');
 }
 
-describe('★ the gate runs on the detail route (AC5)', () => {
+describe('★ the gate runs on the detail route', () => {
   it('projects a never-projected session on first read', async () => {
     // The corpus sweep wrote the Tier-A row and nothing else. Nobody has
     // projected this session, so the gate is the only thing that can.
@@ -157,7 +157,7 @@ describe('★ the gate runs on the detail route (AC5)', () => {
   });
 });
 
-describe('★ all four gate outcomes (AC5)', () => {
+describe('★ all four gate outcomes', () => {
   it("'hit' — a second identical read reprojects nothing", async () => {
     await detail();
     const projected_at = sessionRow(db, SESSION_ID).projected_at;
@@ -225,7 +225,7 @@ describe('★ all four gate outcomes (AC5)', () => {
   });
 });
 
-describe('★ fingerprint is the live-tail epoch (AC5, gap 2)', () => {
+describe('★ fingerprint is the live-tail epoch (gap 2)', () => {
   it('equals the gate’s own fold and moves when the transcript grows', async () => {
     const first = await detail();
     expect(first.body.fingerprint).toBe(fingerprint(foldArchive(archive)!));

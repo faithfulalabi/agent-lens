@@ -31,7 +31,7 @@ function errorOf(result: { ok: true } | { ok: false; error: string }): string | 
   return result.ok ? null : result.error;
 }
 
-describe('parsePageParams (AC3)', () => {
+describe('parsePageParams', () => {
   it.each([
     ['0', 'invalid limit'],
     ['-1', 'invalid limit'],
@@ -85,7 +85,7 @@ describe('parsePageParams (AC3)', () => {
   });
 });
 
-describe('parseFromSeq (AC3)', () => {
+describe('parseFromSeq', () => {
   it.each(['-1', '1.5', '1e3', 'abc', '9007199254740993'])('rejects from_seq=%s', (raw) => {
     expect(errorOf(parseFromSeq(raw))).toBe('invalid from_seq');
   });
@@ -98,7 +98,7 @@ describe('parseFromSeq (AC3)', () => {
   });
 });
 
-describe('parseSort (AC3)', () => {
+describe('parseSort', () => {
   it.each(['recent', 'cost', 'tokens', 'errors'])('accepts sort=%s', (sort) => {
     expect(parseSort(sort)).toEqual({ ok: true, value: sort });
   });
@@ -115,7 +115,7 @@ describe('parseSort (AC3)', () => {
   });
 });
 
-describe('parseField (AC3)', () => {
+describe('parseField', () => {
   it.each(['text', 'input'])('accepts field=%s', (field) => {
     expect(parseField(field)).toEqual({ ok: true, value: field });
   });
@@ -129,7 +129,7 @@ describe('parseField (AC3)', () => {
   });
 });
 
-describe('parseRange (AC3)', () => {
+describe('parseRange', () => {
   it.each(['5-2', '-1-5', 'abc', '5', '-', '5-2-3', '1.5-3'])('rejects range=%s', (raw) => {
     expect(errorOf(parseRange(raw))).toBe('invalid range');
   });
@@ -146,7 +146,7 @@ describe('parseRange (AC3)', () => {
   });
 });
 
-describe('clampRange (AC3)', () => {
+describe('clampRange', () => {
   it.each([
     // [range, byteSize, expected]
     [undefined, 10, { start: 0, end: 9, length: 10 }],
@@ -162,7 +162,7 @@ describe('clampRange (AC3)', () => {
   });
 });
 
-describe('parseSearchQuery (AC3)', () => {
+describe('parseSearchQuery', () => {
   it('requires a non-empty q', () => {
     expect(errorOf(parseSearchQuery({}))).toBe('invalid q');
     expect(errorOf(parseSearchQuery({ q: '' }))).toBe('invalid q');
@@ -213,7 +213,7 @@ describe('isLive — stamped by the server, never a column (spec:278)', () => {
   });
 });
 
-describe('toDetailProjection — the gate outcome overrides the column (AC5)', () => {
+describe('toDetailProjection — the gate outcome overrides the column', () => {
   const STORED: SessionProjection = {
     state: 'ready',
     projector_version: 1,

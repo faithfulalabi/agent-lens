@@ -139,7 +139,7 @@ function namesClockInText(file: string, text = read(file)): boolean {
   return /\bDate\b/.test(text);
 }
 
-describe('AC1 — raw-types.ts is documentation that compiles', () => {
+describe('raw-types.ts is documentation that compiles', () => {
   it('emits no JavaScript at all', () => {
     expect(emit(read(RAW_TYPES))).toBe(TYPE_ONLY_EMIT);
   });
@@ -196,7 +196,7 @@ describe('AC1 — raw-types.ts is documentation that compiles', () => {
   });
 });
 
-describe('AC4 — neither module imports anything, nor can reach a clock', () => {
+describe('neither module imports anything, nor can reach a clock', () => {
   it.each([RAW_TYPES, ACCESSORS])('%s imports nothing at all', (file) => {
     // Stronger than "imports no node:fs / node:sqlite", and stronger on purpose:
     // an empty import set is a fact a reader can check at a glance, whereas a
@@ -242,7 +242,7 @@ describe('the guard reds when the property it protects is broken', () => {
     expect(bannedIdentifiers(ACCESSORS, ACCESSORS_SRC)).toEqual([]);
   });
 
-  it('an exported const reds both AC1 limbs', () => {
+  it('an exported const reds both limbs', () => {
     const mutated = `${RAW_SRC}\nexport const X = 1;\n`;
     expect(executableStatements(RAW_TYPES, mutated)).toHaveLength(1);
     expect(emit(mutated)).not.toBe(TYPE_ONLY_EMIT);
@@ -256,7 +256,7 @@ describe('the guard reds when the property it protects is broken', () => {
     expect(executableStatements(RAW_TYPES, mutated)).toHaveLength(1);
   });
 
-  it('a const enum reds both AC1 limbs', () => {
+  it('a const enum reds both limbs', () => {
     const mutated = `${RAW_SRC}\nexport const enum E {\n  A,\n}\n`;
     expect(executableStatements(RAW_TYPES, mutated)).toHaveLength(1);
     expect(emit(mutated)).not.toBe(TYPE_ONLY_EMIT);
