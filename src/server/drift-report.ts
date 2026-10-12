@@ -40,7 +40,11 @@ export interface DriftReport {
 /** A clean session serializes to exactly this (`transcript/drift.ts:90`). */
 const NO_DRIFT = '{}';
 
-function mergeBucket(into: Record<string, number>, from: Record<string, number> | undefined): void {
+/** Exported for `doctor`'s per-version census, which merges the same buckets. */
+export function mergeBucket(
+  into: Record<string, number>,
+  from: Record<string, number> | undefined,
+): void {
   for (const [key, n] of Object.entries(from ?? {})) into[key] = (into[key] ?? 0) + n;
 }
 
