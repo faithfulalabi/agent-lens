@@ -24,7 +24,7 @@ import { isUnderAnyRoot } from '../archive/paths.js';
 import type { ArchiveReader } from '../archive/read.js';
 import { toolResultsDirOf } from '../corpus/paths.js';
 import type { EventContentRow } from '../db/read.js';
-import { contentBlocks, type Block } from '../transcript/blocks.js';
+import { contentBlocks, resultText, type Block } from '../transcript/blocks.js';
 import { DriftCounter } from '../transcript/drift.js';
 import { classifyLine } from '../transcript/line.js';
 
@@ -69,17 +69,6 @@ export interface ResolvedContent {
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
-}
-
-/**
- * A tool result's own text, from the blocks hanging off it.
- *
- * Mirrors `pipeline.ts:264-266` and MUST stay byte-identical to it: joined on
- * `'\n'` and NEVER trimmed, because `text_bytes` was sized off that exact
- * string and both spill-marker predicates test index 0.
- */
-function resultText(children: readonly Block[]): string {
-  return children.flatMap((child) => (child.kind === 'text' ? [child.text] : [])).join('\n');
 }
 
 /**

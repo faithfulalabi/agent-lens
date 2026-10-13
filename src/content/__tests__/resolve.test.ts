@@ -177,10 +177,10 @@ function bigCallLine(
   });
 }
 
-/** A `tool_result` carrying SEVERAL text children — the `'\n'` join's witness. */
+/** A `tool_result` carrying SEVERAL children — the `'\n'` join's witness. A string is a text child. */
 function multiChildResultLine(
   callId: string,
-  texts: readonly string[],
+  children: readonly (string | Record<string, unknown>)[],
   at: string,
 ): Record<string, unknown> {
   return envelope({
@@ -192,7 +192,9 @@ function multiChildResultLine(
         {
           type: 'tool_result',
           tool_use_id: callId,
-          content: texts.map((text) => ({ type: 'text', text })),
+          content: children.map((child) =>
+            typeof child === 'string' ? { type: 'text', text: child } : child,
+          ),
         },
       ],
     },
@@ -843,6 +845,28 @@ describe('the re-derived resultText agrees with the projector', () => {
     expect(content.text_bytes).toBe(Buffer.byteLength(slice.content, 'utf8'));
     // The stored column is only a head preview of it.
     expect(slice.content.startsWith(content.text!)).toBe(true);
+  });
+});
+
+describe('an image child resolves to the bytes the projector sized', () => {
+  it('24b. appends the placeholder after the text, and text_bytes matches the resolved body', () => {
+    const IMAGE = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(175200) },
+    };
+    const HEAD = oversized('screenshot follows ');
+    const { db, path } = project([
+      humanLine('image', TS(0)),
+      toolCallLine('toolu_image', 'Read', TS(1)),
+      multiChildResultLine('toolu_image', [IMAGE, HEAD], TS(2)),
+    ]);
+    const content = contentRow(db, 'toolu_image');
+    expect(content.output_storage).toBe('line_ref');
+
+    const slice = resolveContent(content, 'text', path, sandboxEnv());
+
+    expect(slice.content).toBe(`${HEAD}\n[image image/png, 131.4 KB]`);
+    expect(content.text_bytes).toBe(Buffer.byteLength(slice.content, 'utf8'));
   });
 });
 

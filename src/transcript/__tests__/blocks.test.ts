@@ -18,6 +18,7 @@ import {
   classifyBlock,
   classifyContent,
   normalizeContent,
+  resultText,
   THINKING_ELIDED_MARKER,
   type Block,
   type BlockKind,
@@ -249,6 +250,45 @@ describe('an image emits a placeholder and no base64 ever escapes', () => {
       const rows = fixtureJson(name).map((json) => classifyContent(rawContent(json)));
       expect(BASE64_RUN.test(JSON.stringify(rows)), name).toBe(false);
     }
+  });
+});
+
+/** The children of one `tool_result` carrying `content`, as the classifier hangs them. */
+function childrenOf(content: unknown): readonly Block[] {
+  const [result] = classifyContent([{ type: 'tool_result', tool_use_id: 't', content }]);
+  if (result?.kind !== 'tool_result') throw new Error('unreachable');
+  return result.children;
+}
+
+describe('resultText names every image child and never moves text off index 0', () => {
+  it('joins text children on \\n exactly as before, untrimmed', () => {
+    const children = childrenOf([
+      { type: 'text', text: '  lead' },
+      { type: 'text', text: '' },
+      { type: 'text', text: 'tail  ' },
+    ]);
+    expect(resultText(children)).toBe('  lead\n\ntail  ');
+  });
+
+  it('reads an image-only result as the image placeholder', () => {
+    expect(resultText(childrenOf([imageBlock(175200, 'image/png')]))).toBe(
+      '[image image/png, 131.4 KB]',
+    );
+  });
+
+  it('appends image placeholders after the text, whatever order the children arrived in', () => {
+    const children = childrenOf([
+      imageBlock(400, 'image/png'),
+      { type: 'text', text: '<persisted-output>\nOutput too large' },
+      imageBlock(800, 'image/jpeg'),
+    ]);
+    expect(resultText(children)).toBe(
+      '<persisted-output>\nOutput too large\n[image image/png, 0.3 KB]\n[image image/jpeg, 0.6 KB]',
+    );
+  });
+
+  it('is empty for a result with no children', () => {
+    expect(resultText(childrenOf([]))).toBe('');
   });
 });
 
