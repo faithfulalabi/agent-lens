@@ -14,6 +14,7 @@ import {
   type ContentField,
   type EventContentBody,
   type EventRow,
+  type UnrecognisedFieldsBody,
 } from '@/lib/api';
 import { useAsync } from '@/lib/use-async';
 import { buildTurnGroups, flatten } from '@/lib/turn-tree';
@@ -334,7 +335,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
   /*
    * ONE ABORT CONTROLLER PER SESSION, HELD IN A REF.
    *
-   * Its cleanup is the only abort in this file, and that is the whole point. The
+   * Its cleanup is the only abort the child fetches get, and that is the whole point. The
    * obvious spelling puts the controller in the fetch effect and `sub` in its
    * dependencies — and then the `requested` dispatch below re-renders, React
    * runs the previous cleanup, the request it just issued is aborted, and the
@@ -451,6 +452,19 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
     return row === undefined || row.kind !== 'event' ? null : row.node.event;
   }, [rows, nav.selectedId]);
 
+  // Aborted on reselection, so a slow reply for the previous event cannot overwrite this one's.
+  const [unrecognised, setUnrecognised] = useState<UnrecognisedFieldsBody | null>(null);
+  const selectedEventId = selectedEvent?.id;
+  useEffect(() => {
+    if (selectedEventId === undefined) return;
+    const controller = new AbortController();
+    client
+      .getUnrecognisedFields(selectedEventId, { signal: controller.signal })
+      .then(setUnrecognised)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client, selectedEventId]);
+
   const onToggle = useCallback((id: string) => {
     dispatchFollow({ type: 'selected' });
     setNav((current) => {
@@ -536,7 +550,12 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
               </div>
             </div>
 
-            <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />
+            <EventDetail
+              event={selectedEvent}
+              fetched={fetched}
+              onShowFull={onShowFull}
+              unrecognised={unrecognised}
+            />
           </>
         )}
       </div>

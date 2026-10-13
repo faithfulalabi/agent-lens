@@ -1,7 +1,8 @@
-import type { ContentField, EventContentBody, EventRow } from '@/lib/api';
+import type { ContentField, EventContentBody, EventRow, UnrecognisedFieldsBody } from '@/lib/api';
 import {
   contentStateOf,
   type ContentState,
+  unrecognisedFieldsOf,
   wireDivergenceOf,
   type WireDivergence,
 } from '@/lib/event-content';
@@ -50,9 +51,10 @@ export interface EventDetailProps {
   /** A completed refetch, or null. Folded in by `contentStateOf`, not here. */
   fetched: EventContentBody | null;
   onShowFull?: (id: string, field: ContentField) => void;
+  unrecognised?: UnrecognisedFieldsBody | null;
 }
 
-export function EventDetail({ event, fetched, onShowFull }: EventDetailProps) {
+export function EventDetail({ event, fetched, onShowFull, unrecognised }: EventDetailProps) {
   return (
     <aside
       data-slot="span-detail"
@@ -79,6 +81,7 @@ export function EventDetail({ event, fetched, onShowFull }: EventDetailProps) {
             fetched={fetched}
             onShowFull={onShowFull}
           />
+          <UnrecognisedFields event={event} body={unrecognised ?? null} />
           <RawRecord event={event} />
         </>
       )}
@@ -215,6 +218,39 @@ function Body({ content }: { content: ContentState }) {
         </pre>
       )}
     </>
+  );
+}
+
+/** What a newer harness sent that nothing here reads yet, shown before any code reads it. */
+function UnrecognisedFields({
+  event,
+  body,
+}: {
+  event: EventRow;
+  body: UnrecognisedFieldsBody | null;
+}) {
+  const fields = unrecognisedFieldsOf(event, body);
+  if (fields === null) return null;
+
+  return (
+    <details data-slot="detail-unrecognised" className="mt-3 border-t border-border pt-2">
+      <summary className="cursor-pointer text-2xs text-muted">
+        {`Unrecognized fields (${fields.length})`}
+      </summary>
+      {fields.map((field) => (
+        <div key={`${field.line}:${field.name}`} className="pt-1">
+          <p className="font-mono text-2xs text-muted">
+            {field.name}
+            {field.line === 'result' ? (
+              <span className="text-faint"> (on the tool result)</span>
+            ) : null}
+          </p>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-2xs text-foreground">
+            {field.value}
+          </pre>
+        </div>
+      ))}
+    </details>
   );
 }
 

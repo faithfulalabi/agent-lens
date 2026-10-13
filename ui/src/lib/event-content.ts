@@ -37,7 +37,13 @@
  * NULL and with any value the schema gains later.
  */
 
-import type { ContentField, EventContentBody, EventRow } from './api.js';
+import type {
+  ContentField,
+  EventContentBody,
+  EventRow,
+  UnrecognisedField,
+  UnrecognisedFieldsBody,
+} from './api.js';
 
 /**
  * `input_storage` / `output_storage`, narrowed the way `eventStatusOf` narrows
@@ -189,4 +195,16 @@ export function wireDivergenceOf(event: EventRow): WireDivergence | null {
   const body = event.wire_input;
   if (body === null || body === '') return null;
   return { body, note: event.wire_input_storage === 'line_ref' ? HEAD_PREVIEW : null };
+}
+
+/**
+ * The fields to disclose for `event`, or null when there are none to show. A body
+ * answered for another event is a stale reply to an earlier selection.
+ */
+export function unrecognisedFieldsOf(
+  event: EventRow,
+  body: UnrecognisedFieldsBody | null,
+): readonly UnrecognisedField[] | null {
+  if (body === null || body.id !== event.id || body.fields.length === 0) return null;
+  return body.fields;
 }

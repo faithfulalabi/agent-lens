@@ -62,7 +62,7 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { Host: 'localhost', [TOKEN_HEADER]: TOKEN, ...extra };
 }
 
-/** The ten routes, as method + path. AC4 drives auth and host over all of them. */
+/** The eleven routes, as method + path. Auth and host are driven over all of them. */
 const ROUTES: readonly [string, string][] = [
   ['GET', '/api/sessions'],
   ['GET', '/api/projects'],
@@ -74,6 +74,7 @@ const ROUTES: readonly [string, string][] = [
   ['POST', '/api/warm'],
   ['GET', '/api/drift'],
   ['GET', '/api/health'],
+  ['GET', '/api/events/ev-1/unrecognised-fields'],
 ];
 
 describe('registration order, pinned executably', () => {

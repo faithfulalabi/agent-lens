@@ -88,6 +88,11 @@ const METHODS: readonly { name: string; path: string; call: (c: ApiClient) => Pr
       path: '/api/events/ev-1/content?field=text',
       call: (c) => c.getEventContent('ev-1', 'text'),
     },
+    {
+      name: 'getUnrecognisedFields',
+      path: '/api/events/ev-1/unrecognised-fields',
+      call: (c) => c.getUnrecognisedFields('ev-1'),
+    },
     // Task 7.2. Both go through the same `request` helper, so both inherit the
     // token header, the error taxonomy and the origin-relative URL for free —
     // and they are in this table so that stays asserted rather than assumed.
@@ -414,9 +419,20 @@ describe('the API client returns the shared wire shapes', () => {
     await client.listSessions();
     await client.getSession('s1');
     await client.getEventContent('ev-1', 'text');
+    await client.getUnrecognisedFields('ev-1');
     await client.search('q');
 
     for (const call of calls) expect(call.method).toBe('GET');
+  });
+
+  it('getUnrecognisedFields encodes the id and sends no query', async () => {
+    const { calls, fetchImpl } = recordingFetch(() => json({ id: 'toolu_01/x', fields: [] }));
+    const body = await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).getUnrecognisedFields(
+      'toolu_01/x',
+    );
+
+    expect(calls[0]?.url).toBe('/api/events/toolu_01%2Fx/unrecognised-fields');
+    expect(body).toEqual({ id: 'toolu_01/x', fields: [] });
   });
 
   it('getEventContent names the field as a bare param, and encodes the id', async () => {

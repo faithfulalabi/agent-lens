@@ -26,7 +26,7 @@ import { toolResultsDirOf } from '../corpus/paths.js';
 import type { EventContentRow } from '../db/read.js';
 import { contentBlocks, type Block } from '../transcript/blocks.js';
 import { DriftCounter } from '../transcript/drift.js';
-import { classifyLine } from '../transcript/line.js';
+import { classifyLine, type ParsedLine } from '../transcript/line.js';
 
 /** Which half of an event row is being asked for. */
 export type ContentField = 'text' | 'input';
@@ -83,20 +83,20 @@ function resultText(children: readonly Block[]): string {
 }
 
 /**
- * Pread one line out of the archive and index one block of it.
+ * Pread one line out of the archive and classify it.
  *
  * The ONLY call into the line parser in this module, which is what makes
  * "exactly one call into `transcript/line.ts`" a property of the code shape
  * rather than a discipline. `undefined` for every failure — an unreadable line
  * degrades to the stored preview, it does not abort the request.
  */
-function blockAt(
+function lineAt(
   env: ContentEnv,
   archivePath: string,
   byteOffset: number,
   len: number,
-  blockIndex: number,
-): Block | undefined {
+  drift: DriftCounter,
+): ParsedLine | undefined {
   let bytes: Buffer;
   try {
     bytes = env.reader.read(archivePath, byteOffset, len);
@@ -107,15 +107,81 @@ function blockAt(
   }
   if (bytes.length === 0) return undefined;
   try {
-    const line = classifyLine(JSON.parse(bytes.toString('utf8')), {
+    return classifyLine(JSON.parse(bytes.toString('utf8')), {
       byteOffset,
       byteLength: len,
-      drift: new DriftCounter(),
+      drift,
     });
+  } catch {
+    return undefined;
+  }
+}
+
+/** One block of one archived line. */
+function blockAt(
+  env: ContentEnv,
+  archivePath: string,
+  byteOffset: number,
+  len: number,
+  blockIndex: number,
+): Block | undefined {
+  const line = lineAt(env, archivePath, byteOffset, len, new DriftCounter());
+  if (line === undefined) return undefined;
+  try {
     return contentBlocks(line)[blockIndex];
   } catch {
     return undefined;
   }
+}
+
+/** A top-level field the classifier did not consume, its value as JSON text. */
+export interface UnrecognisedField {
+  /** The event's own line, or the tool result line joined onto it. */
+  line: 'emitting' | 'result';
+  name: string;
+  value: string;
+}
+
+/**
+ * The fields on one archived line that its drift count would record. Names come
+ * from the counter's own output, so this cannot disagree with `sessions.drift_json`.
+ */
+function unrecognisedFieldsAt(
+  env: ContentEnv,
+  archivePath: string,
+  byteOffset: number,
+  len: number,
+  tag: UnrecognisedField['line'],
+): UnrecognisedField[] {
+  const drift = new DriftCounter();
+  const line = lineAt(env, archivePath, byteOffset, len, drift);
+  if (line === undefined) return [];
+  try {
+    const counted: unknown = JSON.parse(drift.serialize()).unknown_top_level_fields;
+    if (typeof counted !== 'object' || counted === null) return [];
+    const names = new Set(Object.keys(counted));
+    return Object.entries(line.raw)
+      .filter(([name]) => names.has(name))
+      .map(([name, value]) => ({ line: tag, name, value: JSON.stringify(value) }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The emitting line's fields, then the joined result line's: a line carrying only
+ * result blocks emits no row of its own, so this is the only place they surface.
+ */
+export function resolveUnrecognisedFields(
+  row: EventContentRow,
+  archivePath: string | undefined,
+  env: ContentEnv,
+): UnrecognisedField[] {
+  if (archivePath === undefined) return [];
+  const own = unrecognisedFieldsAt(env, archivePath, row.src_offset, row.src_len, 'emitting');
+  const { result_offset, result_len } = row;
+  if (result_offset === null || result_len === null) return own;
+  return [...own, ...unrecognisedFieldsAt(env, archivePath, result_offset, result_len, 'result')];
 }
 
 /** The column half, used verbatim and as the degraded answer for every arm. */
@@ -364,6 +430,14 @@ export function createContentResolver(
   env: ContentEnv,
 ): (row: EventContentRow, field: ContentField) => ResolvedContent {
   return (row, field) => resolveContent(row, field, archivePathOf(row.session_id), env);
+}
+
+/** Bind `resolveUnrecognisedFields` onto `ApiDeps.resolveUnrecognisedFields`. */
+export function createUnrecognisedFieldsResolver(
+  archivePathOf: (session_id: string) => string | undefined,
+  env: ContentEnv,
+): (row: EventContentRow) => UnrecognisedField[] {
+  return (row) => resolveUnrecognisedFields(row, archivePathOf(row.session_id), env);
 }
 
 /** The probe-only half of the spill arm: where the body is readable now. Reads no bytes. */
