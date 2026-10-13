@@ -76,7 +76,7 @@ const ROUTES: readonly [string, string][] = [
   ['GET', '/api/health'],
 ];
 
-describe('AC2 — registration order, pinned executably', () => {
+describe('registration order, pinned executably', () => {
   it('an unclaimed /api path is a JSON 404, never the HTML SPA', async () => {
     const res = await app.request('/api/nope', { headers: headers() });
     expect(res.status).toBe(404);
@@ -112,7 +112,7 @@ describe('AC2 — registration order, pinned executably', () => {
   });
 });
 
-describe('AC2 — the mutation controls, each a mis-ordered app built here', () => {
+describe('the mutation controls, each a mis-ordered app built here', () => {
   /** Everything `buildApiApp` does, with the two order-critical steps as knobs. */
   function misordered(options: { terminatorFirst?: boolean; uiBeforeTerminator?: boolean }): Hono {
     const local = new Hono();
@@ -159,7 +159,7 @@ describe('AC2 — the mutation controls, each a mis-ordered app built here', () 
   });
 });
 
-describe('AC1 — the deleted surface reaches the terminator, not a handler', () => {
+describe('the deleted surface reaches the terminator, not a handler', () => {
   const DELETED: readonly [string, string][] = [
     ['POST', '/api/ingest'],
     ['GET', '/api/events'],
@@ -186,7 +186,7 @@ describe('AC1 — the deleted surface reaches the terminator, not a handler', ()
   });
 });
 
-describe('AC4 — auth and host, unchanged', () => {
+describe('auth and host, unchanged', () => {
   it.each(ROUTES)('%s %s 401s with no token', async (method, path) => {
     const res = await app.request(path, { method, headers: { Host: 'localhost' } });
     expect(res.status).toBe(401);

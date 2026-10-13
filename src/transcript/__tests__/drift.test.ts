@@ -7,7 +7,7 @@ import { DriftCounter } from '../drift.js';
 import { classifyLine } from '../line.js';
 import { classifyFixture, ctx } from './fixtures.js';
 
-describe('AC6 — unrecognised top-level fields are counted', () => {
+describe('unrecognised top-level fields are counted', () => {
   it('counts exactly the 3 injected fields and nothing else', () => {
     const { drift } = classifyFixture('drift-injected.jsonl');
     const report = JSON.parse(drift.serialize());
@@ -56,7 +56,7 @@ describe('AC6 — unrecognised top-level fields are counted', () => {
   });
 });
 
-describe('AC6 — unknown line types are counted separately from fields', () => {
+describe('unknown line types are counted separately from fields', () => {
   it('an unnameable type is counted as a type, not as a pile of fields', () => {
     // A whole new type would otherwise flood the field report with its entire legitimate
     // inventory, burying the one field that actually drifted.
@@ -82,7 +82,7 @@ describe('AC6 — unknown line types are counted separately from fields', () => 
   });
 });
 
-describe('AC8 — unjoined tool calls are a scalar, and silence stays silent', () => {
+describe('unjoined tool calls are a scalar, and silence stays silent', () => {
   it('sorts `unjoined_tool_uses` FIRST, proved on a counter carrying two buckets', () => {
     // The ordering claim belongs here and not on a projected fixture: a fixture that drifts
     // one way gives a ONE-KEY object, in which ordering is undefined by vacuity.

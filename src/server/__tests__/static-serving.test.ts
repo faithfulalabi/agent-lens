@@ -102,7 +102,7 @@ function rawGet(port: number, path: string): Promise<RawResponse> {
 
 // --- AC1: the bundle is served, with the right types and caching -------------
 
-describe('AC1 — the built UI is served at / and /assets/*', () => {
+describe('the built UI is served at / and /assets/*', () => {
   it('serves the injected index.html at / with a 200 and no-store', async () => {
     const s = await boot();
     const res = await fetch(s.url('/'));
@@ -164,7 +164,7 @@ describe('AC1 — the built UI is served at / and /assets/*', () => {
   });
 });
 
-describe('AC1 — locating ui/dist', () => {
+describe('locating ui/dist', () => {
   it('resolves ui/dist identically from a source and a built layout', () => {
     // The off-by-one-directory regression: this module sits at `src/server/`
     // under tsx and at `dist/src/server/` once compiled, while `ui/dist` stays
@@ -197,7 +197,7 @@ describe('AC1 — locating ui/dist', () => {
 
 // --- AC2: deep links, JSON API 404s, missing assets --------------------------
 
-describe('AC2 — deep links, API 404s, and missing assets', () => {
+describe('deep links, API 404s, and missing assets', () => {
   it.each(['/session/abc', '/session/abc/trace/3', '/session/abc/trace/0'])(
     'cold-loads %s with the same HTML as /',
     async (path) => {
@@ -244,7 +244,7 @@ describe('AC2 — deep links, API 404s, and missing assets', () => {
   });
 });
 
-describe('AC2 — path traversal', () => {
+describe('path traversal', () => {
   const SENTINEL = 'agent-lens-traversal-sentinel-do-not-serve';
 
   /**
@@ -289,7 +289,7 @@ describe('AC2 — path traversal', () => {
   });
 });
 
-describe('AC2 — the SPA fallback is the last route in the app', () => {
+describe('the SPA fallback is the last route in the app', () => {
   it('shadows anything registered after buildApiApp, specific paths included', async () => {
     // The one-way door, documented executably. Hono matches in registration
     // order and first match wins, so `buildApiApp`'s `app.get('*')` claims every
@@ -325,7 +325,7 @@ describe('AC2 — the SPA fallback is the last route in the app', () => {
 
 // --- AC4: ui/dist absent or stale --------------------------------------------
 
-describe('AC4 — a missing or stale ui/dist degrades, never crashes', () => {
+describe('a missing or stale ui/dist degrades, never crashes', () => {
   /** A path that does not exist, so the server behaves like a fresh clone. */
   function absentUiDir(): string {
     return join(tempDir('absent'), 'never-built');

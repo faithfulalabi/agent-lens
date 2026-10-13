@@ -26,7 +26,7 @@ import {
 
 const KINDS: readonly CorpusKind[] = ['session', 'sidecar', 'excluded', 'ignored'];
 
-describe('AC1 — encodeProjectDir is total and exact', () => {
+describe('encodeProjectDir is total and exact', () => {
   it.each([
     ['/Users/jordan', '-Users-jordan'],
     ['/Users/jordan/Desktop/Harbor', '-Users-jordan-Desktop-Harbor'],
@@ -59,7 +59,7 @@ function countHyphens(parts: readonly string[]): number {
   return parts.reduce((total, part) => total + part.split('-').length - 1, 0);
 }
 
-describe('AC1 — decodeProjectDir is a documented seed, corrected at projection', () => {
+describe('decodeProjectDir is a documented seed, corrected at projection', () => {
   it('returns the naive form, and does NOT claim to be exact', () => {
     // Exact where no path component contains a hyphen…
     expect(decodeProjectDir('-Users-jordan')).toBe('/Users/jordan');
@@ -83,7 +83,7 @@ describe('AC1 — decodeProjectDir is a documented seed, corrected at projection
   });
 });
 
-describe('AC1 — sidecar and tool-results paths are pure string math', () => {
+describe('sidecar and tool-results paths are pure string math', () => {
   it('derives both from the transcript path with zero readdir calls', () => {
     const transcript = '/archive/-Users-dev-proj/abc.jsonl';
     expect(sessionDirOf(transcript)).toBe('/archive/-Users-dev-proj/abc');
@@ -151,7 +151,7 @@ describe('AC1 — sidecar and tool-results paths are pure string math', () => {
   });
 });
 
-describe('AC1/AC3 — workflows classifies three ways', () => {
+describe('workflows classifies three ways', () => {
   const SESSION = `${'-Users-dev-proj'}/abc`;
   const WF = `${SESSION}/subagents/workflows/wf_18e7ec0c-db9`;
 
@@ -183,7 +183,7 @@ describe('AC1/AC3 — workflows classifies three ways', () => {
   });
 });
 
-describe('AC1/AC2 — a sealed path classifies identically to its hot twin', () => {
+describe('a sealed path classifies identically to its hot twin', () => {
   it('strips .zst and keys both to one logical path', () => {
     const hot = '/archive/-Users-dev-proj/abc.jsonl';
     const sealed = `${hot}.zst`;
@@ -195,7 +195,7 @@ describe('AC1/AC2 — a sealed path classifies identically to its hot twin', () 
   });
 });
 
-describe('AC2 — classifyCorpusPath is total', () => {
+describe('classifyCorpusPath is total', () => {
   it('never returns undefined, for any relative path at all', () => {
     fc.assert(
       fc.property(fc.array(fc.string(), { maxLength: 8 }), (parts) => {

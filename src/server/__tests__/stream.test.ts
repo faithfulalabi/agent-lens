@@ -70,7 +70,7 @@ afterEach(async () => {
   hubs = [];
 });
 
-describe('AC1 — the wire vocabulary', () => {
+describe('the wire vocabulary', () => {
   it('is exactly four event names, and none of them is "error"', () => {
     expect([...STREAM_EVENTS].sort()).toEqual([
       'heartbeat',
@@ -91,7 +91,7 @@ describe('AC1 — the wire vocabulary', () => {
   });
 });
 
-describe('AC1 — the three protocol rules, on the raw wire bytes', () => {
+describe('the three protocol rules, on the raw wire bytes', () => {
   it('a heartbeat frame carries an empty data line and no id (rules 1 and 2)', async () => {
     const hub = makeHub();
     const client = attach(hub);
@@ -153,7 +153,7 @@ describe('AC1 — the three protocol rules, on the raw wire bytes', () => {
   });
 });
 
-describe('AC1 — the hub beats on its own timer, independently of the live tick', () => {
+describe('the hub beats on its own timer, independently of the live tick', () => {
   it('keeps beating with no live tick in the test at all', async () => {
     // Founder ruling 3. `startLiveTick` is constructed inside `start.ts`'s
     // `sweepIntervalMs !== 0` gate, and `intervalMs: 0` binds no timer — so a
@@ -183,7 +183,7 @@ describe('AC1 — the hub beats on its own timer, independently of the live tick
   });
 });
 
-describe('AC1 — one stream for the whole app', () => {
+describe('one stream for the whole app', () => {
   it('fans out to every attached client, and an aborted one is dropped AND unparked', async () => {
     const hub = makeHub();
     const survivor = attach(hub);
@@ -252,7 +252,7 @@ function scanAll(): string[] {
   return serverFiles().flatMap((file) => scan(file, readFileSync(join(SERVER_DIR, file), 'utf8')));
 }
 
-describe('AC1 — no ring buffer, stream_id or resume verdict in src/server/**', () => {
+describe('no ring buffer, stream_id or resume verdict in src/server/**', () => {
   it('finds no reintroduced resume machinery', () => {
     expect(
       scanAll(),

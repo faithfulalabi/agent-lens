@@ -38,7 +38,7 @@ function turnAt(result: Projection, seq: number): ProjectedTurn {
   return turn;
 }
 
-describe('AC1 — runPipeline is pure, and writes to exactly one argument', () => {
+describe('runPipeline is pure, and writes to exactly one argument', () => {
   it('projects the same input twice into deeply equal output', () => {
     const { lines } = classifyProjectFixture('turn-kinds.jsonl');
 
@@ -75,7 +75,7 @@ describe('AC1 — runPipeline is pure, and writes to exactly one argument', () =
   });
 });
 
-describe('AC3 — out-of-order input needs no special case, asserted as totality', () => {
+describe('out-of-order input needs no special case, asserted as totality', () => {
   // NOT "the same turns and events as the in-order twin": that property is FALSE
   // by design. Segmentation follows the ARRAY POSITION of the group-carrying
   // line and `seq` IS array position, so moving a line across a boundary is
@@ -118,7 +118,7 @@ describe('AC3 — out-of-order input needs no special case, asserted as totality
   });
 });
 
-describe('AC4 — event ids, and what `seq` is actually derived from', () => {
+describe('event ids, and what `seq` is actually derived from', () => {
   const FIXTURES = [
     'turn-kinds.jsonl',
     'turn-duration.jsonl',
@@ -153,7 +153,7 @@ describe('AC4 — event ids, and what `seq` is actually derived from', () => {
   });
 });
 
-describe('AC1/AC4 — nothing is dropped, and the turn windows tile the events', () => {
+describe('nothing is dropped, and the turn windows tile the events', () => {
   const FIXTURES = ['turn-kinds.jsonl', 'turn-duration.jsonl', 'late-parent.jsonl'];
 
   it.each(FIXTURES)('%s accounts for every unit', (name) => {
@@ -192,7 +192,7 @@ describe('AC1/AC4 — nothing is dropped, and the turn windows tile the events',
   });
 });
 
-describe('AC9 — turn kinds, turn ids and the header envelope', () => {
+describe('turn kinds, turn ids and the header envelope', () => {
   it('reaches all six kinds, so no ladder arm can pass by never firing', () => {
     const result = project('turn-kinds.jsonl');
 
@@ -405,7 +405,7 @@ describe('turns.parent_event_id names the Agent call a machinery turn answers', 
   });
 });
 
-describe('AC5 — a file that projects nothing is not a session', () => {
+describe('a file that projects nothing is not a session', () => {
   it('gives a journal-shaped file no header, no turns and no events', () => {
     const result = project('not-a-session.jsonl');
 
@@ -428,7 +428,7 @@ describe('AC5 — a file that projects nothing is not a session', () => {
   });
 });
 
-describe('AC6 — turns.duration_ms on both paths', () => {
+describe('turns.duration_ms on both paths', () => {
   it.each([
     ['1970-01-01T00:00:00.000Z', 0],
     ['1969-12-31T23:59:59.999Z', -1],
@@ -471,7 +471,7 @@ describe('AC6 — turns.duration_ms on both paths', () => {
   });
 });
 
-describe('AC7 — drift is one column, carrying three buckets', () => {
+describe('drift is one column, carrying three buckets', () => {
   it('serializes exactly the three keys, in order, from ONE counter', () => {
     const result = project('drift-three-ways.jsonl');
     const parsed: Record<string, unknown> = JSON.parse(result.drift);
@@ -491,7 +491,7 @@ describe('AC7 — drift is one column, carrying three buckets', () => {
   });
 });
 
-describe('AC10 — src_offset and src_len are the emitting LINE’s', () => {
+describe('src_offset and src_len are the emitting LINE’s', () => {
   it('measures byte lengths that tile the file, even across multibyte prompts', () => {
     // The loader arm. A `.length`-instead-of-`Buffer.byteLength` regression reds
     // on the first emoji, which is why this drives the multibyte fixture.

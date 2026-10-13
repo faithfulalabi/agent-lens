@@ -87,7 +87,7 @@ function seedCorpus(): string[] {
   return parents;
 }
 
-describe('AC2 — Test 7: the session list is one indexed pass at sort=recent', () => {
+describe('Test 7: the session list is one indexed pass at sort=recent', () => {
   it.each(ALL_SHAPES)('%s plans one row, no temp b-tree, no join, no aggregate', (_name, query) => {
     const built = buildSessionListSql(query);
     const plan = planOf(built);
@@ -101,7 +101,7 @@ describe('AC2 — Test 7: the session list is one indexed pass at sort=recent', 
   });
 });
 
-describe('AC2 — Test 7b: the non-project arm names idx_sessions_recent BY NAME', () => {
+describe('Test 7b: the non-project arm names idx_sessions_recent BY NAME', () => {
   // ★ THIS TEST EXISTS BECAUSE TEST 7 ALONE HAS A HOLE. Executed against the
   // real DDL, all three of these pass every assertion in Test 7 while destroying
   // the list-performance bet:
@@ -131,7 +131,7 @@ describe('AC2 — Test 7b: the non-project arm names idx_sessions_recent BY NAME
   });
 });
 
-describe('AC2 — Test 8: the partial predicate is textually present', () => {
+describe('Test 8: the partial predicate is textually present', () => {
   it.each(ALL_SHAPES)('%s carries WHERE parent_session_id IS NULL', (_name, query) => {
     // Necessary because SQLite reports no `(partial)` marker in the plan text.
     expect(buildSessionListSql(query).sql).toContain('parent_session_id IS NULL');
@@ -142,7 +142,7 @@ describe('AC2 — Test 8: the partial predicate is textually present', () => {
   });
 });
 
-describe('AC2 — Test 10: dropping the partial predicate is a real, reproducible red', () => {
+describe('Test 10: dropping the partial predicate is a real, reproducible red', () => {
   /** The same statement with the partial predicate removed, and nothing else. */
   function withoutPartialPredicate(sql: string): string {
     const stripped = sql
@@ -166,7 +166,7 @@ describe('AC2 — Test 10: dropping the partial predicate is a real, reproducibl
   });
 });
 
-describe('AC2 — Test 11: the id tiebreaker costs no temp b-tree', () => {
+describe('Test 11: the id tiebreaker costs no temp b-tree', () => {
   it('is in the statement and does not degrade the plan', () => {
     // `schema.ts:132-133` claims the v2 DDL fixed the plan-001 "no tiebreaker"
     // wart. Verified rather than trusted.
@@ -178,7 +178,7 @@ describe('AC2 — Test 11: the id tiebreaker costs no temp b-tree', () => {
   });
 });
 
-describe('AC2 — Test 12: the plans do not move under ANALYZE', () => {
+describe('Test 12: the plans do not move under ANALYZE', () => {
   it('is identical before and after, so no CI flake rides on sqlite_stat1', () => {
     for (let n = 0; n < 500; n += 1) {
       seedSessionRow(db, {
@@ -197,7 +197,7 @@ describe('AC2 — Test 12: the plans do not move under ANALYZE', () => {
   });
 });
 
-describe('AC3 — Test 13: the project arm names idx_sessions_project specifically', () => {
+describe('Test 13: the project arm names idx_sessions_project specifically', () => {
   it.each(WITH_PROJECT)('%s rides idx_sessions_project', (_name, query) => {
     // ★ THE DISCRIMINATING ASSERTION. This exact string is the ONLY thing that
     // differs between the correct predicate and the anti-pattern below.
@@ -205,7 +205,7 @@ describe('AC3 — Test 13: the project arm names idx_sessions_project specifical
   });
 });
 
-describe('AC3 — Test 14: the anti-pattern control', () => {
+describe('Test 14: the anti-pattern control', () => {
   // ★ THE WHOLE POINT OF AC3. `AND (? IS NULL OR project_path = ?)` is CORRECT
   // and CLEAN-LOOKING: one plan row, no temp b-tree, no join, and byte-identical
   // rows. It passes every naive assertion while never touching the project index.
@@ -257,7 +257,7 @@ describe('AC3 — Test 14: the anti-pattern control', () => {
   });
 });
 
-describe('AC3 — Test 15: the null-guard disjunction appears nowhere', () => {
+describe('Test 15: the null-guard disjunction appears nowhere', () => {
   // ★ THE TRAILING `\b` IS LOAD-BEARING, and the unanchored pattern the AC is
   // worded with is a FALSE POSITIVE. `WHERE parent_session_id IS NULL ORDER BY`
   // contains the substring "IS NULL OR" — so `/IS NULL OR/i` reds on the
@@ -283,7 +283,7 @@ describe('AC3 — Test 15: the null-guard disjunction appears nowhere', () => {
   });
 });
 
-describe('AC3 — Test 16: the other three sorts pay a temp b-tree, and it is ASSERTED', () => {
+describe('Test 16: the other three sorts pay a temp b-tree, and it is ASSERTED', () => {
   // A comment is not an assertion. Without this limb nothing reds if the plan
   // shifts or if someone adds the three missing indexes, and the "accepted cost"
   // quietly becomes folklore.
@@ -298,7 +298,7 @@ describe('AC3 — Test 16: the other three sorts pay a temp b-tree, and it is AS
   });
 });
 
-describe('AC2 — the other families plan as the approach measured them', () => {
+describe('the other families plan as the approach measured them', () => {
   it('the event page reaches idx_events_session_seq on (session_id, seq)', () => {
     const plan = planOf(buildEventPageSql('s1', { from_seq: 5, limit: 10 }));
 

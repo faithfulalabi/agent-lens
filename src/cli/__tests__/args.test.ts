@@ -68,7 +68,7 @@ const COMMAND_NAMES = ['start', 'doctor', 'archive', 'rebuild', 'warm', 'schedul
 // `agent-lens --help` in COMMAND position is untouched.
 const UNKNOWN_FLAGS = ['--bogus', '--bogus=1', '--data-dir=/nope', '-x', '--help'];
 
-describe('1 — every command refuses an argument it does not recognise (AC1, AC2)', () => {
+describe('1 — every command refuses an argument it does not recognise', () => {
   it.each(COMMAND_NAMES.flatMap((c) => UNKNOWN_FLAGS.map((f) => [c, f] as const)))(
     '%s %s exits 1, names the flag, and writes nothing',
     async (command, flag) => {
@@ -100,7 +100,7 @@ describe('1b — the did-you-mean clause suggests only on an exact normalised hi
   });
 });
 
-describe('2 — the 2026-08-09 incident, as a named regression (AC3)', () => {
+describe('2 — the 2026-08-09 incident, as a named regression', () => {
   it('archive --data-dir=… --transcript-root=… is refused and writes nothing', async () => {
     const s = seeded();
     const decoy = join(s.root, 'decoy');
@@ -148,7 +148,7 @@ function specOf(name: string): ArgSpec {
   return match;
 }
 
-describe('4 — the positive control: every valid flag still parses (AC4)', () => {
+describe('4 — the positive control: every valid flag still parses', () => {
   // Without this the fix could pass by rejecting everything. Both spellings of
   // every `value` flag, every `boolean` flag, and the dash-prefixed slug the
   // `parseStringFlag` docstring (`archive.ts:40-43`) exists for.
@@ -198,7 +198,7 @@ describe('4 — the positive control: every valid flag still parses (AC4)', () =
   });
 });
 
-describe('5 — value consumption matches the parsers exactly (AC4, AC5)', () => {
+describe('5 — value consumption matches the parsers exactly', () => {
   const archiveSpec = specOf('archive');
 
   it('consumes a space-separated value by position, and the parser agrees', () => {
@@ -284,7 +284,7 @@ describe('7 — bare arguments land where each parser actually reads them (OQ4)'
   });
 });
 
-describe('8 — the failure is one actionable line, never a stack (AC6)', () => {
+describe('8 — the failure is one actionable line, never a stack', () => {
   it.each([['--bogus'], ['--dataDir='], ['--dataDir']])('archive %s', async (flag) => {
     seeded();
 

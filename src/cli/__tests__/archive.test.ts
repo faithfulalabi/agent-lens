@@ -135,7 +135,7 @@ function err(
   return { path, message: `Error: ${origin} failed`, origin };
 }
 
-describe('exitCodeFor — the rule, one row per outcome (AC1, AC4)', () => {
+describe('exitCodeFor — the rule, one row per outcome', () => {
   it.each([
     ['a clean pass', resultWith([]), EXIT_OK],
     ['an archive-side error', resultWith([err('archive')]), EXIT_ARCHIVE_ERRORS],
@@ -232,7 +232,7 @@ describe('formatSummary names the error count in its leader (AC — the non-pagi
   });
 });
 
-describe('the spawned binary carries the code (AC2)', () => {
+describe('the spawned binary carries the code', () => {
   it('a clean pass exits 0 — the positive control', async () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(3));
@@ -330,7 +330,7 @@ describe('the spawned binary carries the code (AC2)', () => {
   });
 });
 
-describe('the 1.4 and 1.5 populations diverge, deliberately (AC3)', () => {
+describe('the 1.4 and 1.5 populations diverge, deliberately', () => {
   it('the leaf refusal pages and the log refusal does not, in one assertion', async () => {
     // AC3 as ruled: each population is pinned by its own test above, and the SPLIT
     // between them is asserted here so neither can drift into the other's code by
@@ -366,7 +366,7 @@ describe('the 1.4 and 1.5 populations diverge, deliberately (AC3)', () => {
   });
 });
 
-describe('the codes a wrapper can tell apart (AC1)', () => {
+describe('the codes a wrapper can tell apart', () => {
   // The other half of this pin — an errored pass exits 3 and NOT 1 — rides on the
   // leaf-refusal test above rather than re-planting the same fixture to spawn again.
   it('an unknown command still exits 1 — no pass ran, so nothing is said about the archive', async () => {
@@ -455,7 +455,7 @@ describe('the ship-phase commands stay inside the same code namespace', () => {
   });
 });
 
-describe('the pass outcomes the contract promises stay at 0 (AC4)', () => {
+describe('the pass outcomes the contract promises stay at 0', () => {
   it('a diverged pass exits 0 and reports no error', async () => {
     const s = sb();
     writeArchive(s, SESSION, jsonLines(8));

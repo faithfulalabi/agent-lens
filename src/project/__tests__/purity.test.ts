@@ -138,7 +138,7 @@ function namesClockInText(file: string, text = read(file)): boolean {
   return /\bDate\b/.test(text);
 }
 
-describe('AC1 — src/project/ is pure, asserted over the source text', () => {
+describe('src/project/ is pure, asserted over the source text', () => {
   it('has sources to check at all', () => {
     // Non-vacuity: every `it.each` below is trivially green over an empty list.
     expect(PROJECT_SOURCES.length).toBeGreaterThan(0);
@@ -186,7 +186,7 @@ describe('AC1 — src/project/ is pure, asserted over the source text', () => {
   });
 });
 
-describe('AC2 — no ancestor walk survives anywhere under src/', () => {
+describe('no ancestor walk survives anywhere under src/', () => {
   it('finds the 128-hop walker in no file at all', () => {
     const walker = /MAX_ANCESTOR_HOPS|promptIdViaAncestors/;
     const scanned = sources(SRC_DIR);

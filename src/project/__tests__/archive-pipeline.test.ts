@@ -55,7 +55,7 @@ const PERSISTED_MARKER = '<persisted-output>';
 /** The one shape `epochMs` slices and every ordering compare rests on. */
 const FIXED_WIDTH_Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
-describe('AC6 — the timestamp shape the projector rests on still holds', () => {
+describe('the timestamp shape the projector rests on still holds', () => {
   runIt(
     'every top-level timestamp is the 24-character Z form, and every uuid line carries one',
     () => {
@@ -91,7 +91,7 @@ describe('AC6 — the timestamp shape the projector rests on still holds', () =>
   );
 });
 
-describe('AC3/AC4/AC5/AC9/AC10 — the projector over the whole archive', () => {
+describe('the projector over the whole archive', () => {
   runIt(
     'projects every archived file as a property, never as a count',
     () => {

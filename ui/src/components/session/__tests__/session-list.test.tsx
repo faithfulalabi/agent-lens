@@ -103,7 +103,7 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     expect(hrefs).toEqual(rows.map((s) => hrefFor({ name: 'session', sessionId: s.id })));
   });
 
-  it('spells a zero cost as the em dash and never as a currency amount (AC1a)', () => {
+  it('spells a zero cost as the em dash and never as a currency amount', () => {
     expect(costs, 'one cost chip per row').toHaveLength(300);
     expect(
       costs.filter((c) => c === '—'),
@@ -122,7 +122,7 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     ).toEqual(new Set(['—', '$1.50']));
   });
 
-  it('★ marks the unpriced row and leaves the zero-cost row alone (Test 3, AC3)', () => {
+  it('★ marks the unpriced row and leaves the zero-cost row alone (Test 3)', () => {
     /*
      * ★ THE WHOLE OF AC3, ON THE SAME PAGE. Both rows read `—`, so the screen
      * keeps one spelling of an absent number — and the markup still says which
@@ -185,7 +185,7 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     expect(one).toBe(none + 1);
   });
 
-  it('offers every sortable column as a real button, and no others (AC3)', () => {
+  it('offers every sortable column as a real button, and no others', () => {
     /*
      * ★ CUT FROM FOUR TO TWO BY TASK 5.1, which is an AC and not a weakening:
      * the founder's reading of the four-control strip is that it looks like a

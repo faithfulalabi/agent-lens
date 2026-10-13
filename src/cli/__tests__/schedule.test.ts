@@ -186,7 +186,7 @@ function plantCronLog(s: Sandbox, text: string): void {
   writeFileSync(path, text);
 }
 
-describe('1 — registration and dispatch (AC1, AC7)', () => {
+describe('1 — registration and dispatch', () => {
   it('schedule --bogus is refused before dispatch, exits 1, names the flag', async () => {
     const { code, err } = await runMain(['schedule', '--bogus']);
     expect(code).toBe(1);
@@ -213,7 +213,7 @@ describe('1 — registration and dispatch (AC1, AC7)', () => {
   });
 });
 
-describe('2 — exit codes are 0 and 1 only, never 2, never 3 (AC7)', () => {
+describe('2 — exit codes are 0 and 1 only, never 2, never 3', () => {
   it.each([['bogus-action'], ['on'], ['uninstall']])(
     'unknown action %s exits 1',
     async (action) => {
@@ -235,7 +235,7 @@ describe('2 — exit codes are 0 and 1 only, never 2, never 3 (AC7)', () => {
   });
 });
 
-describe('3 — the wrapper line round-trips through parseCronLog (AC2)', () => {
+describe('3 — the wrapper line round-trips through parseCronLog', () => {
   const wrapper = buildWrapperScript({
     nodePath: '/test/bin/node',
     invocation: { packageRoot: '/pkg', kind: 'source' },
@@ -275,7 +275,7 @@ describe('3 — the wrapper line round-trips through parseCronLog (AC2)', () => 
   });
 });
 
-describe('4 — the generated artifacts are well-formed and non-stale (AC1, AC4)', () => {
+describe('4 — the generated artifacts are well-formed and non-stale', () => {
   it('the plist carries every hand-tuned property under the generic label', () => {
     const plist = buildPlist({ wrapperPath: '/data/schedule/archive.sh', dataDir: '/data' });
     expect(plist).toContain(`<string>${SCHEDULE_LABEL}</string>`);
@@ -340,7 +340,7 @@ describe('4 — the generated artifacts are well-formed and non-stale (AC1, AC4)
   });
 });
 
-describe('5 — turn-on is idempotent: replace, never duplicate (AC3)', () => {
+describe('5 — turn-on is idempotent: replace, never duplicate', () => {
   it('two runs leave exactly one plist and one wrapper, byte-stable', async () => {
     const s = sb();
     const bed = makeDeps(s);
@@ -404,7 +404,7 @@ describe('5 — turn-on is idempotent: replace, never duplicate (AC3)', () => {
   });
 });
 
-describe('6 — turn-off removes what turn-on created, and nothing else (AC3)', () => {
+describe('6 — turn-off removes what turn-on created, and nothing else', () => {
   it('the data dir and home trees return to their pre-turn-on shape', async () => {
     const s = sb();
     const bed = makeDeps(s);
@@ -439,7 +439,7 @@ describe('6 — turn-off removes what turn-on created, and nothing else (AC3)', 
   });
 });
 
-describe('7 — status distinguishes the three states (AC3, AC4)', () => {
+describe('7 — status distinguishes the three states', () => {
   it('no plist → not installed, exit 0, caveat present', async () => {
     const s = sb();
     const { code, out } = await run(dataDirArgs(s, 'status'), makeDeps(s).deps);
@@ -488,7 +488,7 @@ describe('7 — status distinguishes the three states (AC3, AC4)', () => {
   });
 });
 
-describe('8 — a platform that is neither gets an honest pointer, never a silent no-op (AC5)', () => {
+describe('8 — a platform that is neither gets an honest pointer, never a silent no-op', () => {
   it('turn-on refuses with the manual alternative, writes nothing, exits 1', async () => {
     const s = sb();
     const bed = makeDeps(s, { platform: 'win32' });
@@ -553,7 +553,7 @@ describe('9 — the legacy hand-authored job is migrated out, one-way (#83)', ()
   });
 });
 
-describe('10 — the Linux turn-on writes both units and arms the timer (AC1)', () => {
+describe('10 — the Linux turn-on writes both units and arms the timer', () => {
   it('writes timer, service and wrapper, and calls the four verbs in order', async () => {
     const s = sb();
     const bed = linuxBed(s);
@@ -840,7 +840,7 @@ const PLIST_GOLDEN_96cbd39 = [
   '',
 ].join('\n');
 
-describe('12 — the launchd bytes are pinned, so no shared-code change can drift them (AC5)', () => {
+describe('12 — the launchd bytes are pinned, so no shared-code change can drift them', () => {
   it('the wrapper is byte-for-byte what 96cbd39 generated', () => {
     expect(
       buildWrapperScript({
@@ -888,7 +888,7 @@ describe('12 — the launchd bytes are pinned, so no shared-code change can drif
   });
 });
 
-describe('13 — Linux status is a report in every state, always 0 (AC2)', () => {
+describe('13 — Linux status is a report in every state, always 0', () => {
   /** `show` output in the order systemd replies in — not the asked order. */
   const SHOW_REPLY =
     'NextElapseUSecRealtime=Mon 2026-09-14 12:15:00 UTC\n' +
@@ -980,7 +980,7 @@ describe('13 — Linux status is a report in every state, always 0 (AC2)', () =>
   });
 });
 
-describe('14 — the Linux turn-off removes exactly what the turn-on created (AC3)', () => {
+describe('14 — the Linux turn-off removes exactly what the turn-on created', () => {
   it('removes both units, the wants symlink and the wrapper; leaves the rest', async () => {
     const s = sb();
     const bed = linuxBed(s);
@@ -1060,7 +1060,7 @@ describe('14 — the Linux turn-off removes exactly what the turn-on created (AC
   });
 });
 
-describe('15 — two Linux turn-ons leave exactly one timer and one service (AC4)', () => {
+describe('15 — two Linux turn-ons leave exactly one timer and one service', () => {
   it('byte-stable, no temp residue, and nothing is asserted about pass count', async () => {
     const s = sb();
     const bed = linuxBed(s);
@@ -1089,7 +1089,7 @@ describe('15 — two Linux turn-ons leave exactly one timer and one service (AC4
   });
 });
 
-describe('16 — macOS is untouched, and a third platform still gets a pointer (AC5, AC6)', () => {
+describe('16 — macOS is untouched, and a third platform still gets a pointer', () => {
   it('platform darwin still takes the launchd path and no new binary is called', async () => {
     const s = sb();
     const bed = makeDeps(s);
@@ -1127,7 +1127,7 @@ describe('16 — macOS is untouched, and a third platform still gets a pointer (
   });
 });
 
-describe('17 — no real binary and no real unit dir can be reached (AC7)', () => {
+describe('17 — no real binary and no real unit dir can be reached', () => {
   it('the default unit dir is inside the sandbox, never a real ~/.config', () => {
     const s = sb();
     const bed = linuxBed(s);
@@ -1189,7 +1189,7 @@ describe('17 — no real binary and no real unit dir can be reached (AC7)', () =
   });
 });
 
-describe('18 — containment refuses a unit or wrapper path inside the corpus (AC8)', () => {
+describe('18 — containment refuses a unit or wrapper path inside the corpus', () => {
   /** Home AND data dir inside the sandbox corpus, so every target is refused. */
   function cornered(s: Sandbox): { bed: TestBed; inside: string; restore: () => void } {
     const restore = pinSandboxEnv(s);
@@ -1453,7 +1453,7 @@ describe('20 — escapeUnitValue and the pure unit builders', () => {
   });
 });
 
-describe('21 — a built layout whose compiled entry is absent FATALs loudly (AC3)', () => {
+describe('21 — a built layout whose compiled entry is absent FATALs loudly', () => {
   /** `nodePath: process.execPath`, or `[ -x "$NODE" ]` fires first on the bed default. */
   function probe(s: Sandbox): { wrapperPath: string; logPath: string; packageRoot: string } {
     const packageRoot = join(s.root, 'published-pkg');
@@ -1519,7 +1519,7 @@ describe('21 — a built layout whose compiled entry is absent FATALs loudly (AC
   });
 });
 
-describe('22 — turn-on hands the builder its four inputs on a built moduleUrl (AC2)', () => {
+describe('22 — turn-on hands the builder its four inputs on a built moduleUrl', () => {
   it('the wrapper on disk is exactly what those four inputs produce', async () => {
     const s = sb();
     const builtUrl = pathToFileURL(

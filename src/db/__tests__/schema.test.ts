@@ -214,7 +214,7 @@ function columnNames(handle: DatabaseSync, table: string): string[] {
     .map((row) => String((row as { name: unknown }).name));
 }
 
-describe('the v2 DDL survives the transport (AC1)', () => {
+describe('the v2 DDL survives the transport', () => {
   it('execs and creates every declared object, at the declared version', () => {
     const handle = freshDb();
 
@@ -245,7 +245,7 @@ describe('the v2 DDL survives the transport (AC1)', () => {
   });
 });
 
-describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => {
+describe('★ the full column set of every table, as SET EQUALITY', () => {
   it.each([
     ['sessions', SESSIONS_COLUMNS, 53],
     ['turns', TURNS_COLUMNS, 19],
@@ -547,7 +547,7 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
   ['events', 'agent_status'],
 ];
 
-describe('the audit changed comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
+describe('the audit changed comments only — the statements did not move, and 7.5 added exactly two', () => {
   it('the DDL, stripped of comments, equals main @ d5c66d1 plus every later statement exactly', () => {
     expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt004()));
   });
@@ -559,7 +559,7 @@ describe('the audit changed comments only — the statements did not move, and 7
   });
 });
 
-describe('measurement markers landed at the declared lines (AC4)', () => {
+describe('measurement markers landed at the declared lines', () => {
   it.each(AUDITED_COLUMNS)('%s.%s carries a dated MEASURED marker', (table, column) => {
     expect(columnBlock(table, column)).toMatch(/MEASURED 2026-/);
   });
@@ -575,7 +575,7 @@ describe('measurement markers landed at the declared lines (AC4)', () => {
   });
 });
 
-describe('events_fts is wired, not merely declared (AC7)', () => {
+describe('events_fts is wired, not merely declared', () => {
   it('an external-content insert round-trips through MATCH', () => {
     // The assertion `payloads_fts` never had: migration 001 created it, nothing
     // populated it, and no test could tell the difference. Population itself is

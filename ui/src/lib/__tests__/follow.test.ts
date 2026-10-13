@@ -31,7 +31,7 @@ function run(...actions: FollowAction[]): FollowState {
   return actions.reduce(followReducer, initialFollowState);
 }
 
-describe('the follow state machine (AC3)', () => {
+describe('the follow state machine', () => {
   it('follows from the moment a session opens', () => {
     expect(initialFollowState).toEqual({ following: true, pending: 0 });
   });
@@ -107,7 +107,7 @@ describe('the follow state machine (AC3)', () => {
   });
 });
 
-describe('the pill copy (AC3)', () => {
+describe('the pill copy', () => {
   it.each([
     ['while following', { following: true, pending: 0 }, null],
     ['while following with a stale count', { following: true, pending: 4 }, null],
@@ -119,7 +119,7 @@ describe('the pill copy (AC3)', () => {
   });
 });
 
-describe('at-the-end, to within the epsilon (AC3)', () => {
+describe('at-the-end, to within the epsilon', () => {
   const metrics = (scrollTop: number) => ({ scrollTop, scrollHeight: 1000, clientHeight: 400 });
 
   it.each([
@@ -137,7 +137,7 @@ describe('at-the-end, to within the epsilon (AC3)', () => {
 
 /* ------------------------------------------- the wiring, as source text --- */
 
-describe('the session view is wired to the reducer (AC3)', () => {
+describe('the session view is wired to the reducer', () => {
   it('pauses the tail when a row is selected', () => {
     expect(SESSION_VIEW, 'reading beats following — 04-live-tail.md:18').toContain(
       "dispatchFollow({ type: 'selected' })",

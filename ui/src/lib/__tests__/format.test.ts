@@ -267,7 +267,7 @@ describe('formatStartedAt switches from an interval to a calendar day at 24h', (
 
 /* ------------------------------------------------- Test 5 (task 5.4) --- */
 
-describe('formatEventTime gives a reading order inside one day (AC2)', () => {
+describe('formatEventTime gives a reading order inside one day', () => {
   const first = makeEventRow({ ts: '2026-07-29T09:00:00.000Z' });
   const later = makeEventRow({ ts: '2026-07-29T09:01:30.000Z' });
 
@@ -318,7 +318,7 @@ describe('formatEventTime gives a reading order inside one day (AC2)', () => {
 
 /* ------------------------------------------------- Test 7 (task 5.4) --- */
 
-describe('previewOf still clamps at 96 after the move out of SpanRow (AC2)', () => {
+describe('previewOf still clamps at 96 after the move out of SpanRow', () => {
   it('cuts a 200-character body to 96 characters plus the ellipsis', () => {
     const clamped = previewOf('x'.repeat(200));
     expect(PREVIEW_CHARS).toBe(96);

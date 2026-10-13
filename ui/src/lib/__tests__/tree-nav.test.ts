@@ -341,7 +341,7 @@ describe('selection and focus are independent, and both stay legal', () => {
 
 /* ------------------------- Task 5.5 — the load-event transformer ---------- */
 
-describe('expandMany opens what a load event brings, and only that (Test 2, AC1)', () => {
+describe('expandMany opens what a load event brings, and only that (Test 2)', () => {
   /*
    * A TRANSFORMER, not a third `NavAction`. `NavAction` is a closed two-arm
    * union and `navReducer` has no default arm, so a third variant would need a

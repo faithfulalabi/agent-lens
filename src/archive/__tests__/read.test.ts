@@ -30,7 +30,7 @@ function plantSealed(rel: string, body: string): string {
   return logical;
 }
 
-describe('AC3 — one accessor, two storage states, byte-identical (Test 6)', () => {
+describe('one accessor, two storage states, byte-identical (Test 6)', () => {
   it('returns the same bytes at every offset before and after sealing', () => {
     const body = transcriptLines(300);
     const logical = plant(`${SLUG}/sess-1.jsonl`, body);
@@ -100,7 +100,7 @@ describe('AC3 — one accessor, two storage states, byte-identical (Test 6)', ()
   });
 });
 
-describe('AC4 — the LRU decompresses once and stays bounded (Tests 8 and 9)', () => {
+describe('the LRU decompresses once and stays bounded (Tests 8 and 9)', () => {
   it('five reads of one sealed file are one miss and four hits', () => {
     const logical = plantSealed(`${SLUG}/sess-1.jsonl`, transcriptLines(200));
     const reader = createArchiveReader({ maxEntries: 2 });
@@ -225,7 +225,7 @@ describe('the frame header parse itself, across the widths zstd actually emits',
   });
 });
 
-describe('AC3/AC4 — a truncated .zst is caught by the frame header (Test 10)', () => {
+describe('a truncated .zst is caught by the frame header (Test 10)', () => {
   const PARAMS = {
     [zlibConstants.ZSTD_c_compressionLevel]: 3,
     [zlibConstants.ZSTD_c_contentSizeFlag]: 1,

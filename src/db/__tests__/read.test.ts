@@ -100,7 +100,7 @@ function seedFull(id = 'sess-full'): string {
   return id;
 }
 
-describe('AC1 — the eight query families return the spec shapes', () => {
+describe('the eight query families return the spec shapes', () => {
   it('1. readSessionList rows carry exactly SessionRow, minus the server-stamped `live`', () => {
     seedSessionRow(db, { id: 's1' });
     const page = readSessionList(db, PAGE);
@@ -363,7 +363,7 @@ describe('AC1 — the eight query families return the spec shapes', () => {
   });
 });
 
-describe('AC1 — Page<T> identity, sub_* pinning, and the snippet column index', () => {
+describe('Page<T> identity, sub_* pinning, and the snippet column index', () => {
   it('2. readSessionList returns exactly {items, limit, offset, has_more} — no `total`', () => {
     seedSessionRow(db, { id: 's1' });
     // The `satisfies` is the type-level half: an extra key such as `total` on
@@ -437,7 +437,7 @@ describe('AC1 — Page<T> identity, sub_* pinning, and the snippet column index'
   });
 });
 
-describe('AC2 — sidecars never enter the session list', () => {
+describe('sidecars never enter the session list', () => {
   it('9. a sidecar with a NEWER last_activity_at than every parent is still excluded', () => {
     const parents = ['p1', 'p2', 'p3'];
     for (const [index, id] of parents.entries()) {
@@ -470,7 +470,7 @@ describe('AC2 — sidecars never enter the session list', () => {
   });
 });
 
-describe('AC3 — sort, ordering and the q filter are correct', () => {
+describe('sort, ordering and the q filter are correct', () => {
   const seedSorted = (): void => {
     seedSessionRow(db, {
       id: 'low',
@@ -548,7 +548,7 @@ describe('AC3 — sort, ordering and the q filter are correct', () => {
   });
 });
 
-describe('AC4 — has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
+describe('has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
   // ★ The reviewed allowlist, not a blanket exemption. `present: false` is what a
   // future `GROUP BY harness_version` must flip to land — which makes adding one
   // a reviewed act instead of a silent one.
@@ -725,7 +725,7 @@ describe('AC4 — has_more is a LIMIT n+1 probe, never a COUNT(*)', () => {
 
 // --- Task 6.1's two live-diff readers ---------------------------------------
 
-describe('AC1 — the live diff reads through the one door', () => {
+describe('the live diff reads through the one door', () => {
   const OTHER = 'sess-other';
 
   beforeEach(() => {
@@ -783,7 +783,7 @@ describe('AC1 — the live diff reads through the one door', () => {
 // result contain, so before the phrase fallback the shipped route answered 500
 // or 400 for the search this feature exists to serve.
 
-describe('AC1 — searchEvents answers real query shapes instead of throwing', () => {
+describe('searchEvents answers real query shapes instead of throwing', () => {
   /** One row carrying every literal shape below, so a hit proves the term matched. */
   function seedShapes(): void {
     seedSessionRow(db, { id: 'shapes' });

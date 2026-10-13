@@ -34,7 +34,7 @@ function bytes(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-describe('AC1 — the join folds one row, and the result contributes none', () => {
+describe('the join folds one row, and the result contributes none', () => {
   it('turns a call and its result into ONE tool_call row', () => {
     const result = project('tool-join.jsonl');
     const call = callAt(result, 'toolu_ok');
@@ -72,7 +72,7 @@ describe('AC1 — the join folds one row, and the result contributes none', () =
   });
 });
 
-describe('AC2 — the status ladder, four arms and the order that decides two', () => {
+describe('the status ladder, four arms and the order that decides two', () => {
   it('reads `error` from `is_error === true` EXACTLY, never from its absence', () => {
     const result = project('tool-join.jsonl');
 
@@ -115,7 +115,7 @@ describe('AC2 — the status ladder, four arms and the order that decides two', 
   });
 });
 
-describe('AC3 — the duration is labelled `elapsed`, and clamps rather than lies', () => {
+describe('the duration is labelled `elapsed`, and clamps rather than lies', () => {
   it.each(['tool-join.jsonl', 'async-agent.jsonl', 'large-output.jsonl'])(
     '%s stamps every joined call `elapsed` with a non-negative duration',
     (name) => {
@@ -170,7 +170,7 @@ describe('AC3 — the duration is labelled `elapsed`, and clamps rather than lie
   });
 });
 
-describe('AC4 — the back-patch gate is the tool NAME, and the marker is `startsWith`', () => {
+describe('the back-patch gate is the tool NAME, and the marker is `startsWith`', () => {
   it('patches nothing on a non-Agent row a notification happens to name', () => {
     // Without this the implementation destroys the 5 measured non-Agent targets,
     // 2 of which carry 290 B of real output and no `<result>` tag at all.
@@ -218,7 +218,7 @@ describe('AC4 — the back-patch gate is the tool NAME, and the marker is `start
   });
 });
 
-describe('AC5 — the back-patch, both arms, across turns', () => {
+describe('the back-patch, both arms, across turns', () => {
   it('publishes the `<result>` payload and the `<status>`, never the boilerplate', () => {
     const result = project('async-agent.jsonl');
     const patched = callAt(result, 'toolu_marker');
@@ -289,7 +289,7 @@ describe('AC5 — the back-patch, both arms, across turns', () => {
   });
 });
 
-describe('AC6 — the output storage split, and the coordinates on both arms', () => {
+describe('the output storage split, and the coordinates on both arms', () => {
   it('stores an under-cap output inline, with the full text', () => {
     const call = callAt(project('tool-join.jsonl'), 'toolu_ok');
 
@@ -327,7 +327,7 @@ describe('AC6 — the output storage split, and the coordinates on both arms', (
   });
 });
 
-describe('AC7 — the spill mark, and it OVERRIDES the size rule', () => {
+describe('the spill mark, and it OVERRIDES the size rule', () => {
   it('marks a 2 KB spill claim `spill`, not `inline`', () => {
     // All 61 claims measure 1,480–6,286 B, far UNDER the cap, so the size rule
     // alone would publish `"<persisted-output>\nOutput too large…"` as output.
@@ -357,7 +357,7 @@ describe('AC7 — the spill mark, and it OVERRIDES the size rule', () => {
   });
 });
 
-describe('AC8 — an unanswered call is counted, and silence stays silent', () => {
+describe('an unanswered call is counted, and silence stays silent', () => {
   it('reports `unjoined_tool_uses` for the one call nothing answered', () => {
     // ⚠️ NOT an ordering claim: this fixture drifts one way only, so its
     // `drift_json` is a ONE-KEY object and any ordering assertion on it is
@@ -371,7 +371,7 @@ describe('AC8 — an unanswered call is counted, and silence stays silent', () =
   });
 });
 
-describe('AC10 — the input columns, and `text_bytes` in every arm', () => {
+describe('the input columns, and `text_bytes` in every arm', () => {
   it('splits input three ways, and sizes the payload rather than the preview', () => {
     const result = project('large-output.jsonl');
 

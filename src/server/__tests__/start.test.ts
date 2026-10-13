@@ -177,7 +177,7 @@ describe('startServer — boot hermeticity', () => {
  * production sequence is the inverse — the server goes down with a browser tab
  * still attached — which is exactly the case that once hung.
  */
-describe('startServer — closing with an /api/stream client attached (AC2b)', () => {
+describe('startServer — closing with an /api/stream client attached', () => {
   it('ends the attached body immediately and never waits on it forever', async () => {
     const booted = await bootTestServer({ sweepIntervalMs: 0 });
     const res = await fetch(booted.url('/api/stream'), {

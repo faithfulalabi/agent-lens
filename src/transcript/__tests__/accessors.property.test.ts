@@ -163,7 +163,7 @@ const HOSTILE: readonly (readonly [string, () => unknown])[] = [
   ['a plain array', () => [1, 2, 3]],
 ];
 
-describe('AC2 — every accessor is total under generated input', () => {
+describe('every accessor is total under generated input', () => {
   it.each(ACCESSORS)('%s never throws on anything fast-check can build', (name, fn) => {
     fc.assert(
       fc.property(
@@ -188,7 +188,7 @@ describe('AC2 — every accessor is total under generated input', () => {
   });
 });
 
-describe('AC2 — every accessor is total under the hostile table', () => {
+describe('every accessor is total under the hostile table', () => {
   it.each(ACCESSORS)('%s never throws on any hand-built hostile input', (name, fn) => {
     for (const [label, make] of HOSTILE) {
       assertContract(name, fn, make(), label);
@@ -206,7 +206,7 @@ describe('AC2 — every accessor is total under the hostile table', () => {
   });
 });
 
-describe('AC2 — the accessors accept their own type by reference', () => {
+describe('the accessors accept their own type by reference', () => {
   // Non-vacuity for the properties above: five functions that ignored their
   // input and always answered the fallback would satisfy every "never throws"
   // assertion in this file.

@@ -38,7 +38,7 @@ function userLine(text: string, extra: Record<string, unknown> = {}): ParsedLine
   );
 }
 
-describe('AC6 — ★ a line that is not a user line is never human', () => {
+describe('★ a line that is not a user line is never human', () => {
   it('refuses an assistant line carrying ordinary prose', () => {
     // Real archive text. With every other clause applied but the `kind` guard,
     // 1,149 assistant lines score human against an oracle of 90 — a 12.8x
@@ -81,7 +81,7 @@ describe('AC6 — ★ a line that is not a user line is never human', () => {
   );
 });
 
-describe('AC7 — the origin fast path is authoritative in both directions', () => {
+describe('the origin fast path is authoritative in both directions', () => {
   const TEXT = 'ship task 2.3 and open the draft PR';
 
   const CASES: ReadonlyArray<readonly [string | undefined, boolean, boolean]> = [
@@ -118,7 +118,7 @@ describe('AC7 — the origin fast path is authoritative in both directions', () 
   });
 });
 
-describe('AC8 — every independently reachable fallback clause is load-bearing', () => {
+describe('every independently reachable fallback clause is load-bearing', () => {
   const PROSE = 'ship task 2.3 and open the draft PR';
 
   it('calls ordinary typed prose human, so the table below is not vacuous', () => {
@@ -184,7 +184,7 @@ describe('AC8 — every independently reachable fallback clause is load-bearing'
   });
 });
 
-describe('AC10 — sub-agent prompts are not human', () => {
+describe('sub-agent prompts are not human', () => {
   it('refuses a real ship-task prompt: sidechain, no origin, pure prose', () => {
     // 235 sidechain `user` lines carry origin-less, tag-less prose today, and
     // every one is an agent prompt. Without `isSidechain !== true` the fallback
@@ -201,7 +201,7 @@ describe('AC10 — sub-agent prompts are not human', () => {
   });
 });
 
-describe('AC12 — ★ the fallback reads top-level text blocks and nothing else', () => {
+describe('★ the fallback reads top-level text blocks and nothing else', () => {
   const PROSE = 'ship task 2.3 and open the draft PR';
 
   it('ignores prose that lives inside a tool_result, bare-string content and array alike', () => {
@@ -255,7 +255,7 @@ describe('AC12 — ★ the fallback reads top-level text blocks and nothing else
   });
 });
 
-describe('AC11 — isHumanPrompt is total', () => {
+describe('isHumanPrompt is total', () => {
   it('never throws on any line fast-check can build', () => {
     fc.assert(
       fc.property(fc.anything({ maxDepth: 4, withBigInt: true, withMap: true }), (value) => {

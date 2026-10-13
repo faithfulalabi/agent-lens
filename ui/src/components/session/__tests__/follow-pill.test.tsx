@@ -9,7 +9,7 @@ import { FollowPill } from '../FollowPill';
  * page module that owns the state cannot be rendered past its pending branch.
  */
 
-describe('the follow pill draws only while paused (AC3)', () => {
+describe('the follow pill draws only while paused', () => {
   it.each([true, false])('renders nothing with an empty backlog (following: %s)', (following) => {
     expect(renderToStaticMarkup(<FollowPill label={pillLabel({ following, pending: 0 })} />)).toBe(
       '',

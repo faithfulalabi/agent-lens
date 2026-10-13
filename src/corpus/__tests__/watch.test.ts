@@ -116,7 +116,7 @@ afterEach(() => {
   cleanup(sandbox);
 });
 
-describe('AC3 — no sessions row is ever created for the journal', () => {
+describe('no sessions row is ever created for the journal', () => {
   it('creates none, on a full sweep', () => {
     sweep().tick();
     const found = db
@@ -220,7 +220,7 @@ describe('the anti-silence contract — nothing leaves the sweep unnamed', () =>
   });
 });
 
-describe('AC4 — watching is a poll, and no fs.watch call site exists in src/', () => {
+describe('watching is a poll, and no fs.watch call site exists in src/', () => {
   const SRC_DIR = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   const FS_MODULES = new Set(['node:fs', 'node:fs/promises', 'fs', 'fs/promises']);
   const WATCH_CALLEES = new Set(['watch', 'watchFile', 'unwatchFile']);
@@ -341,7 +341,7 @@ describe('AC4 — watching is a poll, and no fs.watch call site exists in src/',
   });
 });
 
-describe('AC4 — the interval is 1 Hz, unref`d, and close() clears it', () => {
+describe('the interval is 1 Hz, unref`d, and close() clears it', () => {
   it('binds setInterval at 1000 ms, ticks once per period, and stops on close', () => {
     vi.useFakeTimers();
     try {
@@ -391,7 +391,7 @@ describe('AC4 — the interval is 1 Hz, unref`d, and close() clears it', () => {
   });
 });
 
-describe('AC5 — wave 1 is the first-paint contract', () => {
+describe('wave 1 is the first-paint contract', () => {
   it('indexes newest-first', () => {
     // PARENT is newer than OTHER, so it must land first.
     sweep().wave1();
@@ -439,7 +439,7 @@ describe('AC5 — wave 1 is the first-paint contract', () => {
   });
 });
 
-describe('AC5 — wave 2 folds the tree and flips exactly what it folded', () => {
+describe('wave 2 folds the tree and flips exactly what it folded', () => {
   it('projects, rolls up transitively, and never re-runs wave 1', () => {
     const made = sweep();
     made.wave1();
@@ -517,7 +517,7 @@ describe('AC5 — wave 2 folds the tree and flips exactly what it folded', () =>
   });
 });
 
-describe('AC5 — the wave-2 fixpoint reaches depth 2', () => {
+describe('the wave-2 fixpoint reaches depth 2', () => {
   it('rolls a grandchild`s totals all the way to the top-level parent', () => {
     // A grandchild lives in the SAME flat `subagents/` listing, joined by its
     // parent sidecar`s own Agent call — fact 6`s shape.

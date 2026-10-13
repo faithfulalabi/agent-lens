@@ -171,7 +171,7 @@ describe('a session id after a flag rebuilds it, and the cache survives', () => 
   });
 });
 
-describe('1 + 2 — the whole-cache rebuild, and the lock that refuses it (AC1)', () => {
+describe('1 + 2 — the whole-cache rebuild, and the lock that refuses it', () => {
   it('removes cache.db, -wal and -shm, and the next open recreates the schema', async () => {
     const s = sb();
     seedArchive(s, IDS[0]!);
@@ -222,7 +222,7 @@ describe('1 + 2 — the whole-cache rebuild, and the lock that refuses it (AC1)'
   });
 });
 
-describe('3 + 4 — the single-session rebuild (AC1)', () => {
+describe('3 + 4 — the single-session rebuild', () => {
   it('repopulates events, turns and FTS, and leaves the row warm', async () => {
     const s = sb();
     seedArchive(s, IDS[0]!);
@@ -299,7 +299,7 @@ describe('3 + 4 — the single-session rebuild (AC1)', () => {
   });
 });
 
-describe('5 — took_ms is a diagnostic, pinned to nothing (AC1, re-worded)', () => {
+describe('5 — took_ms is a diagnostic, pinned to nothing (re-worded)', () => {
   it('prints a measured number and asserts no bound on it', async () => {
     // `corpus/__tests__/corpus.test.ts:4-9`'s rule: assert the property, print
     // the number. The 45 ms figure this task inherited traces to ~26 sessions

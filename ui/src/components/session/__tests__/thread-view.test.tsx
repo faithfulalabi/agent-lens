@@ -32,7 +32,7 @@ function occurrences(markup: string, pattern: RegExp): number {
 
 /* ---------------------------------------- the reading surface itself --- */
 
-describe('the thread is a native ordered list the gate can read (AC-R1)', () => {
+describe('the thread is a native ordered list the gate can read', () => {
   const markup = threadMarkup([{ kind: 'tool_call' }, { kind: 'prompt', text: 'hello' }]);
 
   it('keeps every event in a list, with activity in a nested disclosure', () => {
@@ -63,7 +63,7 @@ describe('the thread is a native ordered list the gate can read (AC-R1)', () => 
     expect(markup).not.toContain('data-event-kind');
   });
 
-  it('windows nothing — every row is in the document (AC-R1 clause c)', () => {
+  it('windows nothing — every row is in the document', () => {
     // A virtualizer would make the gate's rendered-marker count vacuous: fewer
     // markers than events would prove the window, not the model.
     const big = threadMarkup(Array.from({ length: 200 }, () => ({ kind: 'thinking' })));
@@ -74,7 +74,7 @@ describe('the thread is a native ordered list the gate can read (AC-R1)', () => 
 
 /* -------------------------------------------- Test 4 — the tool row --- */
 
-describe('every tool call is available inside its disclosure (Test 4, AC2)', () => {
+describe('every tool call is available inside its disclosure (Test 4)', () => {
   const markup = threadMarkup([
     {
       kind: 'tool_call',
@@ -112,7 +112,7 @@ describe('every tool call is available inside its disclosure (Test 4, AC2)', () 
     expect(bare).not.toContain('data-slot="thread-output"');
   });
 
-  it('spells an unmeasured duration as the em dash, never as 0ms (Test 6, AC2)', () => {
+  it('spells an unmeasured duration as the em dash, never as 0ms (Test 6)', () => {
     const unmeasured = threadMarkup([{ kind: 'tool_call', duration_ms: null }]);
     expect(unmeasured).toContain('—');
     expect(unmeasured).not.toContain('0ms');
@@ -121,7 +121,7 @@ describe('every tool call is available inside its disclosure (Test 4, AC2)', () 
 
 /* ---------------------------------- Test 5 — the reading order in a day --- */
 
-describe('two events in one day read as two different times (Test 5, AC2)', () => {
+describe('two events in one day read as two different times (Test 5)', () => {
   it('gives a 90-second gap two distinct wall clocks', () => {
     // `formatStartedAt` would answer `Nm ago` for both, i.e. the identical
     // string on every row of a same-day session. That is not a reading order.
@@ -153,7 +153,7 @@ describe('two events in one day read as two different times (Test 5, AC2)', () =
 
 /* ------------------------------------- Test 8/9 — the reasoning marker --- */
 
-describe('thinking rows carry the marker, and none is empty (Test 8, AC3)', () => {
+describe('thinking rows carry the marker, and none is empty (Test 8)', () => {
   it('renders one marker per event, with the copy verbatim', () => {
     const markup = threadMarkup(
       Array.from({ length: 3 }, () => ({ kind: 'thinking', text: REASONING_NOT_RECORDED })),
@@ -178,7 +178,7 @@ describe('thinking rows carry the marker, and none is empty (Test 8, AC3)', () =
     expect(markup).not.toMatch(/<details[^>]*\bopen(?:=|>)/);
   });
 
-  it('renders recorded reasoning as prose in the ordinary colour (Test 9, AC3)', () => {
+  it('renders recorded reasoning as prose in the ordinary colour (Test 9)', () => {
     const markup = threadMarkup([{ kind: 'thinking', text: 'read the file first' }]);
 
     expect(markup).toContain('read the file first');
@@ -193,7 +193,7 @@ describe('thinking rows carry the marker, and none is empty (Test 8, AC3)', () =
 
 /* -------------------------------------- Test 10/11 — the drift alarm --- */
 
-describe('an unrecognized record is shown, never swallowed (Test 10/11, AC3)', () => {
+describe('an unrecognized record is shown, never swallowed (Test 10/11)', () => {
   const markup = threadMarkup([
     { kind: 'unknown', raw_type: 'system', raw_subtype: 'turn_duration', text: null },
   ]);
@@ -244,7 +244,7 @@ describe('prose renders whole, at the reading step', () => {
 
 /* ----------------------------------------- Test 12 — the view toggle --- */
 
-describe('the view toggle is props-in and reachable (Test 12, AC-R1)', () => {
+describe('the view toggle is props-in and reachable (Test 12)', () => {
   const session = makeSessionRow();
 
   it.each([

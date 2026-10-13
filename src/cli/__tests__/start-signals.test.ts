@@ -153,7 +153,7 @@ async function deadPid(): Promise<number> {
   return child.pid!;
 }
 
-describe('agent-lens start — one shutdown for three signals (AC1, AC2, AC3)', () => {
+describe('agent-lens start — one shutdown for three signals', () => {
   it.each(SIGNALS)(
     'exits through its own handler on %s and leaves no config.json',
     async (signal) => {
@@ -169,7 +169,7 @@ describe('agent-lens start — one shutdown for three signals (AC1, AC2, AC3)', 
   );
 });
 
-describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', () => {
+describe('agent-lens start — shutdown with a live /api/stream client', () => {
   it.each(SIGNALS)(
     'exits on %s within a bounded time while a client holds the stream open',
     async (signal) => {
@@ -190,7 +190,7 @@ describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', 
   );
 
   it(
-    'two different signals back-to-back produce exactly one shutdown (AC3b)',
+    'two different signals back-to-back produce exactly one shutdown',
     async () => {
       const collector = await boot();
       await attachStream(collector);
@@ -212,7 +212,7 @@ describe('agent-lens start — shutdown with a live /api/stream client (AC2b)', 
   );
 });
 
-describe('agent-lens start — source-text pins (AC1, AC3)', () => {
+describe('agent-lens start — source-text pins', () => {
   // A deterministic backstop, NOT the primary evidence for the guard: a
   // `toContain('closing')` is satisfiable by a comment. The behavioural proof is
   // the back-to-back-signals test above.
@@ -244,7 +244,7 @@ describe('agent-lens start — source-text pins (AC1, AC3)', () => {
   });
 });
 
-describe('agent-lens start — a stale config.json is overwritten, not consulted (AC4)', () => {
+describe('agent-lens start — a stale config.json is overwritten, not consulted', () => {
   it(
     'binds normally against a config naming a dead pid and rewrites it',
     async () => {

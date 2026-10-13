@@ -309,7 +309,7 @@ function stateOf(dataDir: string, ids: readonly string[]): Map<string, [string, 
 
 /* --------------------------------------------------------------- AC1 --- */
 
-describe('AC1 — the 202 is on the wire before any projection begins', () => {
+describe('the 202 is on the wire before any projection begins', () => {
   it('1b. start() returns without having warmed anything', () => {
     // ★ REHOMED FROM `api-routes.test.ts`, WHERE IT WAS VACUOUS. All three rows
     // there share a `last_activity_at`, so the newest is `SEEDED`, whose archive
@@ -363,7 +363,7 @@ describe('AC1 — the 202 is on the wire before any projection begins', () => {
 
 /* --------------------------------------------------------------- AC2 --- */
 
-describe('AC2 — the run is newest-first and ends at done == total', () => {
+describe('the run is newest-first and ends at done == total', () => {
   it('4. sessions are projected in the reader’s newest-first order', async () => {
     const dataDir = scratchDir();
     const db = scratchDb();
@@ -507,7 +507,7 @@ describe('AC2 — the run is newest-first and ends at done == total', () => {
 
 /* --------------------------------------------------------------- AC3 --- */
 
-describe('AC3 — the yield leaves the event loop to everything else', () => {
+describe('the yield leaves the event loop to everything else', () => {
   it(
     '8. a repeating timer keeps firing during a warm — with its mutation control',
     { timeout: 30_000 },
@@ -681,7 +681,7 @@ describe('AC3 — the yield leaves the event loop to everything else', () => {
 
 /* --------------------------------------------------------------- AC4 --- */
 
-describe('AC4 — a second POST double-queues nothing', () => {
+describe('a second POST double-queues nothing', () => {
   it('11. two starts back to back produce exactly N frames', async () => {
     const dataDir = scratchDir();
     const db = scratchDb();
@@ -716,7 +716,7 @@ describe('AC4 — a second POST double-queues nothing', () => {
 
 /* -------------------------------------------------------- real corpus --- */
 
-describe('AC2/AC3 — the real archive, opt-in', () => {
+describe('the real archive, opt-in', () => {
   runIt(
     '12. a whole-corpus warm drains, and no turn runs more than one session',
     { timeout: 600_000 },

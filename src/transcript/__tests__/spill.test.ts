@@ -90,7 +90,7 @@ function markerLine(text: string, arrayForm = false): Record<string, unknown> {
   };
 }
 
-describe('AC2 — the structured pointer wins and is recorded verbatim', () => {
+describe('the structured pointer wins and is recorded verbatim', () => {
   it('resolves to the declared path when the file is there', () => {
     const state = resolvePersistedOutput(pointerLine(DECLARED), envWith([DECLARED]));
 
@@ -151,7 +151,7 @@ describe('AC2 — the structured pointer wins and is recorded verbatim', () => {
   });
 });
 
-describe('AC2 — the marker parses only when it is anchored at index 0', () => {
+describe('the marker parses only when it is anchored at index 0', () => {
   it('resolves a marker block at index 0', () => {
     const state = resolvePersistedOutput(markerLine(markerBlock(DECLARED)), envWith([DECLARED]));
 
@@ -183,7 +183,7 @@ describe('AC2 — the marker parses only when it is anchored at index 0', () => 
   });
 });
 
-describe('AC4 — both measured phrasings parse, and the elided form fabricates nothing', () => {
+describe('both measured phrasings parse, and the elided form fabricates nothing', () => {
   // Measured over the frozen archive: all 53 marker blocks use the single
   // phrasing below, and all 43 structured references carry an absolute path.
   it.each([
@@ -224,7 +224,7 @@ describe('AC4 — both measured phrasings parse, and the elided form fabricates 
   });
 });
 
-describe('AC5 — basename resolution assumes nothing about tool_use_id', () => {
+describe('basename resolution assumes nothing about tool_use_id', () => {
   // Measured over the frozen archive: 43 structured references, of which 0
   // basenames start with `toolu_` and 0 equal `<tool_use_id>.txt`. A resolver
   // deriving `tool-results/<tool_use_id>.txt` succeeds ZERO times.
@@ -275,7 +275,7 @@ describe('AC5 — basename resolution assumes nothing about tool_use_id', () => 
   });
 });
 
-describe('AC6 — the ladder climbs to the session root', () => {
+describe('the ladder climbs to the session root', () => {
   // A marker in `subagents/workflows/wf_*/agent-*.jsonl` has its spill in the
   // GRANDPARENT session directory. Measured: 25 of 43 references sit in a
   // sidecar, "look next to the transcript" resolves 0 of 43, and re-anchoring
@@ -445,7 +445,7 @@ describe('F1 — createProjectionEnv binds the containment predicate to the real
   });
 });
 
-describe('AC2 — never throws, exhaustively', () => {
+describe('never throws, exhaustively', () => {
   const { proxy, revoke } = Proxy.revocable({ toolUseResult: {} }, {});
   revoke();
 
@@ -534,7 +534,7 @@ describe('AC2 — never throws, exhaustively', () => {
   });
 });
 
-describe('AC7 — truncation is a BYTE test, never an equality', () => {
+describe('truncation is a BYTE test, never an equality', () => {
   it('the ported multibyte fixture is detected, with all three self-guards', () => {
     // The stored PREFIX is what ends in U+FFFD, not the source string: the cap
     // counts bytes and can cut mid-character. Copied from `merge.test.ts` test 20
@@ -657,7 +657,7 @@ function equalityAgainstCap(
   return offenders;
 }
 
-describe('AC7 — no equality comparison against the truncation cap exists', () => {
+describe('no equality comparison against the truncation cap exists', () => {
   it('spill.ts compares the cap only by inequality', () => {
     expect(
       equalityAgainstCap(SPILL_FILE),
@@ -810,7 +810,7 @@ function sessionRootOf(file: string): string {
   return join(parent, basename(file, '.jsonl'));
 }
 
-describe('AC2 — the archive invariant (AGENT_LENS_REAL_CORPUS=1)', () => {
+describe('the archive invariant (AGENT_LENS_REAL_CORPUS=1)', () => {
   corpusIt(
     'resolved + missing === totalReferenced, with 0 exceptions',
     () => {

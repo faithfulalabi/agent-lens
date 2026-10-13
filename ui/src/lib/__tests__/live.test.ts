@@ -75,7 +75,7 @@ function scanFile(file: string, text = readFileSync(join(UI_SRC, file), 'utf8'))
   return hits;
 }
 
-describe('AC1 — the per-session resume vocabulary is gone from ui/src', () => {
+describe('the per-session resume vocabulary is gone from ui/src', () => {
   it('finds no resume param, stream id, resume verdict or EventSource construction', () => {
     const files = uiSourceFiles();
 
@@ -170,7 +170,7 @@ function lastTurnStart(archive: Archive): number {
 
 /* ------------------------------- AC2 branch 1: the epoch moved backwards --- */
 
-describe('AC2 branch 1 — a fingerprint that moved backwards refetches from zero', () => {
+describe('branch 1 — a fingerprint that moved backwards refetches from zero', () => {
   it('parses the three components, and refuses anything else', () => {
     expect(parseFingerprint('900:500:2')).toEqual({ mtime_ms: 900, size: 500, sidecar_count: 2 });
     expect(parseFingerprint('')).toBeUndefined();
@@ -217,7 +217,7 @@ describe('AC2 branch 1 — a fingerprint that moved backwards refetches from zer
 
 /* ---------------------------------- AC2 branches 2 and 3: the splice itself --- */
 
-describe('AC2 branch 2 — drop, fetch, splice, and the result equals a cold GET', () => {
+describe('branch 2 — drop, fetch, splice, and the result equals a cold GET', () => {
   it('splices three appended events into the last turn', () => {
     const before = archiveOf(twoTurns(), '900:500:2');
     const after = archiveOf(
@@ -294,7 +294,7 @@ describe('AC2 branch 2 — drop, fetch, splice, and the result equals a cold GET
   });
 });
 
-describe('AC2 branch 3 — patched is applied by id, and reaches rows before the cursor', () => {
+describe('branch 3 — patched is applied by id, and reaches rows before the cursor', () => {
   it('back-patches an async-Agent row that sits turns behind the cursor', () => {
     const before = archiveOf(twoTurns(), '900:500:2');
     // The SAME session, re-projected: the Agent row at seq 1 finished.
@@ -340,7 +340,7 @@ describe('AC2 branch 3 — patched is applied by id, and reaches rows before the
   });
 });
 
-describe('AC2 — a frame for another session changes nothing', () => {
+describe('a frame for another session changes nothing', () => {
   it('decideFrame ignores it, so applyFrame is never reached', () => {
     const data = coldLoad(archiveOf(twoTurns(), '900:500:2'));
     const frame = makeChangedFrame({ session_id: 'some-other-session' });
@@ -384,7 +384,7 @@ function listOf(ids: string[]): SessionListData {
   };
 }
 
-describe('AC3 — the session list patches in place, and a fetch is unrepresentable', () => {
+describe('the session list patches in place, and a fetch is unrepresentable', () => {
   const NOW = Date.parse('2026-07-29T09:31:30.000Z');
 
   it('lands every rollup on the matching row, and moves nothing else', () => {
@@ -477,7 +477,7 @@ describe('AC3 — the session list patches in place, and a fetch is unrepresenta
 
 /* --------------------------------------------------------- the overlay --- */
 
-describe('AC3 — the keyed overlay, and the two reloads it stops shadowing', () => {
+describe('the keyed overlay, and the two reloads it stops shadowing', () => {
   const A = { tag: 'spliced' };
   const B = { tag: 'fresh' };
 

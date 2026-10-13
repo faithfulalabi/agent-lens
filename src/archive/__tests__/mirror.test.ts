@@ -71,7 +71,7 @@ const TOOL_TXT = `${SLUG}/sess-1/tool-results/abc.txt`;
 const NESTED_JSONL = `${SLUG}/sess-1/subagents/workflows/wf_18e7ec0c-db9/agent-y.jsonl`;
 const NESTED_JOURNAL = `${SLUG}/sess-1/subagents/workflows/wf_18e7ec0c-db9/journal.jsonl`;
 
-describe('AC1 — all four kinds mirror byte-identically', () => {
+describe('all four kinds mirror byte-identically', () => {
   it('mirrors *.jsonl, subagents/*.jsonl, agent-*.meta.json and tool-results/*.txt (Test 1)', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(3));
@@ -142,7 +142,7 @@ describe('AC1 — all four kinds mirror byte-identically', () => {
   });
 });
 
-describe('AC2 — appends copy only up to the last complete newline', () => {
+describe('appends copy only up to the last complete newline', () => {
   it('an UNSETTLED partial trailing line mirrors N-1 lines and ends in \\n (Test 4)', () => {
     const s = sb();
     writeSource(s, SESSION, `${jsonLines(5)}{"partial":`);
@@ -178,7 +178,7 @@ describe('AC2 — appends copy only up to the last complete newline', () => {
   });
 });
 
-describe('AC3 — size comes from statSync, with no persisted counter', () => {
+describe('size comes from statSync, with no persisted counter', () => {
   it('a second pass over an unchanged corpus copies 0 bytes and writes no log line (Test 8)', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(4));
@@ -255,7 +255,7 @@ describe('AC3 — size comes from statSync, with no persisted counter', () => {
   });
 });
 
-describe('AC4 — divergence never destroys', () => {
+describe('divergence never destroys', () => {
   it('shrink: keeps every archived byte and marks diverged (Test 13)', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(10));

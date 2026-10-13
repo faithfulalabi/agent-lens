@@ -101,7 +101,7 @@ function parentOnlyKey(path: string): string {
   return `${Math.floor(stat.mtimeMs)}:${stat.size}`;
 }
 
-describe('foldArchive folds the whole session directory (AC4)', () => {
+describe('foldArchive folds the whole session directory', () => {
   it('takes max(child mtime) and sum(child size) across every kind of sidecar', () => {
     const { parent, dir } = plantTree('folded', 3);
     const fold = foldArchive(parent)!;
@@ -147,7 +147,7 @@ describe('foldArchive folds the whole session directory (AC4)', () => {
   });
 });
 
-describe('the fold invalidates where a parent-only key does not (AC4)', () => {
+describe('the fold invalidates where a parent-only key does not', () => {
   // The recorded shape, as FIXTURE inputs: the parent went 1,814 s with no
   // write while 11 sidecars grew by 3.76 MB, three of them within 3 seconds.
   // The live numbers have since moved — 2,240 s / 10 sidecars / 3.24 MB is
@@ -198,7 +198,7 @@ describe('the fold invalidates where a parent-only key does not (AC4)', () => {
   });
 });
 
-describe('freshness compares against the ARCHIVE, never the source (AC4)', () => {
+describe('freshness compares against the ARCHIVE, never the source', () => {
   it('a source that grows does not invalidate the projection', () => {
     const db = cache();
     const { parent } = plantTree('archive-wins');
@@ -225,7 +225,7 @@ describe('freshness compares against the ARCHIVE, never the source (AC4)', () =>
   });
 });
 
-describe('ensureProjected is the gate every read passes (AC3)', () => {
+describe('ensureProjected is the gate every read passes', () => {
   function projected(): { db: DatabaseSync; id: string; parent: string } {
     const db = cache();
     const { parent } = plantTree('gate');
@@ -285,7 +285,7 @@ describe('ensureProjected is the gate every read passes (AC3)', () => {
   });
 });
 
-describe('the hit path costs one readdir per directory and one stat per file (AC3)', () => {
+describe('the hit path costs one readdir per directory and one stat per file', () => {
   it('reads no path twice', () => {
     const db = cache();
     const { parent, dir } = plantTree('counted');
@@ -321,7 +321,7 @@ describe('the hit path costs one readdir per directory and one stat per file (AC
   });
 });
 
-describe('the version gate is per row and lazy (AC9)', () => {
+describe('the version gate is per row and lazy', () => {
   it('a row stamped at PROJECTOR_VERSION - 1 reprojects and rewrites the stamp', () => {
     const db = cache();
     const { parent } = plantTree('versioned');

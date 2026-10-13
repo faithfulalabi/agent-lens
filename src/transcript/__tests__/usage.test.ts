@@ -69,7 +69,7 @@ function firstOnly(lines: readonly Record<string, unknown>[], field: string): nu
   return usage[field] ?? 0;
 }
 
-describe('AC1 — foldRequestGroup takes input once and output from the last line', () => {
+describe('foldRequestGroup takes input once and output from the last line', () => {
   it('folds the golden 3-line group', () => {
     expect(foldRequestGroup(GOLDEN)).toEqual({
       input_tokens: 4,
@@ -132,7 +132,7 @@ describe('AC1 — foldRequestGroup takes input once and output from the last lin
   });
 });
 
-describe('AC1 — the fold is total: zeros, never a throw, never a coercion', () => {
+describe('the fold is total: zeros, never a throw, never a coercion', () => {
   const HOSTILE: readonly [string, unknown][] = [
     ['empty group', []],
     ['no usage key at all', [assistantLine(undefined)]],
@@ -218,7 +218,7 @@ describe('modelOfRequestGroup — first named model wins, and the read is total'
   });
 });
 
-describe('AC3 — groupByRequestId drops nothing and merges nothing it should not', () => {
+describe('groupByRequestId drops nothing and merges nothing it should not', () => {
   it('preserves every line, in order', () => {
     const lines = [
       assistantLine({ output_tokens: 1 }, 'req_a'),
@@ -310,7 +310,7 @@ describe('AC3 — groupByRequestId drops nothing and merges nothing it should no
 
 // --- AC2: the corpus invariants, opt-in ------------------------------------
 
-describe('AC2 — the fold rule holds over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => {
+describe('the fold rule holds over the real archive (AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(
     'every multi-line group copies input and grows output to its last line',
     () => {

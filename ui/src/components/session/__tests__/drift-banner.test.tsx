@@ -9,7 +9,7 @@ import { DriftBanner } from '../DriftBanner';
  * pending branch. `follow-pill.test.tsx` is the shape.
  */
 
-describe('the drift banner raises on the row it is given (AC2)', () => {
+describe('the drift banner raises on the row it is given', () => {
   it('carries the slot the render gate drives and the copy, with no link to a raw API route', () => {
     const markup = renderToStaticMarkup(
       <DriftBanner sessionId="session-a" hasDrift harnessVersion="2.2.0" />,
@@ -33,7 +33,7 @@ describe('the drift banner raises on the row it is given (AC2)', () => {
   });
 });
 
-describe('the drift banner is silent on a clean session (AC3)', () => {
+describe('the drift banner is silent on a clean session', () => {
   it('renders nothing at all — no wrapper, no slot, no border', () => {
     // Total, on `components.test.tsx:105-112`'s shape: an empty string is the
     // only reading that proves no strip was drawn. A "does not contain the

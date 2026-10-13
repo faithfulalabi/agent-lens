@@ -56,7 +56,7 @@ function pass() {
   return archiveOnce({ dataDir: s.dataDir, transcriptRoot: s.sourceRoot });
 }
 
-describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1)', () => {
+describe('a file whose source is gone is sealed on the next pass (Test 1)', () => {
   it('writes <name>.zst, removes the hot file, and stamps the seal', () => {
     const s = sb();
     const body = jsonLines(40);
@@ -122,7 +122,7 @@ describe('AC1 — a file whose source is gone is sealed on the next pass (Test 1
   });
 });
 
-describe('AC1/AC2 — the seal persists its reference hash in a sidecar (Test 16)', () => {
+describe('the seal persists its reference hash in a sidecar (Test 16)', () => {
   it('writes <name>.zst.sha256 beside the frame, 0600, holding the pre-seal hash', () => {
     const s = sb();
     const body = transcriptLines(200);
@@ -179,7 +179,7 @@ describe('AC1/AC2 — the seal persists its reference hash in a sidecar (Test 16
   });
 });
 
-describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () => {
+describe('both crash windows around the sidecar are safe (Test 17)', () => {
   it('a sidecar with no frame is re-sealed over, and the hot bytes survive intact', () => {
     // The state a crash between the two renames leaves: sidecar published, `.zst`
     // not, hot file still the only copy. It must self-heal, and above all the
@@ -231,7 +231,7 @@ describe('AC2 — both crash windows around the sidecar are safe (Test 17)', () 
   });
 });
 
-describe('AC1 — a live source is never sealed, at any apparent age (Test 2)', () => {
+describe('a live source is never sealed, at any apparent age (Test 2)', () => {
   it('stays hot across five passes with the source back-dated 90 days', () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(20));
@@ -253,7 +253,7 @@ describe('AC1 — a live source is never sealed, at any apparent age (Test 2)', 
   });
 });
 
-describe('AC2 — zstd through node:zlib, with the level pinned (Test 5)', () => {
+describe('zstd through node:zlib, with the level pinned (Test 5)', () => {
   it('adds no package, and seal.ts imports nothing but node: builtins and siblings', () => {
     const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>;

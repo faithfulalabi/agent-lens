@@ -520,7 +520,7 @@ function scanAll(): { writes: Site[]; opens: Site[] } {
   return { writes, opens };
 }
 
-describe('AC4 (static) — every write-capable fs call in src/ is reviewed', () => {
+describe('(static) — every write-capable fs call in src/ is reviewed', () => {
   it('finds no unreviewed write site, and no stale manifest entry', () => {
     const { unexpected, stale } = unreviewedKeys();
 

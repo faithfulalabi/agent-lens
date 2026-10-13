@@ -84,7 +84,7 @@ function declaresTry(file: string): boolean {
   return found;
 }
 
-describe('AC1 — the block inventory is total', () => {
+describe('the block inventory is total', () => {
   const lines = fixtureJson('blocks-top-level.jsonl');
 
   it('classifies every top-level kind the fixture carries', () => {
@@ -166,7 +166,7 @@ describe('AC1 — the block inventory is total', () => {
   });
 });
 
-describe('AC2 — tool_reference is a placement rule, not a type', () => {
+describe('tool_reference is a placement rule, not a type', () => {
   it('is the SAME object, and the position alone decides what it becomes', () => {
     const block = { type: 'tool_reference', tool_name: 'SendMessage' };
     expect(classifyBlock(block, 'in_tool_result')).toEqual({
@@ -180,7 +180,7 @@ describe('AC2 — tool_reference is a placement rule, not a type', () => {
   });
 });
 
-describe('AC3 — a bare string classifies as a single-element text array', () => {
+describe('a bare string classifies as a single-element text array', () => {
   it('is identical for any string fast-check can build', () => {
     fc.assert(
       fc.property(fc.string(), (text) => {
@@ -201,7 +201,7 @@ describe('AC3 — a bare string classifies as a single-element text array', () =
   });
 });
 
-describe('AC4 — an image emits a placeholder and no base64 ever escapes', () => {
+describe('an image emits a placeholder and no base64 ever escapes', () => {
   it('renders the literal form, one decimal, decoded bytes at 3/4 of the base64', () => {
     // The worked example: the largest image in the archive, 636,160 base64
     // characters. The raw length would read 636.2 KB — 33% too big.
@@ -252,7 +252,7 @@ describe('AC4 — an image emits a placeholder and no base64 ever escapes', () =
   });
 });
 
-describe('AC5 — an empty thinking block collapses to exactly one marker', () => {
+describe('an empty thinking block collapses to exactly one marker', () => {
   it('emits one marker per empty block, never zero and never a blank row', () => {
     const empty = { type: 'thinking', thinking: '', signature: 'x'.repeat(1024) };
     expect(classifyContent([empty, empty, empty])).toEqual([
@@ -272,7 +272,7 @@ describe('AC5 — an empty thinking block collapses to exactly one marker', () =
   });
 });
 
-describe('AC11 — classifyContent is total, and the module owns no try', () => {
+describe('classifyContent is total, and the module owns no try', () => {
   it('never throws on anything fast-check can build', () => {
     fc.assert(
       fc.property(

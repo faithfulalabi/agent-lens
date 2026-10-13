@@ -79,7 +79,7 @@ function ancestorPass(lines: readonly ParsedLine[]): (string | undefined)[] {
   });
 }
 
-describe('AC2 — the forward pass agrees with the ancestor walk (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
+describe('the forward pass agrees with the ancestor walk (opt-in via AGENT_LENS_REAL_CORPUS=1)', () => {
   runIt(
     'reproduces 0 disagreements, and resolves strictly more often than the walk',
     () => {

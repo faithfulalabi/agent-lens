@@ -7,7 +7,7 @@ import {
   normalizeModelKey,
 } from '../pricing.js';
 
-describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => {
+describe('normalizeModelKey — versioned ids fold to a family key', () => {
   it.each([
     ['claude-opus-4-8', 'claude-opus-4-8'],
     ['claude-sonnet-4-5-20250929', 'claude-sonnet-4-5'],
@@ -48,7 +48,7 @@ describe('normalizeModelKey — AC2: versioned ids fold to a family key', () => 
   });
 });
 
-describe('estimateCost — AC2: unknown model is null, never zero', () => {
+describe('estimateCost — unknown model is null, never zero', () => {
   it('prices a known model at USD per 1M tokens', () => {
     // claude-opus-4-8: $5 in / $25 out per 1M.
     const cost = estimateCost('claude-opus-4-8', {

@@ -44,7 +44,7 @@ const SYSTEM_SUBTYPES = [
   'api_error',
 ] as const;
 
-describe('AC1 — every measured top-level type classifies to its own kind', () => {
+describe('every measured top-level type classifies to its own kind', () => {
   const { lines } = classifyFixture('all-types.jsonl');
 
   it('covers all 17 measured types, one fixture line each', () => {
@@ -101,7 +101,7 @@ describe('AC1 — every measured top-level type classifies to its own kind', () 
   });
 });
 
-describe('AC1 — every declared system subtype classifies', () => {
+describe('every declared system subtype classifies', () => {
   const { lines } = classifyFixture('system-subtypes.jsonl');
 
   it('classifies all 7 declared subtypes', () => {
@@ -135,7 +135,7 @@ describe('AC1 — every declared system subtype classifies', () => {
   });
 });
 
-describe('AC1 — started and result are sidecar-only and both classify', () => {
+describe('started and result are sidecar-only and both classify', () => {
   // Sidecar-only, and `result` is classified rather than dropped to unknown: sub-agent
   // linkage needs both ends of the workflow span.
   const { lines } = classifyFixture('all-types.jsonl');
@@ -147,7 +147,7 @@ describe('AC1 — started and result are sidecar-only and both classify', () => 
   });
 });
 
-describe('AC2 — api_error keeps its branch with no live witness', () => {
+describe('api_error keeps its branch with no live witness', () => {
   // No corpus witness, so the fixture is hand-authored. Deleting the branch because "nothing
   // produces it" would make the next API outage classify as unknown.
   it('classifies from a synthetic fixture', () => {
@@ -157,7 +157,7 @@ describe('AC2 — api_error keeps its branch with no live witness', () => {
   });
 });
 
-describe('AC3 — unknown lines render, never drop', () => {
+describe('unknown lines render, never drop', () => {
   const { lines, offsets, drift } = classifyFixture('unknown-types.jsonl');
 
   it('yields N rows for N lines, all unknown, none dropped', () => {
@@ -218,7 +218,7 @@ describe('AC3 — unknown lines render, never drop', () => {
   });
 });
 
-describe('AC4 — byte offsets are archive-relative and multibyte-safe', () => {
+describe('byte offsets are archive-relative and multibyte-safe', () => {
   const NAME = 'multibyte-offsets.jsonl';
   const bytes = fixtureBytes(NAME);
   const { lines, offsets } = classifyFixture(NAME);
@@ -247,7 +247,7 @@ describe('AC4 — byte offsets are archive-relative and multibyte-safe', () => {
   });
 });
 
-describe('AC5 — the 13 uuid-less types project to nothing, bar two exceptions', () => {
+describe('the 13 uuid-less types project to nothing, bar two exceptions', () => {
   const UUID_LESS: readonly ParsedKind[] = [
     'mode',
     'permission-mode',
@@ -310,7 +310,7 @@ describe('AC5 — the 13 uuid-less types project to nothing, bar two exceptions'
   });
 });
 
-describe('AC7 — summary has no branch', () => {
+describe('summary has no branch', () => {
   it('a top-level summary line classifies as unknown', () => {
     // `summary` only ever appears nested inside another payload, which a top-level
     // classifier never sees.

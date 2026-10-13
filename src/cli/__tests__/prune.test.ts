@@ -91,7 +91,7 @@ function spawnPrune(args: string[], dataDir: string): Promise<number | null> {
   });
 }
 
-describe('14 + 15 — the confirm text, which is the whole of AC4 (AC4)', () => {
+describe('14 + 15 — the confirm text, in full', () => {
   it('carries both shared statements, the resolved root, the counts and the retention line', () => {
     const s = sb();
     writeSession(s, ONE, sessionRecords('c1', START, END));
@@ -140,7 +140,7 @@ describe('14 + 15 — the confirm text, which is the whole of AC4 (AC4)', () => 
   });
 });
 
-describe('16 + 17 — accepting deletes, and everything else does not (AC4)', () => {
+describe('16 + 17 — accepting deletes, and everything else does not', () => {
   it('the exact word deletes the archive and leaves cache.db alone', async () => {
     const s = sb();
     writeSession(s, ONE, sessionRecords('c1', START, END));
@@ -178,7 +178,7 @@ describe('16 + 17 — accepting deletes, and everything else does not (AC4)', ()
   );
 });
 
-describe('18 — a cron can never prune (AC4)', () => {
+describe('18 — a cron can never prune', () => {
   it('spawned with stdin at EOF it declines, exits 0, and the archive is intact', async () => {
     const s = sb();
     writeSession(s, ONE, sessionRecords('c1', START, END));
@@ -193,7 +193,7 @@ describe('18 — a cron can never prune (AC4)', () => {
   }, 20_000);
 });
 
-describe('19 + 20 — one session, and the sidecar that refuses (AC4)', () => {
+describe('19 + 20 — one session, and the sidecar that refuses', () => {
   it('removes only that transcript and its directory; a sibling survives', async () => {
     const s = sb();
     writeSession(s, ONE, sessionRecords('c1', START, END));

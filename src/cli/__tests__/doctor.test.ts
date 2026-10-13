@@ -80,7 +80,7 @@ function listDir(dir: string): string[] {
   return existsSync(dir) ? readdirSync(dir).sort() : [];
 }
 
-describe('AC4 — doctor always states the coverage gap and the durability contract', () => {
+describe('doctor always states the coverage gap and the durability contract', () => {
   it('renders both sentences on a clean, all-green report', async () => {
     // On a report with nothing wrong: a future "only warn on problems" refactor
     // must red here. A green ratio is 100% of the survivors, not of what existed.
@@ -109,7 +109,7 @@ describe('AC4 — doctor always states the coverage gap and the durability contr
   });
 });
 
-describe('AC3 — doctor never writes the user settings file', () => {
+describe('doctor never writes the user settings file', () => {
   it('leaves an existing settings.json byte- and mtime-identical across a --verify run', async () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(6));
@@ -141,7 +141,7 @@ describe('AC3 — doctor never writes the user settings file', () => {
   });
 });
 
-describe('AC3 — doctor writes nothing at all', () => {
+describe('doctor writes nothing at all', () => {
   it('leaves the data dir and the transcript root byte-, stat- and mode-identical', async () => {
     const s = sb();
     writeSource(s, SESSION, jsonLines(8));
@@ -286,7 +286,7 @@ function projectCache(s: Sandbox): void {
   }
 }
 
-describe('AC2 — doctor reports the cache beside the archive', () => {
+describe('doctor reports the cache beside the archive', () => {
   it('prints the path, bytes, indexed vs projected, both versions and the drift census', async () => {
     const s = sb();
     seedProjectedCache(s);

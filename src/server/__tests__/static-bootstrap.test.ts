@@ -32,7 +32,7 @@ afterEach(async () => {
   }
 });
 
-describe('AC3 — the served page bootstraps the token as a script global', () => {
+describe('the served page bootstraps the token as a script global', () => {
   it('exposes window.__AGENT_LENS__ with the token and the header name', async () => {
     server = await bootTestServer();
     const html = await (await fetch(server.url('/'))).text();
@@ -65,7 +65,7 @@ describe('AC3 — the served page bootstraps the token as a script global', () =
   });
 });
 
-describe('AC3 — injectToken', () => {
+describe('injectToken', () => {
   it('escapes a token that would otherwise break out of the script tag', () => {
     // The token is read straight off disk, and only *generated* tokens are
     // guaranteed base64url — so a hand-edited one has to be assumed hostile.

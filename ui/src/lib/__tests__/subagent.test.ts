@@ -81,7 +81,7 @@ function splicedRows(
 
 /* ------------------------------------------------ Test 1 — the splice ------ */
 
-describe('a loaded sidecar splices in beneath its Agent row (Test 1, AC1)', () => {
+describe('a loaded sidecar splices in beneath its Agent row (Test 1)', () => {
   const PARENT_SHAPE: TurnTreeSpec[] = [
     { id: 't0', seq: 0, events: [{ name: 'before' }, makeAgentEvent(), { name: 'after' }] },
   ];
@@ -125,7 +125,7 @@ describe('a loaded sidecar splices in beneath its Agent row (Test 1, AC1)', () =
     expect(depths.get('c0-ev-0')).toBe(3);
   });
 
-  it('draws a chevron on the Agent row before anything is loaded (Test 9, AC1)', () => {
+  it('draws a chevron on the Agent row before anything is loaded (Test 9)', () => {
     const cold = flatten(model, model.rowIds, undefined, { rootSessionId: PARENT });
     const agent = cold.find((row) => row.id === 't0-ev-1');
     const plain = cold.find((row) => row.id === 't0-ev-0');
@@ -139,7 +139,7 @@ describe('a loaded sidecar splices in beneath its Agent row (Test 1, AC1)', () =
     );
   });
 
-  it('mints no duplicate row id across the splice (Test 10, AC1)', () => {
+  it('mints no duplicate row id across the splice (Test 10)', () => {
     // MEASURED: 647 turn ids and 30,286 event ids in the archive, all distinct,
     // and zero turn ids collide with an event id. `child_session_id` is 1:1 with
     // its Agent event, so one sidecar can never splice in twice.
@@ -170,7 +170,7 @@ describe('a loaded sidecar splices in beneath its Agent row (Test 1, AC1)', () =
 
 /* --------------------------- Test 6 — depth 2 takes the identical path ----- */
 
-describe('a sub-agent inside a sub-agent nests with no depth-specific branch (Test 6, AC2)', () => {
+describe('a sub-agent inside a sub-agent nests with no depth-specific branch (Test 6)', () => {
   // MEASURED: 17 events inside sidecars carry a `child_session_id`, and 17
   // sessions sit at `spawn_depth = 2`. This is a real shape, not a hypothetical.
   const PARENT_SHAPE: TurnTreeSpec[] = [
@@ -227,7 +227,7 @@ describe('a sub-agent inside a sub-agent nests with no depth-specific branch (Te
 
 /* ------------- Test 7 — a fold and a splice under the same Agent event ----- */
 
-describe('a folded turn and a spliced child are ONE sibling set (Test 7, AC1, AC2)', () => {
+describe('a folded turn and a spliced child are ONE sibling set (Test 7)', () => {
   /*
    * ★ THE OVERLAP IS TOTAL, NOT RARE. MEASURED: all 20 folded
    * `task_notification` turns in the archive hang under events that ALSO name a
@@ -273,7 +273,7 @@ describe('a folded turn and a spliced child are ONE sibling set (Test 7, AC1, AC
 
 /* ------------------------- Tests 4 and 5 — what gets fetched, and when ----- */
 
-describe('childIdsToFetch asks once, in a stable order (Tests 4 and 5, AC1, AC-R1b)', () => {
+describe('childIdsToFetch asks once, in a stable order (Tests 4 and 5)', () => {
   const SHAPE: TurnTreeSpec[] = [
     {
       id: 't0',
@@ -351,7 +351,7 @@ describe('childIdsToFetch asks once, in a stable order (Tests 4 and 5, AC1, AC-R
 
 /* -------------------- Tests 2, 11 and 12 — the ids the selection lives in -- */
 
-describe('turnIdsToOpen names every turn in the loaded child (Test 2, AC1)', () => {
+describe('turnIdsToOpen names every turn in the loaded child (Test 2)', () => {
   it('names them all, and expandMany adds them without dropping the reader’s own', () => {
     const child = sidecar(CHILD, [
       { id: 'c0', seq: 0, events: [{ name: 'x' }] },
@@ -365,7 +365,7 @@ describe('turnIdsToOpen names every turn in the loaded child (Test 2, AC1)', () 
   });
 });
 
-describe('mergedRowIds keeps a child-row selection alive (Tests 11 and 12, AC1)', () => {
+describe('mergedRowIds keeps a child-row selection alive (Tests 11 and 12)', () => {
   const PARENT_SHAPE: TurnTreeSpec[] = [{ id: 't0', seq: 0, events: [makeAgentEvent()] }];
   const CHILD_SHAPE: TurnTreeSpec[] = [{ id: 'c0', seq: 0, events: [{ name: 'x' }] }];
   const model = modelOf(PARENT_SHAPE);
