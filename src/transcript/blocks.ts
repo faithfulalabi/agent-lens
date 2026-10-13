@@ -18,6 +18,8 @@
 //   - **Images are the largest payloads in the corpus** (65.0 KB to 477.1 KB
 //     decoded, 40 blocks). The base64 is read for its `.length` and dropped at
 //     this boundary; it is never bound to anything that outlives the call.
+//     `imageSourceAt` is the one exception: it hands the payload out on demand,
+//     per request, and the projector never calls it.
 //
 // Nothing is ever dropped. An unrecognised block type becomes `unknown_block`
 // carrying the type verbatim, so a harness change shows up in the product on the
@@ -40,7 +42,7 @@ export interface RawImageBlock {
 export interface RawImageSource {
   type?: unknown;
   media_type?: unknown;
-  /** Base64. Read for its length only; it never crosses this boundary. */
+  /** Base64. Read for its length only, except by `imageSourceAt`. */
   data?: unknown;
 }
 
@@ -254,9 +256,62 @@ export function resultText(children: readonly Block[]): string {
  * no message at all — 1,592 uuid-carrying lines measured, which still project a
  * row each, so an empty answer here is data and never an error.
  *
- * The one place the message payload is reached, so no caller outside this
- * directory has to name it.
+ * The message payload is reached only through `rawContent`, so no caller outside
+ * this directory has to name it.
  */
 export function contentBlocks(line: ParsedLine): readonly Block[] {
-  return classifyContent(obj(line.raw.message, undefined)?.content);
+  return classifyContent(rawContent(line));
+}
+
+function rawContent(line: ParsedLine): unknown {
+  return obj(line.raw.message, undefined)?.content;
+}
+
+/** The four `media_type`s the Messages API accepts, and the only ones ever served as-is. */
+export const SERVABLE_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+/** One image, payload included. */
+export interface ImageSource {
+  readonly media_type: string;
+  /** Base64, as the harness wrote it. */
+  readonly data: string;
+}
+
+/**
+ * How many images `block` addresses: 1 for a top-level image, its image children for a
+ * `tool_result`. `imageSourceAt` takes an ordinal below this count.
+ */
+export function imageCount(block: Block): number {
+  if (block.kind === 'image') return 1;
+  if (block.kind !== 'tool_result') return 0;
+  return block.children.filter((child) => child.kind === 'image').length;
+}
+
+/**
+ * The `ordinal`th image at `blockIndex`, with its base64. Call it per request and bind
+ * the answer to nothing that outlives the response.
+ */
+export function imageSourceAt(
+  line: ParsedLine,
+  blockIndex: number,
+  ordinal: number,
+): ImageSource | undefined {
+  const block = obj(normalizeContent(rawContent(line))[blockIndex], EMPTY_RECORD);
+  const images =
+    block.type === 'image'
+      ? [block]
+      : block.type === 'tool_result'
+        ? normalizeContent(block.content).filter(
+            (child) => obj(child, EMPTY_RECORD).type === 'image',
+          )
+        : [];
+  if (ordinal >= images.length) return undefined;
+  const image: RawImageBlock = obj(images[ordinal], EMPTY_RECORD);
+  const source: RawImageSource = obj(image.source, EMPTY_RECORD);
+  return { media_type: str(source.media_type, ''), data: str(source.data, '') };
 }

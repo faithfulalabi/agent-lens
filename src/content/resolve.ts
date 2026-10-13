@@ -24,9 +24,15 @@ import { isUnderAnyRoot } from '../archive/paths.js';
 import type { ArchiveReader } from '../archive/read.js';
 import { toolResultsDirOf } from '../corpus/paths.js';
 import type { EventContentRow } from '../db/read.js';
-import { contentBlocks, resultText, type Block } from '../transcript/blocks.js';
+import {
+  contentBlocks,
+  imageSourceAt,
+  resultText,
+  SERVABLE_IMAGE_TYPES,
+  type Block,
+} from '../transcript/blocks.js';
 import { DriftCounter } from '../transcript/drift.js';
-import { classifyLine } from '../transcript/line.js';
+import { classifyLine, type ParsedLine } from '../transcript/line.js';
 
 /** Which half of an event row is being asked for. */
 export type ContentField = 'text' | 'input';
@@ -72,20 +78,19 @@ function byteLength(text: string): number {
 }
 
 /**
- * Pread one line out of the archive and index one block of it.
+ * Pread one line out of the archive and parse it.
  *
  * The ONLY call into the line parser in this module, which is what makes
  * "exactly one call into `transcript/line.ts`" a property of the code shape
  * rather than a discipline. `undefined` for every failure — an unreadable line
  * degrades to the stored preview, it does not abort the request.
  */
-function blockAt(
+function lineAt(
   env: ContentEnv,
   archivePath: string,
   byteOffset: number,
   len: number,
-  blockIndex: number,
-): Block | undefined {
+): ParsedLine | undefined {
   let bytes: Buffer;
   try {
     bytes = env.reader.read(archivePath, byteOffset, len);
@@ -96,15 +101,25 @@ function blockAt(
   }
   if (bytes.length === 0) return undefined;
   try {
-    const line = classifyLine(JSON.parse(bytes.toString('utf8')), {
+    return classifyLine(JSON.parse(bytes.toString('utf8')), {
       byteOffset,
       byteLength: len,
       drift: new DriftCounter(),
     });
-    return contentBlocks(line)[blockIndex];
   } catch {
     return undefined;
   }
+}
+
+function blockAt(
+  env: ContentEnv,
+  archivePath: string,
+  byteOffset: number,
+  len: number,
+  blockIndex: number,
+): Block | undefined {
+  const line = lineAt(env, archivePath, byteOffset, len);
+  return line === undefined ? undefined : contentBlocks(line)[blockIndex];
 }
 
 /** The column half, used verbatim and as the degraded answer for every arm. */
@@ -325,6 +340,51 @@ function resolveText(
   }
 }
 
+/** 16 MiB. A longer line is refused before a byte of it is read. */
+export const IMAGE_LINE_MAX = 16 * 1024 * 1024;
+
+/** One image's bytes, or why there are none to serve. */
+export type ResolvedImage =
+  | { ok: true; media_type: string; bytes: Buffer }
+  | { ok: false; reason: 'gone' | 'too_large' | 'unsupported' };
+
+/** Where a row's images live: the result line for a call, the emitting line otherwise. */
+function imageLineOf(
+  row: EventContentRow,
+): { offset: number; len: number; block: number } | undefined {
+  const { result_offset, result_len, result_block } = row;
+  if (result_offset !== null && result_len !== null && result_block !== null) {
+    return { offset: result_offset, len: result_len, block: result_block };
+  }
+  return row.block_index === null
+    ? undefined
+    : { offset: row.src_offset, len: row.src_len, block: row.block_index };
+}
+
+/**
+ * The `ordinal`th image a row addresses, decoded. Never throws.
+ *
+ * The length check runs before any read, so a hostile line costs no I/O to refuse.
+ */
+export function resolveImage(
+  row: EventContentRow,
+  ordinal: number,
+  archivePath: string | undefined,
+  env: ContentEnv,
+): ResolvedImage {
+  const at = imageLineOf(row);
+  if (at === undefined) return { ok: false, reason: 'gone' };
+  if (at.len > IMAGE_LINE_MAX) return { ok: false, reason: 'too_large' };
+  const line = archivePath === undefined ? undefined : lineAt(env, archivePath, at.offset, at.len);
+  const source = line === undefined ? undefined : imageSourceAt(line, at.block, ordinal);
+  if (source === undefined) return { ok: false, reason: 'gone' };
+  // Served as `Content-Type`, so a harness-chosen `text/html` would be markup from this server.
+  if (!SERVABLE_IMAGE_TYPES.has(source.media_type)) return { ok: false, reason: 'unsupported' };
+  const bytes = Buffer.from(source.data, 'base64');
+  if (bytes.length === 0) return { ok: false, reason: 'gone' };
+  return { ok: true, media_type: source.media_type, bytes };
+}
+
 /**
  * The production env. The probe is `corpus/env.ts`'s, verbatim: the `.zst`
  * limb is required, not defensive, because a sealed spill exists only under that
@@ -361,4 +421,12 @@ export function createSpillLocator(
   env: ContentEnv,
 ): (row: EventContentRow) => string | undefined {
   return (row) => spillSource(row, archivePathOf(row.session_id), env);
+}
+
+/** Bind `resolveImage` onto `ApiDeps.resolveImage`, on `createContentResolver`'s terms. */
+export function createImageResolver(
+  archivePathOf: (session_id: string) => string | undefined,
+  env: ContentEnv,
+): (row: EventContentRow, ordinal: number) => ResolvedImage {
+  return (row, ordinal) => resolveImage(row, ordinal, archivePathOf(row.session_id), env);
 }

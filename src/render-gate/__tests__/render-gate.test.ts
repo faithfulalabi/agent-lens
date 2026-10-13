@@ -24,8 +24,10 @@ import {
   SELECTORS,
   archiveRefusal,
   devDataDir,
+  firstImageSession,
   isSessionDetailPath,
   parseArgv,
+  pickImageEvent,
   pickPayloadRow,
   pickSearchTerm,
   pickWireRow,
@@ -115,6 +117,7 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       paneMatched: true,
       headingShown: true,
     },
+    image: { eventId: 'toolu_shot', imageCount: 2, decoded: 2, notes: [] },
     eventDetail: {
       eventId: 'toolu_1',
       inputPrefix: '{"cmd":"ls"}',
@@ -1053,9 +1056,12 @@ describe('the gate source itself', () => {
      * row the probe then clicks, which is what makes "a reader looking at the
      * row can find out the command is not the one that ran" gate-verified rather
      * than pinned in a render test.
+     *
+     * ★ RAISED 15 -> 16 BY THE IMAGE PROBE: `detail-image` is READ — each figure's
+     * decoded `<img>` or its sentence, asserted by `image-rendered`.
      */
-    expect(values).toHaveLength(15);
-    expect(new Set(values).size).toBe(15);
+    expect(values).toHaveLength(16);
+    expect(new Set(values).size).toBe(16);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
@@ -1558,5 +1564,90 @@ describe('a narrow window is an observation, and a marked row that reads wrong i
 
     expect(record?.ok).toBe(true);
     expect(record?.actual).toContain('toolu_1');
+  });
+});
+
+describe('the image probe finds an event with images to draw', () => {
+  /** An archive of `<slug>/<id>.jsonl` files, each holding `body`. */
+  function archiveOf(files: Record<string, string>): string {
+    const dataDir = tempRoot();
+    for (const [name, body] of Object.entries(files)) {
+      const path = join(dataDir, 'archive', name);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, body);
+    }
+    return dataDir;
+  }
+
+  const IMAGE_LINE = '{"type":"user","message":{"content":[{"type":"image","source":{}}]}}\n';
+  const TEXT_LINE = '{"type":"user","message":{"content":"hello"}}\n';
+
+  it('names the first top-level session whose transcript carries an image', () => {
+    const dataDir = archiveOf({
+      'proj-a/aaaa.jsonl': TEXT_LINE,
+      'proj-b/cccc.jsonl': IMAGE_LINE,
+      'proj-a/bbbb.jsonl': IMAGE_LINE,
+    });
+
+    expect(firstImageSession(dataDir)).toBe('bbbb');
+  });
+
+  it('skips a sidecar, which never opens at its own url', () => {
+    const dataDir = archiveOf({
+      'proj-a/aaaa.jsonl': TEXT_LINE,
+      'proj-a/aaaa/subagents/agent-1.jsonl': IMAGE_LINE,
+    });
+
+    expect(firstImageSession(dataDir)).toBeNull();
+  });
+
+  it('answers null for an archive that does not exist', () => {
+    expect(firstImageSession(join(tempRoot(), 'nowhere'))).toBeNull();
+  });
+
+  it('picks the first event with an image, and null when none has one', () => {
+    const events = [
+      { id: 'a', seq: 0, image_count: 0 },
+      { id: 'b', seq: 1, image_count: 2 },
+      { id: 'c', seq: 2, image_count: 1 },
+    ];
+
+    expect(pickImageEvent(events)?.id).toBe('b');
+    expect(pickImageEvent(events.slice(0, 1))).toBeNull();
+  });
+});
+
+describe('an image the pane failed to draw fails the gate, and no image is an observation', () => {
+  const named = (report: ReturnType<typeof buildReport>): AssertionRecord[] =>
+    report.assertions.filter((a) => a.name === 'image-rendered');
+
+  it('asserts nothing and warns when the corpus offered no image event', () => {
+    const report = reportFor({ image: null });
+
+    expect(named(report)).toEqual([]);
+    expect(report.warnings.join('\n')).toContain('image-rendered: no image event found');
+    expect(report.ok).toBe(true);
+  });
+
+  it('fails when an image was stated rather than drawn, and quotes what the pane said', () => {
+    const report = reportFor({
+      image: {
+        eventId: 'toolu_shot',
+        imageCount: 2,
+        decoded: 1,
+        notes: ['Image no longer on disk.'],
+      },
+    });
+
+    expect(named(report)[0]?.ok).toBe(false);
+    expect(named(report)[0]?.actual).toContain('Image no longer on disk.');
+    expect(report.ok).toBe(false);
+  });
+
+  it('passes when every image decoded, and names the event it read', () => {
+    const record = named(reportFor())[0];
+
+    expect(record?.ok).toBe(true);
+    expect(record?.actual).toContain('toolu_shot: 2 of 2 decoded');
   });
 });

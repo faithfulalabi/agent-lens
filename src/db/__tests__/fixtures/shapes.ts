@@ -94,6 +94,7 @@ export const EVENT_ROW_KEYS = [
   'agent_status',
   'raw_type',
   'raw_subtype',
+  'image_count',
 ].sort();
 
 /** `spec/data-model-v2.md:349-354`. */

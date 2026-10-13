@@ -37,7 +37,7 @@ export interface ApiAppDeps extends ApiDeps {
 }
 
 /**
- * The app: the ten routes of `api.ts`, the same middleware, the same order.
+ * The app: the eleven routes of `api.ts`, the same middleware, the same order.
  *
  * ★ REGISTRATION ORDER IS THE LOAD-BEARING PART, and every step below was
  * re-probed on hono 4.12.31. Hono matches in registration order, first match

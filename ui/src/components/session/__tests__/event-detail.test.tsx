@@ -200,3 +200,46 @@ describe('the pane says what actually ran, and only when that differs', () => {
     expect(wire.slice(0, wire.indexOf('OUTPUT'))).not.toContain('detail-show-full');
   });
 });
+
+describe('an event that returned images shows them under its output', () => {
+  const event = makeEventRow({
+    id: 'ev-shot',
+    text: '[image image/png, 131.4 KB]',
+    output_storage: 'inline',
+    image_count: 2,
+  });
+
+  it('draws each fetched image from its object url', () => {
+    const html = render(
+      <EventDetail
+        event={event}
+        fetched={null}
+        images={{ eventId: 'ev-shot', outcomes: [{ url: 'blob:one' }, { url: 'blob:two' }] }}
+      />,
+    );
+
+    expect(html.match(/data-slot="detail-image"/g)).toHaveLength(2);
+    expect(html).toContain('<img src="blob:one"');
+    expect(html).toContain('<img src="blob:two"');
+  });
+
+  it('says why an image is missing and draws no img for it', () => {
+    const html = render(
+      <EventDetail
+        event={event}
+        fetched={null}
+        images={{ eventId: 'ev-shot', outcomes: [{ url: 'blob:one' }, { status: 410 }] }}
+      />,
+    );
+
+    expect(html.match(/<img /g)).toHaveLength(1);
+    expect(html).toContain('Image no longer on disk.');
+    // The placeholder text still names what was recorded.
+    expect(html).toContain('[image image/png, 131.4 KB]');
+  });
+
+  it('renders no image section for an event with no images', () => {
+    const html = render(<EventDetail event={makeEventRow({ image_count: 0 })} fetched={null} />);
+    expect(html).not.toContain('detail-images');
+  });
+});

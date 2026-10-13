@@ -701,3 +701,38 @@ describe('a tool result carrying an image reads as the image, never as nothing',
     expect(witnessed).toBeGreaterThan(0);
   });
 });
+
+describe('image_count says how many images a row can serve, and nothing more', () => {
+  it('counts every image child of a result onto its call row', () => {
+    expect(callAt(project('image-ordinals.jsonl'), 'toolu_two_shots').image_count).toBe(2);
+    expect(callAt(project('image-result.jsonl'), 'toolu_image_only').image_count).toBe(1);
+  });
+
+  it('gives a pasted top-level image its own row with a count of 1', () => {
+    const pasted = project('image-ordinals.jsonl').events.filter(
+      (event) => event.text === '[image image/png, 0.1 KB]' && event.kind !== 'tool_call',
+    );
+    expect(pasted.map((event) => [event.block_index, event.image_count])).toEqual([[1, 1]]);
+  });
+
+  it('matches the images each row names in its text, across the project fixtures', () => {
+    for (const name of [
+      'image-ordinals.jsonl',
+      'image-result.jsonl',
+      'turn-kinds.jsonl',
+      'tool-join.jsonl',
+      'large-output.jsonl',
+    ]) {
+      for (const event of project(name).events) {
+        // A spill row's text is cleared, so it names nothing it could be checked against.
+        if (event.output_storage === 'spill') continue;
+        const named = (event.text ?? '').match(/\[image image\//g)?.length ?? 0;
+        expect(event.image_count, `${name} ${event.id}`).toBe(named);
+      }
+    }
+  });
+
+  it('carries no base64 from either image position into any projected row', () => {
+    expect(JSON.stringify(project('image-ordinals.jsonl').events)).not.toContain('iVBOR');
+  });
+});

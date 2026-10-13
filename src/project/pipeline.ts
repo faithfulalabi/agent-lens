@@ -26,7 +26,7 @@
 
 import { asyncAgentLaunch, taskNotification, type TaskNotification } from '../transcript/agents.js';
 import { attachmentRecord } from '../transcript/attachments.js';
-import { type Block, contentBlocks, resultText } from '../transcript/blocks.js';
+import { type Block, contentBlocks, imageCount, resultText } from '../transcript/blocks.js';
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
 import {
@@ -154,6 +154,8 @@ export interface ProjectedEvent extends ProjectedInput, ProjectedWireInput {
   result_offset: number | undefined;
   result_len: number | undefined;
   result_block: number | undefined;
+  /** Images this row can serve by ordinal: a top-level image, or its result's image children. */
+  image_count: number;
   /** Stamped on the FIRST event of each request group only, like the tokens. */
   model: string | undefined;
   tokens_in: number | undefined;
@@ -415,6 +417,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         result_offset: line.byte_offset,
         result_len: line.byte_length,
         result_block: blockIndex,
+        image_count: imageCount(block),
       });
     }
 
@@ -521,6 +524,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         result_offset: undefined,
         result_len: undefined,
         result_block: undefined,
+        image_count: block === undefined ? 0 : imageCount(block),
         model,
         tokens_in: tokens?.input_tokens,
         tokens_out: tokens?.output_tokens,

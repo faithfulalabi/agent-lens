@@ -10,11 +10,13 @@ import {
 
 import {
   createApiClient,
+  HttpError,
   type ApiClient,
   type ContentField,
   type EventContentBody,
   type EventRow,
 } from '@/lib/api';
+import type { FetchedImages, ImageOutcome } from '@/lib/event-content';
 import { useAsync } from '@/lib/use-async';
 import { buildTurnGroups, flatten } from '@/lib/turn-tree';
 import {
@@ -451,6 +453,40 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
     return row === undefined || row.kind !== 'event' ? null : row.node.event;
   }, [rows, nav.selectedId]);
 
+  /*
+   * The selected event's images, fetched on selection: the token is a request header, which an
+   * `<img src>` cannot send. Object URLs are revoked when the selection moves or the view unmounts.
+   */
+  const [images, setImages] = useState<FetchedImages | null>(null);
+  const imageEventId =
+    selectedEvent !== null && selectedEvent.image_count > 0 ? selectedEvent.id : null;
+  const imageCount = selectedEvent?.image_count ?? 0;
+  useEffect(() => {
+    if (imageEventId === null) return undefined;
+    const controller = new AbortController();
+    const urls: string[] = [];
+    const fetchOne = (n: number): Promise<ImageOutcome> =>
+      client.getEventImage(imageEventId, n, { signal: controller.signal }).then(
+        (blob) => {
+          // A blob that lands after cleanup must not mint a URL nothing will revoke.
+          if (controller.signal.aborted) return { status: null };
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          return { url };
+        },
+        (error: unknown) => ({ status: error instanceof HttpError ? error.status : null }),
+      );
+    void Promise.all(Array.from({ length: imageCount }, (_, n) => fetchOne(n))).then((outcomes) => {
+      if (!controller.signal.aborted) setImages({ eventId: imageEventId, outcomes });
+    });
+    return () => {
+      controller.abort();
+      for (const url of urls) URL.revokeObjectURL(url);
+      // Its URLs are dead now, and reselecting this event must not draw them.
+      setImages((current) => (current?.eventId === imageEventId ? null : current));
+    };
+  }, [client, imageEventId, imageCount]);
+
   const onToggle = useCallback((id: string) => {
     dispatchFollow({ type: 'selected' });
     setNav((current) => {
@@ -536,7 +572,12 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
               </div>
             </div>
 
-            <EventDetail event={selectedEvent} fetched={fetched} onShowFull={onShowFull} />
+            <EventDetail
+              event={selectedEvent}
+              fetched={fetched}
+              images={images}
+              onShowFull={onShowFull}
+            />
           </>
         )}
       </div>
