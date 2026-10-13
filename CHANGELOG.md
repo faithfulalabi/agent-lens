@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/faithfulalabi/agent-lens/compare/v0.5.0...v0.6.0) (2026-10-13)
+
+
+### Features
+
+* **projector:** surface the tool input the harness actually sent ([#123](https://github.com/faithfulalabi/agent-lens/issues/123)) ([bcbacca](https://github.com/faithfulalabi/agent-lens/commit/bcbacca5cd2aeb2003226f23837b69835bd3eeff))
+
 ## [0.5.0](https://github.com/faithfulalabi/agent-lens/compare/v0.4.1...v0.5.0) (2026-10-12)
 
 
