@@ -68,9 +68,9 @@ export function mergeBucket(
  * or not it drifted, so `sessions_with_drift[].harness_version` is the only
  * carrier left for "which release did this".
  *
- * Clean rows leave at the writer's own marker, the same test `has_drift` uses,
- * so they reach no bucket and no scalar. Per-session `counts` carry the raw
- * object, extra keys included.
+ * Clean rows leave at the writer's own marker, so they reach no bucket and no
+ * scalar. Any other row is listed, including field-only drift that `has_drift`
+ * deliberately ignores. Per-session `counts` carry the raw object, extra keys included.
  *
  * ★ THE POPULATION COUNTS SIDECARS, unlike the session list. `readDriftRows`
  * omits the list's `TOP_LEVEL_ONLY` filter (`db/read.ts:614-621`) and keeps it:

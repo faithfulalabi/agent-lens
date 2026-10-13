@@ -699,6 +699,26 @@ describe('9. GET /api/drift (spec:382-392)', () => {
     expect(carrier?.counts.unknown_line_types).toEqual({ widget_frame: 1 });
     expect(body.harness_versions).toEqual({ '2.1.212': 1, '2.2.0': 1, '2.3.0': 1 });
   });
+
+  it('carries both tiers, while the session list carries only the structural flag', async () => {
+    const FIELD_ONLY = 'fields-1111-4111-8111-fields000001';
+    seedSessionRow(db, {
+      id: FIELD_ONLY,
+      harness_version: '2.3.1',
+      drift_json: JSON.stringify({ unknown_top_level_fields: { novelField: 5 } }),
+    });
+
+    const listed = (await getJson<Page<ListedRow>>('/api/sessions')).body.items;
+    expect(listed.find((row) => row.id === DRIFTY)?.has_drift).toBe(true);
+    const fieldOnly = listed.find((row) => row.id === FIELD_ONLY);
+    expect(fieldOnly?.has_drift).toBe(false);
+    expect(JSON.stringify(fieldOnly)).not.toContain('novelField');
+
+    const { body } = await getJson<DriftBody>('/api/drift');
+    expect(body.unknown_top_level_fields).toEqual({ newField: 3, novelField: 5 });
+    const carrier = body.sessions_with_drift.find((s) => s.id === FIELD_ONLY);
+    expect(carrier?.counts).toEqual({ unknown_top_level_fields: { novelField: 5 } });
+  });
 });
 
 describe('10. GET /api/health (spec:394-396)', () => {

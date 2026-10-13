@@ -437,6 +437,27 @@ function seedDriftingCache(s: Sandbox, extraTypes: readonly string[] = []): void
   projectCache(s);
 }
 
+/** One clean session, and one whose only drift is a made-up top-level field. */
+function seedFieldOnlyCache(s: Sandbox): void {
+  writeSession(
+    s,
+    CACHE_ONE,
+    sessionRecords('c1', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:30.000Z'),
+  );
+  writeSession(
+    s,
+    CACHE_TWO,
+    onVersion(
+      [
+        ...sessionRecords('c2', '2026-08-14T09:01:00.000Z', '2026-08-14T09:01:30.000Z'),
+        { ...humanLine('later', '2026-08-14T09:02:00.000Z'), novelField: 7 },
+      ],
+      DRIFTING_VERSION,
+    ),
+  );
+  projectCache(s);
+}
+
 function censusOf(output: string): HarnessCensusRow[] {
   const json = JSON.parse(output) as { cache: { stats: CacheStats } };
   return json.cache.stats.harness;
@@ -499,6 +520,32 @@ describe('the drift census names what each release drifted on', () => {
     expect(lines[at + 2]).toBe('      unknown top-level fields (1): novelField 1');
     const cleanAt = lines.findIndex((line) => line.includes(`${CLEAN_VERSION}: `));
     expect(lines[cleanAt + 1]).not.toContain('unknown ');
+  });
+
+  it('a release that drifted only on top-level fields counts 0 drifting and still names them', async () => {
+    const s = sb();
+    seedFieldOnlyCache(s);
+
+    const row = rowFor(censusOf(await runDoctor(argsFor(s, ['--json']))), DRIFTING_VERSION);
+    expect(Object.keys(row).sort()).toEqual([
+      'drifting',
+      'projected',
+      'unknown_top_level_fields',
+      'version',
+    ]);
+    expect(row).toEqual({
+      version: DRIFTING_VERSION,
+      projected: 1,
+      drifting: 0,
+      unknown_top_level_fields: { novelField: 1 },
+    });
+
+    const lines = (await runDoctor(argsFor(s))).split('\n');
+    const at = lines.findIndex((line) => line.includes(`${DRIFTING_VERSION}: `));
+    expect(lines[at]).toBe(`    ${DRIFTING_VERSION}: 1 projected, 0 drifting`);
+    expect(lines[at + 1]).toBe('      unknown top-level fields (1): novelField 1');
+    expect(lines[at + 2] ?? '').not.toMatch(/^ {6}/);
+    expect(lines.slice(at, at + 2).join('\n')).not.toContain('record');
   });
 
   it('many distinct names cap in the rendered report and stay whole in --json', async () => {

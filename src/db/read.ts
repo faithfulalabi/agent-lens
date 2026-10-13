@@ -301,6 +301,17 @@ const TOP_LEVEL_ONLY = 'parent_session_id IS NULL';
 /** A clean session serializes to exactly this (`transcript/drift.ts:90`). */
 const NO_DRIFT = '{}';
 
+/** Drift buckets that change no event, turn or rollup, so they never raise the banner. */
+export const FIELD_TIER_BUCKETS: ReadonlySet<string> = new Set(['unknown_top_level_fields']);
+
+/**
+ * The banner's predicate, shared with `doctor`'s census. A bucket missing from
+ * {@link FIELD_TIER_BUCKETS} counts as structural, so an untiered new one is loud.
+ */
+export function hasStructuralDrift(counts: object): boolean {
+  return Object.keys(counts).some((bucket) => !FIELD_TIER_BUCKETS.has(bucket));
+}
+
 const Q_PREDICATE =
   "(COALESCE(title,'') || ' ' || COALESCE(preview,'') || ' ' || project_path) LIKE ? ESCAPE '\\'";
 
@@ -329,7 +340,7 @@ function toSessionRow(row: SessionListDbRow): SessionRow {
     ...rest,
     models: modelIdsOf(models),
     sub_models: modelIdsOf(sub_models),
-    has_drift: drift_json !== NO_DRIFT,
+    has_drift: drift_json !== NO_DRIFT && hasStructuralDrift(JSON.parse(drift_json) as object),
   };
 }
 
