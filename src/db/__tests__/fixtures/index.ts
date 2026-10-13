@@ -106,6 +106,34 @@ export function toolCallLine(
   });
 }
 
+/**
+ * `toolCallLine`, plus the harness's own rewrite of what it actually sent.
+ *
+ * Built by WRAPPING `toolCallLine` rather than by writing a second envelope: the
+ * envelope names three harness fields, and a hand-rolled copy would need three
+ * one-door suppressions of its own for a line this already produces.
+ *
+ * `sent === undefined` makes a line that carries no rewrite at all, which is the
+ * control for "nothing extra on the agreeing case".
+ */
+export function rewrittenToolCallLine(
+  callId: string,
+  name: string,
+  ts: string,
+  input: Record<string, unknown>,
+  sent: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const line = toolCallLine(callId, name, ts);
+  return {
+    ...line,
+    ...(sent === undefined ? {} : { wireToolInputs: { [callId]: sent } }),
+    message: {
+      ...(line.message as Record<string, unknown>),
+      content: [{ type: 'tool_use', id: callId, name, input }],
+    },
+  };
+}
+
 /** The result half. `extra` carries the structured spill pointer when there is one. */
 export function toolResultLine(
   callId: string,

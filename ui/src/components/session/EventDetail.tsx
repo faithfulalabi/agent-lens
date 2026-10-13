@@ -1,5 +1,10 @@
 import type { ContentField, EventContentBody, EventRow } from '@/lib/api';
-import { contentStateOf, type ContentState } from '@/lib/event-content';
+import {
+  contentStateOf,
+  type ContentState,
+  wireDivergenceOf,
+  type WireDivergence,
+} from '@/lib/event-content';
 
 /*
  * The right-hand pane for the selected event (Task 5.3), props-in.
@@ -66,6 +71,7 @@ export function EventDetail({ event, fetched, onShowFull }: EventDetailProps) {
             fetched={fetched}
             onShowFull={onShowFull}
           />
+          <WireSection event={event} />
           <ContentSection
             event={event}
             field="text"
@@ -122,6 +128,55 @@ function ContentSection({
         </button>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * WHAT RAN — the form the harness sent, shown only when it disagrees with the
+ * INPUT section above it.
+ *
+ * Absent on the majority of rows by design: `wireDivergenceOf` answers `null`
+ * when the two agreed, and a section that printed the same command twice would
+ * be the noise this pane exists to remove.
+ *
+ * The heading says WHAT RAN rather than naming the harness field, because the
+ * reader's question is which of the two actually executed.
+ */
+function WireSection({ event }: { event: EventRow }) {
+  const wire = wireDivergenceOf(event);
+  if (wire === null) return null;
+
+  return (
+    <section data-slot="detail-wire-input" className="pt-3">
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-2xs tracking-widest text-muted">WHAT RAN</h2>
+        <span
+          data-slot="detail-wire-label"
+          className="rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-muted"
+        >
+          differs from input
+        </span>
+      </div>
+      <WireBody wire={wire} />
+    </section>
+  );
+}
+
+function WireBody({ wire }: { wire: WireDivergence }) {
+  return (
+    <>
+      {wire.note === null ? null : (
+        <p data-slot="detail-wire-note" className="pt-1 text-2xs text-faint">
+          {wire.note}
+        </p>
+      )}
+      <pre
+        data-slot="detail-wire-body"
+        className="mt-1 whitespace-pre-wrap break-words font-mono text-2xs text-foreground"
+      >
+        {wire.body}
+      </pre>
+    </>
   );
 }
 

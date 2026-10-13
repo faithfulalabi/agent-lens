@@ -137,6 +137,17 @@ export interface EventRow {
   input: string | null;
   input_bytes: number | null;
   input_storage: string | null;
+  /**
+   * The tool input the harness actually SENT, when that is not the input the
+   * model asked for — a `cd <cwd> && ` prefix on a `Bash` command, or a key the
+   * wire form dropped.
+   *
+   * NULL means THE TWO AGREED, which is the majority. It does not mean nothing
+   * was recorded, and a row must render nothing extra for it.
+   */
+  wire_input: string | null;
+  wire_input_bytes: number | null;
+  wire_input_storage: string | null;
   text: string | null;
   text_bytes: number | null;
   output_storage: string | null;

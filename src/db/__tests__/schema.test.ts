@@ -170,6 +170,9 @@ const EVENTS_COLUMNS = [
   'input',
   'input_bytes',
   'input_storage',
+  'wire_input',
+  'wire_input_bytes',
+  'wire_input_storage',
   'text',
   'text_bytes',
   'output_storage',
@@ -246,7 +249,7 @@ describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => 
   it.each([
     ['sessions', SESSIONS_COLUMNS, 53],
     ['turns', TURNS_COLUMNS, 19],
-    ['events', EVENTS_COLUMNS, 37],
+    ['events', EVENTS_COLUMNS, 40],
     ['meta', META_COLUMNS, 2],
     // `PRAGMA table_info` lists an FTS5 table's DECLARED columns.
     ['spill_fts', SPILL_FTS_COLUMNS, 5],
@@ -276,7 +279,7 @@ describe('★ the full column set of every table, as SET EQUALITY (AC2)', () => 
       expect(objectNames(eaten, 'table')).toEqual(expect.arrayContaining(EXPECTED_TABLES));
       expect(objectNames(eaten, 'index')).toEqual(expect.arrayContaining(EXPECTED_INDEXES));
       expect(columnNames(eaten, 'turns')).toHaveLength(19);
-      expect(columnNames(eaten, 'events')).toHaveLength(37);
+      expect(columnNames(eaten, 'events')).toHaveLength(40);
     } finally {
       eaten.close();
     }
@@ -458,6 +461,24 @@ function statementsAt75(): string {
   return bumped + STATEMENTS_ADDED_AT_7_5;
 }
 
+// Version 4 and the three wire-input columns on `events`, applied as replaces
+// over the 0.17 oracle on the same terms: the frozen constants stay untouched and
+// each replace carries its own non-vacuity guard.
+function statementsAt004(): string {
+  const at017 = statementsAt017();
+  const bumped = at017.replace('PRAGMA user_version = 3;', 'PRAGMA user_version = 4;');
+  expect(bumped).not.toBe(at017);
+  // `  input_storage TEXT,\n` occurs once, on `events`.
+  const withWire = bumped.replace(
+    '  input_storage TEXT,\n',
+    '  input_storage TEXT,\n  wire_input TEXT,\n  wire_input_bytes INTEGER,\n' +
+      '  wire_input_storage TEXT,\n',
+  );
+  expect(withWire).not.toBe(bumped);
+  expect(withWire.match(/^ {2}wire_input TEXT,$/gm)).toHaveLength(1);
+  return withWire;
+}
+
 // Task 0.17: version 3 and the two model-list columns on `sessions`, applied as
 // replaces over the 7.5 oracle so the frozen constants above stay untouched.
 function statementsAt017(): string {
@@ -527,14 +548,14 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
 ];
 
 describe('the audit changed comments only — the statements did not move, and 7.5 added exactly two (AC5)', () => {
-  it('the DDL, stripped of comments, equals main @ d5c66d1 plus the 7.5 statements exactly', () => {
-    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt017()));
+  it('the DDL, stripped of comments, equals main @ d5c66d1 plus every later statement exactly', () => {
+    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt004()));
   });
 
   it('the version bump is SCHEMA_VERSION itself, so the two sites cannot drift', () => {
     // A mismatch between the two sites would recreate cache.db on every open.
     expect(SCHEMA_DDL).toContain(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
   });
 });
 

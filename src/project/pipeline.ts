@@ -47,10 +47,14 @@ import {
 import {
   joinToolCalls,
   NO_INPUT,
+  NO_WIRE_INPUT,
   type ProjectedInput,
+  type ProjectedWireInput,
   toolInput,
   type ToolResult,
+  wireInput,
 } from './tools.js';
+import { wireInputOf } from '../transcript/wire.js';
 
 /** What opened a turn. Every arm is reachable and each is pinned by a fixture. */
 export type TurnKind =
@@ -104,7 +108,7 @@ export interface ProjectedTurn {
 }
 
 /** One `events` row: one thing the UI draws, in file order. */
-export interface ProjectedEvent extends ProjectedInput {
+export interface ProjectedEvent extends ProjectedInput, ProjectedWireInput {
   id: string;
   session_id: string;
   turn_id: string;
@@ -509,6 +513,11 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         agent_type: undefined,
         // The input is the CALL's half, so it is known here and never moves.
         ...(block?.kind === 'tool_use' ? toolInput(block.input) : NO_INPUT),
+        // What the harness SENT, when that is not what was asked for. Keyed by
+        // the `tool_use` id, which is this row's own id whenever it has one.
+        ...(block?.kind === 'tool_use'
+          ? wireInput(wireInputOf(line.raw, block.id), block.input)
+          : NO_WIRE_INPUT),
         text: kind === 'tool_call' ? undefined : (blockText(block) ?? lineText),
         text_bytes: undefined,
         output_storage: kind === 'tool_call' ? 'absent' : undefined,

@@ -428,6 +428,74 @@ describe('AC10 — the input columns, and `text_bytes` in every arm', () => {
   });
 });
 
+describe('the wire input half is written only where the harness rewrote the call', () => {
+  it('stores the executed form and leaves the request untouched', () => {
+    const call = callAt(project('wire-tool-inputs.jsonl'), 'toolu_prefix');
+
+    // The request is the column it has always been.
+    expect(call.input).toBe('{"command":"ls -a","description":"list"}');
+    expect(call.input_storage).toBe('inline');
+
+    // The wire form is the one that ran, and it is reachable beside it.
+    expect(call.wire_input).toBe('{"command":"cd /Users/dev/proj && ls -a","description":"list"}');
+    expect(call.wire_input_storage).toBe('inline');
+    expect(call.wire_input_bytes).toBe(bytes(call.wire_input!));
+  });
+
+  it('stores a wire form that OMITS a key the request carries', () => {
+    const call = callAt(project('wire-tool-inputs.jsonl'), 'toolu_dropped');
+
+    // The reason a prefix-shaped column would have been wrong: this divergence
+    // is not a prefix and could not be expressed as one.
+    expect(call.input).toContain('"replace_all":false');
+    expect(call.wire_input).toBe('{"file_path":"/tmp/a.ts","old_string":"a","new_string":"b"}');
+  });
+
+  it.each([
+    ['the two agree outright', 'toolu_same'],
+    ['they agree but the harness reordered the keys', 'toolu_reordered'],
+    ['the line carries no wireToolInputs at all', 'toolu_nowire'],
+  ])('writes nothing when %s', (_label, id) => {
+    const call = callAt(project('wire-tool-inputs.jsonl'), id);
+
+    expect(call.input).toBeDefined();
+    expect(call.wire_input).toBeUndefined();
+    expect(call.wire_input_bytes).toBeUndefined();
+    expect(call.wire_input_storage).toBeUndefined();
+  });
+
+  it('is not fooled by key order, which a textual comparison would be', () => {
+    const call = callAt(project('wire-tool-inputs.jsonl'), 'toolu_reordered');
+    const wire = JSON.stringify({
+      command: 'ls',
+      description: 'd',
+      run_in_background: true,
+      timeout: 900_000,
+    });
+
+    // Non-vacuity: the two serializations really do differ, so the row above is
+    // silent because the comparison is structural and not because the fixture
+    // happens to agree byte for byte.
+    expect(call.input).not.toBe(wire);
+    expect(call.wire_input).toBeUndefined();
+  });
+
+  it('leaves the wire columns UNDEFINED on every row that is not a tool call', () => {
+    for (const event of project('wire-tool-inputs.jsonl').events) {
+      if (event.kind === 'tool_call') continue;
+      expect(event.wire_input, event.id).toBeUndefined();
+      expect(event.wire_input_bytes, event.id).toBeUndefined();
+      expect(event.wire_input_storage, event.id).toBeUndefined();
+    }
+  });
+
+  it('counts no drift: the field is measured, and a rewrite is not a bad transcript', () => {
+    // A divergence is normal on about half of all tool calls, so routing it
+    // through the counter would raise the durability alarm on half the corpus.
+    expect(project('wire-tool-inputs.jsonl').drift).toBe('{}');
+  });
+});
+
 /** Every line of every non-test source file under `src/` and `ui/src/`. */
 function sourceLines(): { file: string; line: number; text: string }[] {
   // `src/project/__tests__/` up to the repo root.

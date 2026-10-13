@@ -28,6 +28,7 @@ import {
   parseArgv,
   pickPayloadRow,
   pickSearchTerm,
+  pickWireRow,
   runRenderGate,
   type DriveOutcome,
   type WireEvent,
@@ -39,6 +40,7 @@ import {
   evaluateDetail,
   evaluateShot,
   renderContactSheet,
+  type AssertionRecord,
   type DriveResult,
   type Observations,
 } from '../report.js';
@@ -105,6 +107,13 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       outputPrefix: 'a.txt',
       inputMatched: true,
       outputMatched: true,
+    },
+    wireInput: {
+      eventId: 'toolu_1',
+      rowMarked: true,
+      panePrefix: '{"command":"cd /x &&',
+      paneMatched: true,
+      headingShown: true,
     },
     eventDetail: {
       eventId: 'toolu_1',
@@ -1033,15 +1042,20 @@ describe('the gate source itself (AC6)', () => {
      * ★ RAISED 13 -> 14 BY TASK 0.17: `session-model` is READ — every list
      * row's Model cell text, asserted by `session-model-column`.
      *
-     * ★ AND IT IS 14, NOT 15. `search-warm` gets no entry: `countUnprojected`
-     * is 0 over the dev corpus (measured, 293 of 293 `ready`) and the gate
-     * snapshot copies the same database, so the control cannot be driven at all
-     * — which is precisely the vacuity above. The probe reads it as a raw
-     * attribute selector and asserts its ABSENCE. Task 7.4's probe adds the
-     * entry when it can drive the raise side.
+     * ★ AND `search-warm` STILL GETS NO ENTRY: `countUnprojected` is 0 over the
+     * dev corpus (measured, 293 of 293 `ready`) and the gate snapshot copies the
+     * same database, so the control cannot be driven at all — which is precisely
+     * the vacuity above. The probe reads it as a raw attribute selector and
+     * asserts its ABSENCE. Task 7.4's probe adds the entry when it can drive the
+     * raise side.
+     *
+     * ★ RAISED 14 -> 15 BY THE WIRE-INPUT PROBE: `span-wire` is COUNTED on the
+     * row the probe then clicks, which is what makes "a reader looking at the
+     * row can find out the command is not the one that ran" gate-verified rather
+     * than pinned in a render test.
      */
-    expect(values).toHaveLength(14);
-    expect(new Set(values).size).toBe(14);
+    expect(values).toHaveLength(15);
+    expect(new Set(values).size).toBe(15);
 
     for (const slot of values) {
       const found = execFileSync('grep', ['-rl', `data-slot="${slot}"`, UI_SRC], {
@@ -1069,6 +1083,7 @@ describe('the gate source itself (AC6)', () => {
       input: '{"file_path":"a.txt"}',
       text: 'ok',
       output_storage: 'inline',
+      wire_input: null,
       ...overrides,
     });
     const map = (...events: WireEvent[]): Map<string, WireEvent> =>
@@ -1197,6 +1212,7 @@ describe('the gate source itself (AC6)', () => {
       input: null,
       text: null,
       output_storage: 'inline',
+      wire_input: null,
       ...overrides,
     });
 
@@ -1422,5 +1438,125 @@ describe('.render-gate/ is ignored (AC5)', () => {
         cwd: REPO_ROOT,
       }),
     ).toThrow();
+  });
+});
+
+/*
+ * ★ THE PURE HALF OF THE WIRE-INPUT PROBE, on `pickPayloadRow`'s split.
+ *
+ * The choreography — count the marker, click, wait for the pane's own
+ * `data-event-id`, read it — is Playwright. This is the decision, plus the
+ * degrade-to-observation rule that keeps a narrow window from reading as a pass.
+ */
+describe('the wire-input probe decides which row proves the divergence', () => {
+  const wire = (overrides: Partial<WireEvent> & { id: string }): WireEvent => ({
+    kind: 'tool_call',
+    raw_type: 'assistant',
+    input: '{"command":"ls"}',
+    text: 'a b c',
+    output_storage: 'inline',
+    wire_input: null,
+    ...overrides,
+  });
+  const map = (...events: WireEvent[]): Map<string, WireEvent> =>
+    new Map(events.map((event) => [event.id, event]));
+
+  it('picks the first RENDERED row whose call the harness rewrote', () => {
+    const payloads = map(
+      wire({ id: 'off-screen', wire_input: '{"command":"cd /x && ls"}' }),
+      wire({ id: 'agreed' }),
+      wire({ id: 'rewritten', wire_input: '{"command":"cd /y && ls"}' }),
+    );
+    const rows = [
+      { id: 'agreed', text: '' },
+      { id: 'rewritten', text: '' },
+    ];
+
+    // Row order, and never the wire's: a row the virtualizer never emitted is
+    // not a candidate however divergent it is.
+    expect(pickWireRow(rows, payloads)?.id).toBe('rewritten');
+  });
+
+  it.each([
+    ['the two agreed', null],
+    ['the column is the empty string', ''],
+  ])('skips a row where %s', (_label, wire_input) => {
+    const payloads = map(
+      wire({ id: 'skip', wire_input }),
+      wire({ id: 'keep', wire_input: '{"command":"cd /x && ls"}' }),
+    );
+    const rows = [
+      { id: 'skip', text: '' },
+      { id: 'keep', text: '' },
+    ];
+
+    expect(pickWireRow(rows, payloads)?.id).toBe('keep');
+  });
+
+  it('answers null when no rendered row carries a rewritten call', () => {
+    const payloads = map(wire({ id: 'a' }), wire({ id: 'b' }));
+    const rows = [
+      { id: 'a', text: '' },
+      { id: 'b', text: '' },
+    ];
+
+    expect(pickWireRow(rows, payloads)).toBeNull();
+    expect(pickWireRow([], payloads)).toBeNull();
+  });
+
+  it('narrows the column, so the probe never looks for a null prefix', () => {
+    const picked = pickWireRow(
+      [{ id: 'a', text: '' }],
+      map(wire({ id: 'a', wire_input: '{"command":"cd /x && ls"}' })),
+    );
+
+    expect(picked?.wire_input).toBe('{"command":"cd /x && ls"}');
+  });
+});
+
+describe('a narrow window is an observation, and a marked row that reads wrong is a failure', () => {
+  const named = (report: ReturnType<typeof buildReport>, name: string): AssertionRecord[] =>
+    report.assertions.filter((a) => a.name === name);
+
+  it('asserts nothing and warns when no rewritten call was in the window', () => {
+    // `toolCallAssertions`' rule, not `threadAssertions`': whether a divergent
+    // row is on screen is a fact about the corpus, and a check that cannot fail
+    // is not a pass.
+    const report = reportFor({ wireInput: null });
+
+    expect(named(report, 'wire-input-divergence')).toEqual([]);
+    expect(report.warnings.join('\n')).toContain('wire-input-divergence: none in window');
+    expect(report.ok).toBe(true);
+  });
+
+  it.each([
+    ['the row carried no marker', { rowMarked: false }],
+    ['the pane never showed the executed form', { paneMatched: false }],
+    ['the pane showed bytes under no heading', { headingShown: false }],
+    [
+      'the executed form was empty, so nothing was looked for',
+      { panePrefix: '', paneMatched: false },
+    ],
+  ])('fails when %s', (_label, spoiled) => {
+    const report = reportFor({
+      wireInput: {
+        eventId: 'toolu_1',
+        rowMarked: true,
+        panePrefix: '{"command":"cd /x &&',
+        paneMatched: true,
+        headingShown: true,
+        ...spoiled,
+      },
+    });
+
+    expect(named(report, 'wire-input-divergence')[0]?.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  });
+
+  it('passes on the whole reading, and names the event it read', () => {
+    const record = named(reportFor(), 'wire-input-divergence')[0];
+
+    expect(record?.ok).toBe(true);
+    expect(record?.actual).toContain('toolu_1');
   });
 });

@@ -13,7 +13,7 @@
 // archive: a bump here makes `openDb` remove the file and re-sweep.
 
 /** Bumping this makes `openDb` remove cache.db and recreate it. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 --
@@ -37,7 +37,7 @@ export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = OFF;    -- projections are dropped wholesale, per session, by hand
-PRAGMA user_version = 3;      -- SCHEMA_VERSION; mismatch => unlink + recreate
+PRAGMA user_version = 4;      -- SCHEMA_VERSION; mismatch => unlink + recreate
 
 -- =====================================================================  sessions
 -- The file index AND the session-list row AND the projection freshness header,
@@ -243,6 +243,15 @@ CREATE TABLE events (
                                             -- tools.ts:118, unwitnessed by its own comment.
                                             -- 'line_ref' is live at exactly 1 row. Keep the
                                             -- arms; see task 0.12.
+
+  -- wireToolInputs[tool_use.id]: the form the harness SENT, which is not always the
+  -- form the model asked for. NULL means THE TWO AGREED -- never that nothing was
+  -- recorded. Storage words and the cap are input_storage's, written by the same
+  -- tools.ts:toolInput.
+  wire_input         TEXT,
+  wire_input_bytes   INTEGER,
+  wire_input_storage TEXT,
+
   text               TEXT,                  -- prose / thinking / prompt / tool output
   text_bytes         INTEGER,
   output_storage     TEXT,                  -- inline | line_ref | spill | missing | absent

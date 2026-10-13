@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { contentStateOf, storageOf, type ContentStorage } from '../event-content';
+import { contentStateOf, storageOf, wireDivergenceOf, type ContentStorage } from '../event-content';
 import { makeEventContent, makeEventRow } from './fixtures';
 
 /*
@@ -250,5 +250,64 @@ describe('the input half reads its own column (AC1)', () => {
 
     expect(contentStateOf(event, 'input', null).body).toBe('{"file_path":"a.txt"}');
     expect(contentStateOf(event, 'text', null).kind).toBe('empty');
+  });
+});
+
+describe('the wire half is shown only where the harness rewrote the call', () => {
+  it('answers the executed form when the column holds one', () => {
+    const event = makeEventRow({
+      input: '{"command":"ls"}',
+      wire_input: '{"command":"cd /Users/dev/proj && ls"}',
+      wire_input_storage: 'inline',
+    });
+
+    expect(wireDivergenceOf(event)).toEqual({
+      body: '{"command":"cd /Users/dev/proj && ls"}',
+      note: null,
+    });
+  });
+
+  it.each([
+    ['the column is NULL — the two agreed', null, null],
+    ['the column holds the empty string', '', 'inline'],
+  ])('answers null when %s', (_label, wire_input, wire_input_storage) => {
+    // AC2: no new noise on the agreeing case, which is the majority.
+    expect(wireDivergenceOf(makeEventRow({ wire_input, wire_input_storage }))).toBeNull();
+  });
+
+  it('notes a stored head, and only on line_ref', () => {
+    const head = 'x'.repeat(64);
+    const noteOf = (storage: string): string | null =>
+      wireDivergenceOf(makeEventRow({ wire_input: head, wire_input_storage: storage }))?.note ??
+      null;
+
+    // The same sentence the INPUT and OUTPUT halves print, from the same source.
+    expect(noteOf('line_ref')).toBe(
+      contentStateOf(makeEventRow({ input: head, input_storage: 'line_ref' }), 'input', null).note,
+    );
+    expect(noteOf('inline')).toBeNull();
+  });
+
+  it('shows a body under an unrecognised storage word rather than hiding it', () => {
+    // The column is the only source this half has, so a word this build does not
+    // know must not blank bytes that are sitting right there.
+    expect(
+      wireDivergenceOf(
+        makeEventRow({ wire_input: '{"a":1}', wire_input_storage: 'something-new' }),
+      ),
+    ).toEqual({ body: '{"a":1}', note: null });
+  });
+
+  it('reads the wire column and never the request column', () => {
+    const event = makeEventRow({
+      input: '{"command":"ls"}',
+      input_storage: 'inline',
+      wire_input: null,
+      wire_input_storage: null,
+    });
+
+    // A predicate keyed on `input` would answer a body here and put the request
+    // on screen twice.
+    expect(wireDivergenceOf(event)).toBeNull();
   });
 });

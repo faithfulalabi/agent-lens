@@ -156,6 +156,10 @@ export interface EventRow {
   input: string | null;
   input_bytes: number | null;
   input_storage: string | null;
+  /** The form the harness SENT. NULL means it agreed with `input`. */
+  wire_input: string | null;
+  wire_input_bytes: number | null;
+  wire_input_storage: string | null;
   text: string | null;
   text_bytes: number | null;
   output_storage: string | null;
@@ -464,6 +468,7 @@ export function readTurns(db: DatabaseSync, session_id: string): TurnRow[] {
 
 const EVENT_COLUMNS = `id, turn_id, seq, kind, ts, request_id, block_index, name, status,
      duration_ms, duration_source, input, input_bytes, input_storage,
+     wire_input, wire_input_bytes, wire_input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
      model, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, est_cost,
      child_session_id, agent_type, agent_status, raw_type, raw_subtype`;
