@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/faithfulalabi/agent-lens/compare/v0.7.0...v0.7.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **drift:** raise the drift banner only for structural drift ([#127](https://github.com/faithfulalabi/agent-lens/issues/127)) ([09cc5a2](https://github.com/faithfulalabi/agent-lens/commit/09cc5a2d55e7d95fe2c459ee2c89159a38bfcc7c))
+
 ## [0.7.0](https://github.com/faithfulalabi/agent-lens/compare/v0.6.0...v0.7.0) (2026-10-15)
 
 
