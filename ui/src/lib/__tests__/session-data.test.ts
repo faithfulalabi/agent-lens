@@ -214,6 +214,13 @@ describe('the alarm speaks only when the row says it should', () => {
     expect(notice, 'there is no version to name, so it must not invent one').not.toContain('null');
   });
 
+  it('is the same notice on every call for the same row, and never mentions fields', () => {
+    const facts = { hasDrift: true, harnessVersion: '2.2.0' };
+    const notice = driftNotice(facts);
+    expect(driftNotice(facts)).toBe(notice);
+    expect(notice).not.toMatch(/field/i);
+  });
+
   it('says nothing at all on a clean session — no false alarm on a clean corpus', () => {
     expect(driftNotice({ hasDrift: false, harnessVersion: '2.1.212' })).toBeNull();
     // The version is irrelevant to the raise. Only the flag decides.

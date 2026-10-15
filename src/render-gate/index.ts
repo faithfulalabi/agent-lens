@@ -17,11 +17,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   statSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Page } from 'playwright-core';
 import { resolveUiDir } from '../server/static-ui.js';
@@ -32,6 +33,7 @@ import {
   type DetailTexts,
   type DriftProbe,
   type EventDetailProbe,
+  type ImageProbe,
   type LiveProbe,
   type Observations,
   type RenderGateReport,
@@ -44,7 +46,7 @@ import {
 } from './report.js';
 
 /**
- * The fourteen `data-slot` values the gate drives. `data-slot` carries no styling
+ * The `data-slot` values the gate drives. `data-slot` carries no styling
  * weight anywhere in `ui/src` — it is already a pure test hook, and four UI
  * suites assert these exact strings, so a rename reds there before it reds here.
  *
@@ -73,6 +75,7 @@ export const SELECTORS = {
   spanExpand: 'span-expand',
   spanWire: 'span-wire',
   spanDetail: 'span-detail',
+  detailImage: 'detail-image',
   threadToggle: 'thread-toggle',
   driftBanner: 'drift-banner',
   inSessionSearch: 'in-session-search',
@@ -344,6 +347,9 @@ interface PageElement {
   getAttribute(name: string): string | null;
   querySelector(selectors: string): PageElement | null;
   getBoundingClientRect(): { height: number };
+  /** An `<img>`'s, and only an `<img>`'s. */
+  readonly complete?: boolean;
+  readonly naturalWidth?: number;
 }
 
 /** The fields the payload cross-checks read off the detail response. */
@@ -652,6 +658,10 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   // session, which no earlier reading would survive.
   const searchScreen = await probeSearch(page, events, shoot);
 
+  // AFTER the search probe, and for the same reason: it navigates to a session of its own
+  // choosing, because the first session rarely holds an image.
+  const image = await probeImage(page, dev.viteUrl, dev.dataDir);
+
   const detail: DetailTexts = { t0, t1, t2 };
   return {
     shots,
@@ -670,6 +680,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       listPaths,
       toolCallInline,
       wireInput,
+      image,
       eventDetail,
       subagentExpansion,
       threadInline,
@@ -845,6 +856,103 @@ async function probeWireInput(
   };
 }
 
+/** What `probeImage` needs off one event of the detail response. */
+export interface ImageEvent {
+  id: string;
+  seq: number;
+  image_count: number;
+}
+
+/** A tool result's or a pasted image's block, as the transcript spells it. */
+const IMAGE_BLOCK = '"type":"image"';
+
+/**
+ * The first top-level archived session whose transcript carries an image, or `null`.
+ *
+ * Sidecars are skipped: they open under their parent, never at their own URL.
+ */
+export function firstImageSession(dataDir: string): string | null {
+  const archive = join(dataDir, 'archive');
+  const found = archivedNames(dataDir)
+    .filter((name) => name.endsWith('.jsonl') && name.split('/').length === 2)
+    .sort()
+    .find((name) => readFileSync(join(archive, name), 'utf8').includes(IMAGE_BLOCK));
+  return found === undefined ? null : basename(found, '.jsonl');
+}
+
+/** The first event with an image to draw. */
+export function pickImageEvent(events: readonly ImageEvent[]): ImageEvent | null {
+  return events.find((event) => event.image_count > 0) ?? null;
+}
+
+/**
+ * An event's images, drawn: deep-link to it, wait until every figure holds a finished image or
+ * a sentence, and count what the browser decoded. `null` when the corpus offers none.
+ */
+async function probeImage(
+  page: Page,
+  viteUrl: string,
+  dataDir: string,
+): Promise<ImageProbe | null> {
+  const imageSession = firstImageSession(dataDir);
+  if (imageSession === null) return null;
+  const sessionPath = `/session/${encodeURIComponent(imageSession)}`;
+
+  const detail = page.waitForResponse(
+    (response) =>
+      isSessionDetailPath(response.url()) &&
+      new URL(response.url()).pathname.endsWith(`/${encodeURIComponent(imageSession)}`),
+  );
+  await page.goto(`${viteUrl}${sessionPath}`);
+  const events = await (
+    await detail
+  )
+    .json()
+    .then((body: { events?: ImageEvent[] }) => body.events ?? [])
+    .catch((): ImageEvent[] => []);
+  const target = pickImageEvent(events);
+  if (target === null) return null;
+
+  await page.goto(`${viteUrl}${sessionPath}/event/${target.seq}`);
+  const pane = `${slot(SELECTORS.spanDetail)}[data-event-id="${cssAttrValue(target.id)}"]`;
+  await page.waitForSelector(pane);
+  const figures = `${pane} ${slot(SELECTORS.detailImage)}`;
+  await page
+    .waitForFunction(
+      ({ selector, count }) => {
+        const found = [...document.querySelectorAll(selector)];
+        return (
+          found.length === count &&
+          found.every((figure) => {
+            const img = figure.querySelector('img');
+            return (
+              (img !== null && img.complete === true) || figure.querySelector('figcaption') !== null
+            );
+          })
+        );
+      },
+      { selector: figures, count: target.image_count },
+    )
+    // A pane that never settles is read as it stands; the assertion says what it lacked.
+    .catch(() => undefined);
+
+  const read = await page.$$eval(figures, (nodes) =>
+    nodes.map((figure) => {
+      const img = figure.querySelector('img');
+      return {
+        decoded: img !== null && img.complete === true && (img.naturalWidth ?? 0) > 0,
+        note: figure.querySelector('figcaption')?.textContent ?? null,
+      };
+    }),
+  );
+  return {
+    eventId: target.id,
+    imageCount: target.image_count,
+    decoded: read.filter((figure) => figure.decoded).length,
+    notes: read.flatMap((figure) => (figure.note === null ? [] : [figure.note])),
+  };
+}
+
 /** The pane heading `EventDetail.tsx` prints over the executed form. */
 const WHAT_RAN_HEADING = 'WHAT RAN';
 
@@ -951,18 +1059,22 @@ const TREE_CANVAS = '[data-slot="span-tree"]';
  * `null` — its bytes are a `.zst` frame, which appending to would corrupt.
  */
 export function archivedTranscript(dataDir: string, sessionId: string): string | null {
-  const archive = join(dataDir, 'archive');
-  let names: string[];
-  try {
-    names = readdirSync(archive, { recursive: true, encoding: 'utf8' });
-  } catch {
-    return null;
-  }
   const wanted = `${sessionId}.jsonl`;
-  const found = names
-    .map((name) => name.split('\\').join('/'))
-    .find((name) => name === wanted || name.endsWith(`/${wanted}`));
-  return found === undefined ? null : join(archive, found);
+  const found = archivedNames(dataDir).find(
+    (name) => name === wanted || name.endsWith(`/${wanted}`),
+  );
+  return found === undefined ? null : join(dataDir, 'archive', found);
+}
+
+/** Every path under `<dataDir>/archive`, archive-relative with `/` separators. `[]` when absent. */
+function archivedNames(dataDir: string): string[] {
+  try {
+    return readdirSync(join(dataDir, 'archive'), { recursive: true, encoding: 'utf8' }).map(
+      (name) => name.split('\\').join('/'),
+    );
+  } catch {
+    return [];
+  }
 }
 
 /**

@@ -19,6 +19,7 @@ import { createArchiveReader } from '../archive/read.js';
 import {
   createContentEnv,
   createContentResolver,
+  createImageResolver,
   createUnrecognisedFieldsResolver,
 } from '../content/resolve.js';
 import { createCorpusSweep } from '../corpus/watch.js';
@@ -145,9 +146,9 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   // nothing.
   const warm = createWarmQueue({ db, env: createProjectionEnv(reader, roots), hub });
 
-  const archivePathOf = (id: string): string | undefined =>
-    readEventArchivePath(db, id)?.archive_path;
+  const archivePathOf = (id: string) => readEventArchivePath(db, id)?.archive_path;
   const contentEnv = createContentEnv(reader, [roots.archiveRoot, roots.transcriptRoot]);
+
   const app = buildApiApp({
     db,
     token,
@@ -158,6 +159,7 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     hub,
     warm,
     resolveContent: createContentResolver(archivePathOf, contentEnv),
+    resolveImage: createImageResolver(archivePathOf, contentEnv),
     resolveUnrecognisedFields: createUnrecognisedFieldsResolver(archivePathOf, contentEnv),
   });
   const fetch = app.fetch;

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.1](https://github.com/faithfulalabi/agent-lens/compare/v0.7.0...v0.7.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **drift:** raise the drift banner only for structural drift ([#127](https://github.com/faithfulalabi/agent-lens/issues/127)) ([09cc5a2](https://github.com/faithfulalabi/agent-lens/commit/09cc5a2d55e7d95fe2c459ee2c89159a38bfcc7c))
+
+## [0.7.0](https://github.com/faithfulalabi/agent-lens/compare/v0.6.0...v0.7.0) (2026-10-15)
+
+
+### Features
+
+* **ui:** draw a tool result's screenshot in the detail pane ([#129](https://github.com/faithfulalabi/agent-lens/issues/129)) ([7f53d74](https://github.com/faithfulalabi/agent-lens/commit/7f53d74077c06580ef2203ec787136b0a18c3a45))
+
+
+### Bug Fixes
+
+* **projector:** name an image child in a tool result's text ([#126](https://github.com/faithfulalabi/agent-lens/issues/126)) ([484dcdb](https://github.com/faithfulalabi/agent-lens/commit/484dcdb197554a9cf86912757e86302a0cbee10e))
+
 ## [0.6.0](https://github.com/faithfulalabi/agent-lens/compare/v0.5.0...v0.6.0) (2026-10-13)
 
 

@@ -62,12 +62,13 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { Host: 'localhost', [TOKEN_HEADER]: TOKEN, ...extra };
 }
 
-/** The eleven routes, as method + path. Auth and host are driven over all of them. */
+/** The twelve routes, as method + path. Auth and host are driven over all of them. */
 const ROUTES: readonly [string, string][] = [
   ['GET', '/api/sessions'],
   ['GET', '/api/projects'],
   ['GET', '/api/sessions/session-1'],
   ['GET', '/api/events/ev-1/content'],
+  ['GET', '/api/events/ev-1/images/0'],
   ['GET', '/api/search?q=x'],
   ['GET', '/api/stream'],
   ['POST', '/api/sessions/session-1/reproject'],

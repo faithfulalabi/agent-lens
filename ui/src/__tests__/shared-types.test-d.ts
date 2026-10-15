@@ -40,6 +40,9 @@ type _AssertAgentStatus = EventRow['agent_status'] extends string | null ? true 
 // two commands actually ran while the browser type drops them.
 type _AssertWireInput = EventRow['wire_input'] extends string | null ? true : never;
 
+// NOT NULL with a default of 0, so a nullable narrowing here would be a lie the pane trusts.
+type _AssertImageCount = EventRow['image_count'] extends number ? true : never;
+
 // The five keys the DETAIL header adds for a sidecar. All optional, because
 // `toDetailHeader` assigns each one only when the column is non-null.
 type _AssertSidecarHeader = SessionDetailHeaderRow extends {
@@ -68,5 +71,6 @@ export type SharedTypesResolve = [
   _AssertSpill,
   _AssertAgentStatus,
   _AssertWireInput,
+  _AssertImageCount,
   _AssertSidecarHeader,
 ];

@@ -24,7 +24,12 @@ import {
 } from '../../archive/__tests__/fixtures.js';
 import { createArchiveReader, type ArchiveReader } from '../../archive/read.js';
 import { foldArchive } from '../../db/freshness.js';
-import { readEventArchivePath, readEventContentRow, type EventContentRow } from '../../db/read.js';
+import {
+  readEventArchivePath,
+  readEventContentRow,
+  readEventPage,
+  type EventContentRow,
+} from '../../db/read.js';
 import { projectSession } from '../../db/write.js';
 import {
   CWD,
@@ -47,9 +52,12 @@ import { clampRange, type ContentResolver } from '../../server/api.js';
 import {
   createContentEnv,
   createContentResolver,
+  createImageResolver,
   createSpillLocator,
   createUnrecognisedFieldsResolver,
+  IMAGE_LINE_MAX,
   resolveContent,
+  resolveImage,
   resolveUnrecognisedFields,
   type ContentEnv,
   type ContentField,
@@ -146,6 +154,7 @@ function row(over: Partial<EventContentRow> = {}): EventContentRow {
     result_offset: null,
     result_len: null,
     result_block: null,
+    image_count: 0,
     ...over,
   };
 }
@@ -180,10 +189,10 @@ function bigCallLine(
   });
 }
 
-/** A `tool_result` carrying SEVERAL text children — the `'\n'` join's witness. */
+/** A `tool_result` carrying SEVERAL children — the `'\n'` join's witness. A string is a text child. */
 function multiChildResultLine(
   callId: string,
-  texts: readonly string[],
+  children: readonly (string | Record<string, unknown>)[],
   at: string,
 ): Record<string, unknown> {
   return envelope({
@@ -195,7 +204,9 @@ function multiChildResultLine(
         {
           type: 'tool_result',
           tool_use_id: callId,
-          content: texts.map((text) => ({ type: 'text', text })),
+          content: children.map((child) =>
+            typeof child === 'string' ? { type: 'text', text: child } : child,
+          ),
         },
       ],
     },
@@ -846,6 +857,153 @@ describe('the re-derived resultText agrees with the projector', () => {
     expect(content.text_bytes).toBe(Buffer.byteLength(slice.content, 'utf8'));
     // The stored column is only a head preview of it.
     expect(slice.content.startsWith(content.text!)).toBe(true);
+  });
+});
+
+describe('an image child resolves to the bytes the projector sized', () => {
+  it('24b. appends the placeholder after the text, and text_bytes matches the resolved body', () => {
+    const IMAGE = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(175200) },
+    };
+    const HEAD = oversized('screenshot follows ');
+    const { db, path } = project([
+      humanLine('image', TS(0)),
+      toolCallLine('toolu_image', 'Read', TS(1)),
+      multiChildResultLine('toolu_image', [IMAGE, HEAD], TS(2)),
+    ]);
+    const content = contentRow(db, 'toolu_image');
+    expect(content.output_storage).toBe('line_ref');
+
+    const slice = resolveContent(content, 'text', path, sandboxEnv());
+
+    expect(slice.content).toBe(`${HEAD}\n[image image/png, 131.4 KB]`);
+    expect(content.text_bytes).toBe(Buffer.byteLength(slice.content, 'utf8'));
+  });
+});
+
+// --- images -----------------------------------------------------------------
+
+/** Three distinct real PNGs, so an ordinal that lands on the wrong child is visible. */
+const RED_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+const BLUE_2X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGNgYPjPwPAfAAUCAf97ThpEAAAAAElFTkSuQmCC';
+const GREEN_1X2 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGNg+M/AwPCfAQAIAAH/e6nKJAAAAABJRU5ErkJggg==';
+
+function image(data: string, media_type = 'image/png'): Record<string, unknown> {
+  return { type: 'image', source: { type: 'base64', media_type, data } };
+}
+
+/** A human line that pasted an image beside its prompt. */
+function pastedImageLine(data: string, at: string): Record<string, unknown> {
+  return envelope({
+    type: 'user',
+    timestamp: at,
+    message: { role: 'user', content: [{ type: 'text', text: 'see this' }, image(data)] },
+  });
+}
+
+function screenshots(children: readonly (string | Record<string, unknown>)[]): {
+  db: DatabaseSync;
+  id: string;
+  path: string;
+} {
+  return project([
+    humanLine('shoot', TS(0)),
+    toolCallLine('toolu_shot', 'Read', TS(1)),
+    multiChildResultLine('toolu_shot', children, TS(2)),
+  ]);
+}
+
+describe('an image resolves to its decoded bytes, straight from the archive', () => {
+  it("28. a result's nth image child resolves to that child's bytes", () => {
+    const { db, path } = screenshots(['Read 2 images', image(BLUE_2X1), image(GREEN_1X2)]);
+    const content = contentRow(db, 'toolu_shot');
+    expect(content.image_count).toBe(2);
+
+    expect(resolveImage(content, 0, path, sandboxEnv())).toEqual({
+      ok: true,
+      media_type: 'image/png',
+      bytes: Buffer.from(BLUE_2X1, 'base64'),
+    });
+    expect(resolveImage(content, 1, path, sandboxEnv())).toEqual({
+      ok: true,
+      media_type: 'image/png',
+      bytes: Buffer.from(GREEN_1X2, 'base64'),
+    });
+  });
+
+  it('29. a pasted top-level image resolves off the emitting line', () => {
+    const { db, id, path } = project([pastedImageLine(RED_1X1, TS(0))]);
+    const pasted = readEventPage(db, id, { from_seq: 0, limit: 10 }).items.find(
+      (event) => event.image_count === 1,
+    );
+    expect(pasted).toBeDefined();
+
+    const resolved = resolveImage(contentRow(db, pasted!.id), 0, path, sandboxEnv());
+
+    expect(resolved).toEqual({
+      ok: true,
+      media_type: 'image/png',
+      bytes: Buffer.from(RED_1X1, 'base64'),
+    });
+  });
+
+  it('30. a line longer than IMAGE_LINE_MAX is refused before any byte is read', () => {
+    const log: Trace[] = [];
+    const hostile = row({
+      result_offset: 0,
+      result_len: IMAGE_LINE_MAX + 1,
+      result_block: 0,
+      image_count: 1,
+    });
+
+    expect(resolveImage(hostile, 0, '/any/archive.jsonl', tracingEnv(log))).toEqual({
+      ok: false,
+      reason: 'too_large',
+    });
+    expect(log).toEqual([]);
+  });
+
+  it('31. a pruned archive, an absent session and an ordinal past the end all answer gone', () => {
+    const { db, path } = screenshots([image(BLUE_2X1)]);
+    const content = contentRow(db, 'toolu_shot');
+    const gone = { ok: false, reason: 'gone' };
+
+    expect(resolveImage(content, 1, path, sandboxEnv())).toEqual(gone);
+    expect(resolveImage(content, 0, undefined, sandboxEnv())).toEqual(gone);
+    rmSync(path);
+    expect(resolveImage(content, 0, path, sandboxEnv())).toEqual(gone);
+  });
+
+  it.each(['image/svg+xml', 'text/html', ''])(
+    '32. a media type outside the four the API accepts (%j) is never served',
+    (media_type) => {
+      const { db, path } = screenshots([image(BLUE_2X1, media_type)]);
+
+      expect(resolveImage(contentRow(db, 'toolu_shot'), 0, path, sandboxEnv())).toEqual({
+        ok: false,
+        reason: 'unsupported',
+      });
+    },
+  );
+
+  it('33. a sealed archive serves the same bytes, and createImageResolver finds its own path', () => {
+    const { db, path } = screenshots([image(GREEN_1X2)]);
+    const content = contentRow(db, 'toolu_shot');
+    const hot = resolveImage(content, 0, path, sandboxEnv());
+
+    writeFileSync(`${path}.zst`, compressLikeSeal(readFileSync(path)));
+    rmSync(path);
+    const resolve = createImageResolver(
+      (session_id) => readEventArchivePath(db, session_id)?.archive_path,
+      sandboxEnv(),
+    );
+
+    expect(hot.ok).toBe(true);
+    expect(resolve(content, 0)).toEqual(hot);
   });
 });
 

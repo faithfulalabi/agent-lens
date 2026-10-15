@@ -18,7 +18,7 @@ import {
   type RetentionSetting,
 } from '../../archive/index.js';
 import { CACHE_DB_FILE, openReadOnlyDb } from '../../db/open.js';
-import { readDriftRows, readHealthCounts, readMeta } from '../../db/read.js';
+import { hasStructuralDrift, readDriftRows, readHealthCounts, readMeta } from '../../db/read.js';
 // Deep import, never the `server/index.js` barrel: that barrel loads the HTTP
 // server, and with it `hono/streaming`, into a command that binds no socket.
 import { aggregateDrift, mergeBucket } from '../../server/drift-report.js';
@@ -54,6 +54,7 @@ function files(n: number): string {
 export interface HarnessCensusRow {
   version: string;
   projected: number;
+  /** Sessions with structural drift: the session banner's predicate, not any drift at all. */
   drifting: number;
   // Both are ABSENT rather than `{}` when this version drifted on nothing of
   // that kind: `--json` is consumed by scripts, and an empty bucket is a case
@@ -117,7 +118,7 @@ export function readCacheStats(dataDir?: string): CacheReport {
     for (const session of drift.sessions_with_drift) {
       const row = census.get(session.harness_version ?? 'unknown');
       if (row === undefined) continue;
-      row.drifting += 1;
+      if (hasStructuralDrift(session.counts)) row.drifting += 1;
       mergeNamed(row, 'unknown_line_types', session.counts.unknown_line_types);
       mergeNamed(row, 'unknown_top_level_fields', session.counts.unknown_top_level_fields);
     }

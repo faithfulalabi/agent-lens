@@ -1,4 +1,4 @@
-// The v2 read API: eleven routes, every param guard an exported pure function, and
+// The v2 read API: twelve routes, every param guard an exported pure function, and
 // ZERO SQL — `src/db/read.ts` is the only door, the invariant `db/index.ts:18`
 // states and `__tests__/sql-one-door.test.ts` enforces.
 //
@@ -50,7 +50,7 @@ import type { WarmQueue } from './warm.js';
 export { aggregateDrift } from './drift-report.js';
 export type { DriftReport, DriftSession, RawDrift } from './drift-report.js';
 
-/** Wiring the eleven routes need. */
+/** Wiring the twelve routes need. */
 export interface ApiDeps {
   db: DatabaseSync;
   /**
@@ -76,6 +76,8 @@ export interface ApiDeps {
   sweep?: CorpusSweep;
   /** Task 4.4's content resolver. Absent -> the `inline` limb only. */
   resolveContent?: ContentResolver;
+  /** Absent -> every image answers 410, as a pruned archive would. */
+  resolveImage?: ImageResolver;
   /** Absent -> every event answers with no unrecognised fields. */
   resolveUnrecognisedFields?: UnrecognisedFieldsResolver;
 }
@@ -179,6 +181,14 @@ export function parseSort(raw: string | undefined): ParseResult<SessionSort> {
 const FIELDS: readonly ContentField[] = ['text', 'input'];
 
 /** `?field=text|input`. Absent -> `text`, the output half every viewer opens. */
+/** The `:n` of `/api/events/:id/images/:n`: which of the event's images, from 0. */
+export function parseImageOrdinal(raw: string): ParseResult<number> {
+  const value = Number(raw);
+  return NON_NEGATIVE_INT.test(raw) && Number.isSafeInteger(value)
+    ? { ok: true, value }
+    : { ok: false, error: 'invalid image index' };
+}
+
 export function parseField(raw: string | undefined): ParseResult<ContentField> {
   if (raw === undefined || raw === '') return { ok: true, value: 'text' };
   const field = FIELDS.find((known) => known === raw);
@@ -306,6 +316,19 @@ export interface ResolvedContent {
 /** Task 4.4's `resolveContent`. It owns `line_ref`, `spill` and `missing`. */
 export type ContentResolver = (row: EventContentRow, field: ContentField) => ResolvedContent;
 
+/** `content/resolve.ts`'s `ResolvedImage`, declared here on `ResolvedContent`'s terms. */
+export type ResolvedImage =
+  | { ok: true; media_type: string; bytes: Buffer }
+  | { ok: false; reason: 'gone' | 'too_large' | 'unsupported' };
+
+export type ImageResolver = (row: EventContentRow, ordinal: number) => ResolvedImage;
+
+/** The status and body each unservable image answers with. */
+const IMAGE_FAILURES = {
+  gone: { status: 410, error: 'image no longer on disk' },
+  too_large: { status: 413, error: 'image too large to serve' },
+  unsupported: { status: 415, error: 'image type not servable' },
+} as const;
 export type UnrecognisedFieldsResolver = (row: EventContentRow) => UnrecognisedField[];
 
 /** The column half of a content answer — no file touched. */
@@ -330,7 +353,7 @@ export function jsonNotFound(c: Context): Response {
 }
 
 /**
- * Register the eleven routes. No catch-all among them, so the `/api/*` terminator
+ * Register the twelve routes. No catch-all among them, so the `/api/*` terminator
  * stays `buildApiApp`'s to place — see its header for why the position matters.
  */
 export function registerApi(app: Hono, deps: ApiDeps): void {
@@ -433,6 +456,28 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
     };
     if (resolved.spill_path !== undefined) body.spill_path = resolved.spill_path;
     return c.json(body);
+  });
+
+  // 4b. One of an event's images, as bytes. `image_count` bounds `n` without a read,
+  //     and every failure is a resolver state, so none of them is a 500.
+  app.get('/api/events/:id/images/:n', (c) => {
+    const ordinal = parseImageOrdinal(c.req.param('n'));
+    if (!ordinal.ok) return c.json({ error: ordinal.error }, 400);
+    const row = readEventContentRow(db, c.req.param('id'));
+    if (row === undefined || ordinal.value >= row.image_count) return jsonNotFound(c);
+
+    const image = deps.resolveImage?.(row, ordinal.value) ?? { ok: false, reason: 'gone' };
+    if (!image.ok) {
+      const failure = IMAGE_FAILURES[image.reason];
+      return c.json({ error: failure.error }, failure.status);
+    }
+    return c.body(new Uint8Array(image.bytes), 200, {
+      'Content-Type': image.media_type,
+      'Content-Length': String(image.bytes.length),
+      // The type is allowlisted upstream; this stops a browser second-guessing it.
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
   });
 
   // 5. Search. `?session=` scopes to one session; without it this covers every

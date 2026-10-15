@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   contentStateOf,
+  imageViewsOf,
   storageOf,
   unrecognisedFieldsOf,
   wireDivergenceOf,
@@ -84,6 +85,22 @@ describe('the bytes check runs before the storage check', () => {
 
     expect(state.kind).toBe('empty');
     expect(state.body).toBeNull();
+  });
+
+  it('an `inline` tool result that held only an image shows its placeholder, not the empty arm', () => {
+    const state = contentStateOf(
+      makeEventRow({
+        kind: 'tool_call',
+        output_storage: 'inline',
+        text: '[image image/png, 131.4 KB]',
+      }),
+      'text',
+      null,
+    );
+
+    expect(state.kind).toBe('inline');
+    expect(state.body).toBe('[image image/png, 131.4 KB]');
+    expect(state.note).not.toBe('Nothing was recorded for this half.');
   });
 
   it('names no raw_type in the no-body sentence, whatever the row is', () => {
@@ -315,6 +332,43 @@ describe('the wire half is shown only where the harness rewrote the call', () =>
     // A predicate keyed on `input` would answer a body here and put the request
     // on screen twice.
     expect(wireDivergenceOf(event)).toBeNull();
+  });
+});
+
+describe('imageViewsOf draws a fetched image or says why it cannot', () => {
+  const event = makeEventRow({ id: 'ev-shot', image_count: 2 });
+
+  it('has no slot at all for an event that carries no image', () => {
+    expect(imageViewsOf(makeEventRow({ image_count: 0 }), null)).toEqual([]);
+  });
+
+  it('holds one empty slot per image while the fetch is in flight', () => {
+    expect(imageViewsOf(event, null)).toEqual([
+      { url: null, note: null },
+      { url: null, note: null },
+    ]);
+  });
+
+  it('ignores images fetched for a different event', () => {
+    const stale = { eventId: 'ev-previous', outcomes: [{ url: 'blob:x' }, { url: 'blob:y' }] };
+    expect(imageViewsOf(event, stale).map((view) => view.url)).toEqual([null, null]);
+  });
+
+  it.each([
+    [410, 'Image no longer on disk.'],
+    [413, 'Image too large to serve.'],
+    [415, 'Image type not displayable.'],
+    [500, 'Image could not be read.'],
+    [null, 'Image could not be read.'],
+  ])('states a refusal of %j as %j and offers no url to draw', (status, note) => {
+    const views = imageViewsOf(event, {
+      eventId: 'ev-shot',
+      outcomes: [{ url: 'blob:first' }, { status }],
+    });
+    expect(views).toEqual([
+      { url: 'blob:first', note: null },
+      { url: null, note },
+    ]);
   });
 });
 

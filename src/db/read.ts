@@ -176,6 +176,8 @@ export interface EventRow {
   agent_status: string | null;
   raw_type: string;
   raw_subtype: string | null;
+  /** Images `GET /api/events/:id/images/:n` can serve, by ordinal. */
+  image_count: number;
 }
 
 /**
@@ -205,6 +207,7 @@ export interface EventContentRow {
   result_offset: number | null;
   result_len: number | null;
   result_block: number | null;
+  image_count: number;
 }
 
 export interface SearchHit {
@@ -301,6 +304,17 @@ const TOP_LEVEL_ONLY = 'parent_session_id IS NULL';
 /** A clean session serializes to exactly this (`transcript/drift.ts:90`). */
 const NO_DRIFT = '{}';
 
+/** Drift buckets that change no event, turn or rollup, so they never raise the banner. */
+export const FIELD_TIER_BUCKETS: ReadonlySet<string> = new Set(['unknown_top_level_fields']);
+
+/**
+ * The banner's predicate, shared with `doctor`'s census. A bucket missing from
+ * {@link FIELD_TIER_BUCKETS} counts as structural, so an untiered new one is loud.
+ */
+export function hasStructuralDrift(counts: object): boolean {
+  return Object.keys(counts).some((bucket) => !FIELD_TIER_BUCKETS.has(bucket));
+}
+
 const Q_PREDICATE =
   "(COALESCE(title,'') || ' ' || COALESCE(preview,'') || ' ' || project_path) LIKE ? ESCAPE '\\'";
 
@@ -329,7 +343,7 @@ function toSessionRow(row: SessionListDbRow): SessionRow {
     ...rest,
     models: modelIdsOf(models),
     sub_models: modelIdsOf(sub_models),
-    has_drift: drift_json !== NO_DRIFT,
+    has_drift: drift_json !== NO_DRIFT && hasStructuralDrift(JSON.parse(drift_json) as object),
   };
 }
 
@@ -471,7 +485,7 @@ const EVENT_COLUMNS = `id, turn_id, seq, kind, ts, request_id, block_index, name
      wire_input, wire_input_bytes, wire_input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
      model, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, est_cost,
-     child_session_id, agent_type, agent_status, raw_type, raw_subtype`;
+     child_session_id, agent_type, agent_status, raw_type, raw_subtype, image_count`;
 
 export interface EventPageQuery {
   from_seq: number;
@@ -548,7 +562,7 @@ export function readEventsByIds(
 
 export const EVENT_CONTENT_COLUMNS = `id, session_id, block_index, input, input_bytes, input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
-     src_offset, src_len, result_offset, result_len, result_block`;
+     src_offset, src_len, result_offset, result_len, result_block, image_count`;
 
 /** The row `resolveContent()` dispatches on. Task 4.4 owns turning it into bytes. */
 export function readEventContentRow(

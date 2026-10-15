@@ -96,6 +96,11 @@ const METHODS: readonly { name: string; path: string; call: (c: ApiClient) => Pr
     // Task 7.2. Both go through the same `request` helper, so both inherit the
     // token header, the error taxonomy and the origin-relative URL for free —
     // and they are in this table so that stays asserted rather than assumed.
+    {
+      name: 'getEventImage',
+      path: '/api/events/ev-1/images/0',
+      call: (c) => c.getEventImage('ev-1', 0),
+    },
     { name: 'search', path: '/api/search?q=needle&limit=200', call: (c) => c.search('needle') },
     { name: 'warm', path: '/api/warm', call: (c) => c.warm() },
   ];
@@ -474,6 +479,31 @@ describe('the API client returns the shared wire shapes', () => {
       bootstrap: BOOTSTRAP,
     });
     await expect(denied.getEventContent('ev-1', 'text')).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('getEventImage returns the bytes as a Blob, encodes the id, and keeps the error taxonomy', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const { calls, fetchImpl } = recordingFetch(
+      () => new Response(png, { headers: { 'content-type': 'image/png' } }),
+    );
+    const blob = await createApiClient({ fetchImpl, bootstrap: BOOTSTRAP }).getEventImage(
+      'toolu_01/x',
+      1,
+    );
+
+    expect(calls[0]?.url).toBe('/api/events/toolu_01%2Fx/images/1');
+    expect(blob.type).toBe('image/png');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(png);
+
+    const gone = createApiClient({
+      fetchImpl: recordingFetch(() => json({ error: 'image no longer on disk' }, 410)).fetchImpl,
+      bootstrap: BOOTSTRAP,
+    });
+    await expect(gone.getEventImage('ev-1', 0)).rejects.toMatchObject({
+      kind: 'http',
+      status: 410,
+      message: 'image no longer on disk',
+    });
   });
 
   it('passes an AbortSignal through to fetch', async () => {

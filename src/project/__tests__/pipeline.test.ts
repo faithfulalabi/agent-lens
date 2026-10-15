@@ -20,7 +20,9 @@ import {
   type ProjectedTurn,
   type Projection,
 } from '../pipeline.js';
+import { contentBlocks } from '../../transcript/blocks.js';
 import {
+  callAt,
   census,
   classifyProjectFixture,
   project,
@@ -637,5 +639,100 @@ describe('an attachment line projects an event that can be read', () => {
       );
       expect(empty, `${name} projected an unreadable attachment row`).toEqual([]);
     }
+  });
+});
+
+describe('a tool result carrying an image reads as the image, never as nothing', () => {
+  const PLACEHOLDER = '[image image/png, 0.1 KB]';
+
+  it('projects an image-only result as its placeholder, sized off that string', () => {
+    const call = callAt(project('image-result.jsonl'), 'toolu_image_only');
+
+    expect(call.text).toBe(PLACEHOLDER);
+    expect(call.text_bytes).toBe(Buffer.byteLength(PLACEHOLDER, 'utf8'));
+    expect(call.output_storage).toBe('inline');
+  });
+
+  it('keeps the text at index 0 when the image child arrived first', () => {
+    expect(callAt(project('image-result.jsonl'), 'toolu_image_then_text').text).toBe(
+      `Read 1 image\n${PLACEHOLDER}`,
+    );
+  });
+
+  it('still detects a spill marker that an image child arrived before', () => {
+    const call = callAt(project('image-result.jsonl'), 'toolu_image_first');
+
+    expect(call.output_storage).toBe('spill');
+    expect(call.text_bytes).toBe(
+      Buffer.byteLength(`<persisted-output>\nOutput too large\n${PLACEHOLDER}`, 'utf8'),
+    );
+  });
+
+  it('carries no base64 into any projected row', () => {
+    const rows = JSON.stringify(project('image-result.jsonl').events);
+    expect(rows).not.toContain('iVBOR');
+  });
+
+  it('no projected call has empty text because its result held only images', () => {
+    let witnessed = 0;
+    for (const name of [
+      'image-result.jsonl',
+      'turn-kinds.jsonl',
+      'tool-join.jsonl',
+      'subagent-launch.jsonl',
+      'large-output.jsonl',
+    ]) {
+      const result = project(name);
+      const imaged = new Set(
+        result.lines.flatMap((line) =>
+          contentBlocks(line).flatMap((block) =>
+            block.kind === 'tool_result' && block.children.some((child) => child.kind === 'image')
+              ? [block.tool_call_id]
+              : [],
+          ),
+        ),
+      );
+      witnessed += imaged.size;
+      const empty = result.events.filter(
+        (event) => imaged.has(event.id) && event.output_storage === 'inline' && !event.text,
+      );
+      expect(empty, `${name} projected an image result as nothing`).toEqual([]);
+    }
+    expect(witnessed).toBeGreaterThan(0);
+  });
+});
+
+describe('image_count says how many images a row can serve, and nothing more', () => {
+  it('counts every image child of a result onto its call row', () => {
+    expect(callAt(project('image-ordinals.jsonl'), 'toolu_two_shots').image_count).toBe(2);
+    expect(callAt(project('image-result.jsonl'), 'toolu_image_only').image_count).toBe(1);
+  });
+
+  it('gives a pasted top-level image its own row with a count of 1', () => {
+    const pasted = project('image-ordinals.jsonl').events.filter(
+      (event) => event.text === '[image image/png, 0.1 KB]' && event.kind !== 'tool_call',
+    );
+    expect(pasted.map((event) => [event.block_index, event.image_count])).toEqual([[1, 1]]);
+  });
+
+  it('matches the images each row names in its text, across the project fixtures', () => {
+    for (const name of [
+      'image-ordinals.jsonl',
+      'image-result.jsonl',
+      'turn-kinds.jsonl',
+      'tool-join.jsonl',
+      'large-output.jsonl',
+    ]) {
+      for (const event of project(name).events) {
+        // A spill row's text is cleared, so it names nothing it could be checked against.
+        if (event.output_storage === 'spill') continue;
+        const named = (event.text ?? '').match(/\[image image\//g)?.length ?? 0;
+        expect(event.image_count, `${name} ${event.id}`).toBe(named);
+      }
+    }
+  });
+
+  it('carries no base64 from either image position into any projected row', () => {
+    expect(JSON.stringify(project('image-ordinals.jsonl').events)).not.toContain('iVBOR');
   });
 });

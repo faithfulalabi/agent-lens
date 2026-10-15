@@ -197,6 +197,49 @@ export function wireDivergenceOf(event: EventRow): WireDivergence | null {
   return { body, note: event.wire_input_storage === 'line_ref' ? HEAD_PREVIEW : null };
 }
 
+/** One image fetch, settled: a drawable object URL, or the HTTP status that refused it. */
+export type ImageOutcome = { readonly url: string } | { readonly status: number | null };
+
+/** Every image fetch for one event, in the order the route numbers them. */
+export interface FetchedImages {
+  readonly eventId: string;
+  readonly outcomes: readonly ImageOutcome[];
+}
+
+/** One image slot in the pane. Both null while the fetch is in flight. */
+export interface ImageView {
+  readonly url: string | null;
+  readonly note: string | null;
+}
+
+/** The route's refusals, in words. Keyed by status so the pane never draws a broken image. */
+const IMAGE_NOTES: ReadonlyMap<number, string> = new Map([
+  [410, 'Image no longer on disk.'],
+  [413, 'Image too large to serve.'],
+  [415, 'Image type not displayable.'],
+]);
+
+const IMAGE_UNREADABLE = 'Image could not be read.';
+
+/**
+ * One view per image `event` carries. `fetched` is ignored unless it names this event, so a
+ * previous selection's images are never drawn under the new one.
+ */
+export function imageViewsOf(event: EventRow, fetched: FetchedImages | null): readonly ImageView[] {
+  const outcomes = fetched?.eventId === event.id ? fetched.outcomes : [];
+  return Array.from({ length: event.image_count }, (_, n) => imageViewOf(outcomes[n]));
+}
+
+function imageViewOf(outcome: ImageOutcome | undefined): ImageView {
+  if (outcome === undefined) return { url: null, note: null };
+  if ('url' in outcome) return { url: outcome.url, note: null };
+  return {
+    url: null,
+    note:
+      (outcome.status === null ? undefined : IMAGE_NOTES.get(outcome.status)) ?? IMAGE_UNREADABLE,
+  };
+}
+
 /**
  * The fields to disclose for `event`, or null when there are none to show. A body
  * answered for another event is a stale reply to an earlier selection.

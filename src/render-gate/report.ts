@@ -81,6 +81,22 @@ export interface WireInputProbe {
 }
 
 /**
+ * An event that returned images, opened by deep link, read back from the pane.
+ *
+ * `null` means no archived transcript carried an image, or its event was past the first page:
+ * a fact about the corpus, not a pass.
+ */
+export interface ImageProbe {
+  eventId: string;
+  /** The row's `image_count`: how many images the pane owes the reader. */
+  imageCount: number;
+  /** `<img>`s the browser actually decoded: `complete` with a non-zero `naturalWidth`. */
+  decoded: number;
+  /** Whatever the pane said instead of drawing. */
+  notes: readonly string[];
+}
+
+/**
  * AC-R1 itself: clicking that row filled the DETAIL PANE with the event's real
  * input, its real output, and the word naming where the output was stored.
  *
@@ -312,6 +328,7 @@ export interface Observations {
   /** `null` when no rendered tool_call row carried both halves. See the type. */
   toolCallInline: ToolCallProbe | null;
   wireInput: WireInputProbe | null;
+  image: ImageProbe | null;
   /** The same row, read in the detail pane instead of the tree. See the type. */
   eventDetail: EventDetailProbe | null;
   /** The sub-agent expansion. `null` is a warning — see the type. */
@@ -514,6 +531,7 @@ function driveAssertions(result: DriveResult): AssertionRecord[] {
     },
     ...toolCallAssertions(result.toolCallInline),
     ...wireInputAssertions(result.wireInput),
+    ...imageAssertions(result.image),
     ...slashCommandTitleAssertions(result.slashCommandTitles),
     ...eventDetailAssertions(result.eventDetail),
     ...subagentAssertions(
@@ -619,6 +637,21 @@ function toolCallAssertions(probe: ToolCallProbe | null): AssertionRecord[] {
  * Asserted only when the window held a rewritten call, on `toolCallAssertions`'
  * terms — a check that cannot fail is not a pass.
  */
+/** Every image the event carries was decoded by the browser. Asserted only when one was found. */
+function imageAssertions(probe: ImageProbe | null): AssertionRecord[] {
+  if (probe === null) return [];
+  return [
+    {
+      name: 'image-rendered',
+      ok: probe.imageCount > 0 && probe.decoded === probe.imageCount,
+      actual:
+        `${probe.eventId}: ${probe.decoded} of ${probe.imageCount} decoded` +
+        (probe.notes.length === 0 ? '' : `, notes ${probe.notes.map(quote).join(', ')}`),
+      expected: 'every image the event carries is drawn in the pane',
+    },
+  ];
+}
+
 function wireInputAssertions(probe: WireInputProbe | null): AssertionRecord[] {
   if (probe === null) return [];
   const found = (ok: boolean): string => (ok ? 'found' : 'MISSING');
@@ -970,6 +1003,13 @@ function driveWarnings(result: DriveResult): string[] {
         'rendered tool_call row carried a wire_input, so there was no rewritten ' +
         'call to check. About half of all tool calls carry one, so this reads as ' +
         'a narrow window rather than a harness that stopped rewriting.',
+    );
+  }
+  if (result.image === null) {
+    warnings.push(
+      'image-rendered: no image event found — OBSERVED, NOT ASSERTED. No archived ' +
+        'transcript carried an image within its first page of events, so there was ' +
+        'nothing to draw.',
     );
   }
   if (result.slashCommandTitles.length === 0) {

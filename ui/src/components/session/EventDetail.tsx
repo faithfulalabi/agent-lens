@@ -2,6 +2,8 @@ import type { ContentField, EventContentBody, EventRow, UnrecognisedFieldsBody }
 import {
   contentStateOf,
   type ContentState,
+  type FetchedImages,
+  imageViewsOf,
   unrecognisedFieldsOf,
   wireDivergenceOf,
   type WireDivergence,
@@ -50,11 +52,19 @@ export interface EventDetailProps {
   event: EventRow | null;
   /** A completed refetch, or null. Folded in by `contentStateOf`, not here. */
   fetched: EventContentBody | null;
+  /** The selected event's image fetches. Folded in by `imageViewsOf`, not here. */
+  images?: FetchedImages | null;
   onShowFull?: (id: string, field: ContentField) => void;
   unrecognised?: UnrecognisedFieldsBody | null;
 }
 
-export function EventDetail({ event, fetched, onShowFull, unrecognised }: EventDetailProps) {
+export function EventDetail({
+  event,
+  fetched,
+  images = null,
+  onShowFull,
+  unrecognised,
+}: EventDetailProps) {
   return (
     <aside
       data-slot="span-detail"
@@ -81,6 +91,7 @@ export function EventDetail({ event, fetched, onShowFull, unrecognised }: EventD
             fetched={fetched}
             onShowFull={onShowFull}
           />
+          <Images event={event} images={images} />
           <UnrecognisedFields event={event} body={unrecognised ?? null} />
           <RawRecord event={event} />
         </>
@@ -251,6 +262,38 @@ function UnrecognisedFields({
         </div>
       ))}
     </details>
+  );
+}
+
+/**
+ * The output's images, drawn from same-origin object URLs. An `<img>` is mounted only once its
+ * bytes are in hand, so a refused fetch reads as a sentence and never as a broken-image glyph.
+ */
+function Images({ event, images }: { event: EventRow; images: FetchedImages | null }) {
+  const views = imageViewsOf(event, images);
+  if (views.length === 0) return null;
+
+  return (
+    <section data-slot="detail-images" className="flex flex-col gap-2 pt-2">
+      {views.map((view, n) => (
+        <figure key={n} data-slot="detail-image">
+          {view.url === null ? null : (
+            <a href={view.url} target="_blank" rel="noreferrer">
+              <img
+                src={view.url}
+                alt={`image ${n + 1} of ${views.length}`}
+                className="max-h-96 max-w-full rounded-md border border-border object-contain"
+              />
+            </a>
+          )}
+          {view.note === null ? null : (
+            <figcaption data-slot="detail-image-note" className="text-2xs text-faint">
+              {view.note}
+            </figcaption>
+          )}
+        </figure>
+      ))}
+    </section>
   );
 }
 

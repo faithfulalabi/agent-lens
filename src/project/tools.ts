@@ -69,6 +69,7 @@ export interface ToolResult {
   result_offset: number;
   result_len: number;
   result_block: number;
+  image_count: number;
 }
 
 /** The input columns, which a row carries whether or not it ever joined. */
@@ -293,6 +294,7 @@ export function joinToolCalls(
     event.result_offset = result.result_offset;
     event.result_len = result.result_len;
     event.result_block = result.result_block;
+    event.image_count = result.image_count;
     event.duration_ms = elapsedMs(event.ts, result.ts);
     event.duration_source = 'elapsed';
     event.status = statusOf(result);

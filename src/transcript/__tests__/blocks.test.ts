@@ -17,12 +17,22 @@ import { obj } from '../accessors.js';
 import {
   classifyBlock,
   classifyContent,
+  imageCount,
+  imageSourceAt,
   normalizeContent,
+  resultText,
   THINKING_ELIDED_MARKER,
   type Block,
   type BlockKind,
 } from '../blocks.js';
-import { ARCHIVE_ROOT, archiveJsonlFiles, fixtureBytes, offsetLines } from './fixtures.js';
+import {
+  ARCHIVE_ROOT,
+  archiveJsonlFiles,
+  classifyText,
+  fixtureBytes,
+  offsetLines,
+} from './fixtures.js';
+import type { ParsedLine } from '../line.js';
 import { runIt } from './run-it.js';
 
 /** Lower bounds, well under 2026-08-13's measurement of 262 files / 43,108 lines. */
@@ -249,6 +259,97 @@ describe('an image emits a placeholder and no base64 ever escapes', () => {
       const rows = fixtureJson(name).map((json) => classifyContent(rawContent(json)));
       expect(BASE64_RUN.test(JSON.stringify(rows)), name).toBe(false);
     }
+  });
+});
+
+/** The children of one `tool_result` carrying `content`, as the classifier hangs them. */
+function childrenOf(content: unknown): readonly Block[] {
+  const [result] = classifyContent([{ type: 'tool_result', tool_use_id: 't', content }]);
+  if (result?.kind !== 'tool_result') throw new Error('unreachable');
+  return result.children;
+}
+
+describe('resultText names every image child and never moves text off index 0', () => {
+  it('joins text children on \\n exactly as before, untrimmed', () => {
+    const children = childrenOf([
+      { type: 'text', text: '  lead' },
+      { type: 'text', text: '' },
+      { type: 'text', text: 'tail  ' },
+    ]);
+    expect(resultText(children)).toBe('  lead\n\ntail  ');
+  });
+
+  it('reads an image-only result as the image placeholder', () => {
+    expect(resultText(childrenOf([imageBlock(175200, 'image/png')]))).toBe(
+      '[image image/png, 131.4 KB]',
+    );
+  });
+
+  it('appends image placeholders after the text, whatever order the children arrived in', () => {
+    const children = childrenOf([
+      imageBlock(400, 'image/png'),
+      { type: 'text', text: '<persisted-output>\nOutput too large' },
+      imageBlock(800, 'image/jpeg'),
+    ]);
+    expect(resultText(children)).toBe(
+      '<persisted-output>\nOutput too large\n[image image/png, 0.3 KB]\n[image image/jpeg, 0.6 KB]',
+    );
+  });
+
+  it('is empty for a result with no children', () => {
+    expect(resultText(childrenOf([]))).toBe('');
+  });
+});
+
+/** One classified `user` line carrying `content`. */
+function lineWith(content: unknown): ParsedLine {
+  const text = JSON.stringify({ type: 'user', uuid: 'u', message: { role: 'user', content } });
+  return classifyText(`${text}\n`).lines[0]!;
+}
+
+function pngBlock(data: string): unknown {
+  return { type: 'image', source: { type: 'base64', media_type: 'image/png', data } };
+}
+
+describe('imageSourceAt hands out the payload the classifier drops', () => {
+  const result = {
+    type: 'tool_result',
+    tool_use_id: 't',
+    content: [{ type: 'text', text: 'shot' }, pngBlock('Zmlyc3Q='), pngBlock('c2Vjb25k')],
+  };
+
+  it('addresses the nth image child of a tool_result, skipping its text children', () => {
+    const line = lineWith([{ type: 'text', text: 'lead' }, result]);
+    expect(imageSourceAt(line, 1, 0)).toEqual({ media_type: 'image/png', data: 'Zmlyc3Q=' });
+    expect(imageSourceAt(line, 1, 1)).toEqual({ media_type: 'image/png', data: 'c2Vjb25k' });
+  });
+
+  it('addresses a top-level image at ordinal 0', () => {
+    const line = lineWith([{ type: 'text', text: 'look' }, pngBlock('cGFzdGVk')]);
+    expect(imageSourceAt(line, 1, 0)).toEqual({ media_type: 'image/png', data: 'cGFzdGVk' });
+  });
+
+  it.each([
+    ['an ordinal past the last image', 1, 2],
+    ['a second ordinal on a top-level image', 2, 1],
+    ['a block that carries no image', 0, 0],
+    ['a block index past the end', 3, 0],
+  ])('answers undefined for %s', (_label, blockIndex, ordinal) => {
+    const line = lineWith([{ type: 'text', text: 'lead' }, result, pngBlock('eA==')]);
+    expect(imageSourceAt(line, blockIndex, ordinal)).toBeUndefined();
+  });
+
+  it('agrees with imageCount on how many images each block addresses', () => {
+    const content = [{ type: 'text', text: 'lead' }, result, pngBlock('eA==')];
+    const line = lineWith(content);
+    for (const [index, block] of classifyContent(content).entries()) {
+      const count = imageCount(block);
+      for (let ordinal = 0; ordinal < count; ordinal += 1) {
+        expect(imageSourceAt(line, index, ordinal), `${index}/${ordinal}`).toBeDefined();
+      }
+      expect(imageSourceAt(line, index, count)).toBeUndefined();
+    }
+    expect(classifyContent(content).map(imageCount)).toEqual([0, 2, 1]);
   });
 });
 
