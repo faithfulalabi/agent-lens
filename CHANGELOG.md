@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/faithfulalabi/agent-lens/compare/v0.7.1...v0.8.0) (2026-10-15)
+
+
+### Features
+
+* **event-detail:** disclose top-level fields the projector did not recognize ([#128](https://github.com/faithfulalabi/agent-lens/issues/128)) ([72a86b3](https://github.com/faithfulalabi/agent-lens/commit/72a86b38814d3a89840dd8989aef2a2a5068740f))
+
 ## [0.7.1](https://github.com/faithfulalabi/agent-lens/compare/v0.7.0...v0.7.1) (2026-10-15)
 
 
