@@ -39,6 +39,7 @@ import {
   openCache,
   SESSION_ID,
   seedIndexRow,
+  sessionRow,
   spillMarker,
   toolCallLine,
   toolResultLine,
@@ -53,9 +54,11 @@ import {
   createContentResolver,
   createImageResolver,
   createSpillLocator,
+  createUnrecognisedFieldsResolver,
   IMAGE_LINE_MAX,
   resolveContent,
   resolveImage,
+  resolveUnrecognisedFields,
   type ContentEnv,
   type ContentField,
 } from '../resolve.js';
@@ -1046,5 +1049,163 @@ describe('the resolver fits 4.3’s ApiDeps seam', () => {
 describe('the standing guards this tree must not move', () => {
   it('27. src/content has no barrel', () => {
     expect(() => readFileSync(join(dirname(RESOLVE_TS), 'index.ts'))).toThrow();
+  });
+});
+
+// --- unrecognised fields ----------------------------------------------------
+
+describe('the fields the classifier did not consume, read live off the archived line', () => {
+  function rowsOf(db: DatabaseSync): EventContentRow[] {
+    const ids = db.prepare('SELECT id FROM events ORDER BY seq').all() as { id: string }[];
+    return ids.map(({ id }) => contentRow(db, id));
+  }
+
+  it('28. lists a field the classifier does not know, with its value, from one pread', () => {
+    const prompt: Record<string, unknown> = { ...humanLine('go', TS(0)), futureHarnessField: 'm' };
+    const { db, path } = project([prompt]);
+    const content = contentRow(db, `${prompt.uuid as string}:0`);
+
+    const log: Trace[] = [];
+    const fields = resolveUnrecognisedFields(content, path, tracingEnv(log));
+
+    expect(fields).toEqual([{ line: 'emitting', name: 'futureHarnessField', value: '"m"' }]);
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ path, offset: content.src_offset, length: content.src_len });
+  });
+
+  it('29. names on every line that emits a row match the drift column', () => {
+    const { db, id, path } = project([
+      { ...humanLine('go', TS(0)), futureUserField: true },
+      { ...toolCallLine('toolu_mix', 'Bash', TS(1)), futureCallField: { depth: 2 } },
+      { ...toolResultLine('toolu_mix', 'ok', TS(2)), futureResultField: [1, 2] },
+      envelope({
+        type: 'system',
+        subtype: 'future_subtype',
+        timestamp: TS(3),
+        content: 'a notice from a newer harness',
+        error: 'known on assistant lines, not on system ones',
+      }),
+    ]);
+
+    const drift = JSON.parse(sessionRow(db, id).drift_json as string) as {
+      unknown_top_level_fields?: Record<string, number>;
+    };
+    const recorded = Object.keys(drift.unknown_top_level_fields ?? {}).sort();
+    expect(recorded).toEqual(['error', 'futureCallField', 'futureResultField', 'futureUserField']);
+
+    const env = sandboxEnv();
+    const shown = new Set(
+      rowsOf(db).flatMap((content) =>
+        resolveUnrecognisedFields(content, path, env).map((field) => field.name),
+      ),
+    );
+    expect([...shown].sort()).toEqual(recorded);
+  });
+
+  it('30. lists nothing for a line carrying only known fields', () => {
+    const prompt = humanLine('plain', TS(0));
+    const { db, path } = project([prompt]);
+    const content = contentRow(db, `${prompt.uuid as string}:0`);
+    expect(resolveUnrecognisedFields(content, path, sandboxEnv())).toEqual([]);
+  });
+
+  it('31. a tool call row also discloses the fields on its result line, labelled as such', () => {
+    const { db, path } = project([
+      humanLine('run', TS(0)),
+      toolCallLine('toolu_res', 'Bash', TS(1)),
+      { ...toolResultLine('toolu_res', 'done', TS(2)), futureVerdictField: 'allow' },
+    ]);
+    const content = contentRow(db, 'toolu_res');
+    expect(content.result_offset).not.toBeNull();
+
+    const log: Trace[] = [];
+    const fields = resolveUnrecognisedFields(content, path, tracingEnv(log));
+
+    expect(fields).toEqual([{ line: 'result', name: 'futureVerdictField', value: '"allow"' }]);
+    expect(log.map((entry) => entry.offset)).toEqual([content.src_offset, content.result_offset]);
+  });
+
+  it('32. a sidecar event reads its own sidecar archive', () => {
+    const { dir } = project([humanLine('parent', TS(0))]);
+    const child = { ...humanLine('child work', TS(1)), futureSidecarField: 7 };
+    const sidecar = writeSidecarTranscript(join(dir, 'subagents'), 'kid', [child]);
+    const len = Buffer.byteLength(JSON.stringify(child), 'utf8');
+
+    const asked: string[] = [];
+    const log: Trace[] = [];
+    const resolve = createUnrecognisedFieldsResolver((session_id) => {
+      asked.push(session_id);
+      return session_id === 'kid' ? sidecar : undefined;
+    }, tracingEnv(log));
+
+    const fields = resolve(row({ session_id: 'kid', src_offset: 0, src_len: len }));
+
+    expect(asked).toEqual(['kid']);
+    expect(log.map((entry) => entry.path)).toEqual([sidecar]);
+    expect(fields).toEqual([{ line: 'emitting', name: 'futureSidecarField', value: '7' }]);
+  });
+
+  it('33. a sealed archive resolves the same fields as the hot one', () => {
+    const { db, path } = project([
+      humanLine('seal', TS(0)),
+      { ...toolCallLine('toolu_sf', 'Bash', TS(1)), futureCallField: 'x' },
+      { ...toolResultLine('toolu_sf', 'ok', TS(2)), futureResultField: 'y' },
+    ]);
+    const content = contentRow(db, 'toolu_sf');
+    const hot = resolveUnrecognisedFields(content, path, sandboxEnv());
+    expect(hot.map((field) => field.name)).toEqual(['futureCallField', 'futureResultField']);
+
+    writeFileSync(`${path}.zst`, compressLikeSeal(readFileSync(path)));
+    rmSync(path);
+
+    const reader = createArchiveReader();
+    expect(resolveUnrecognisedFields(content, path, sandboxEnv(reader))).toEqual(hot);
+    expect(reader.stats().misses).toBeGreaterThan(0);
+  });
+
+  it('34. a pruned archive, a missing session, an empty read and unparseable bytes all degrade to no fields', () => {
+    const content = row({ src_offset: 0, src_len: 12, result_offset: 12, result_len: 12 });
+    const answering = (bytes: Buffer): ContentEnv => ({
+      ...sandboxEnv(),
+      reader: { ...createArchiveReader(), read: () => bytes },
+    });
+    const throwing: ContentEnv = {
+      ...sandboxEnv(),
+      reader: {
+        ...createArchiveReader(),
+        read: () => {
+          throw new Error('no archived bytes for /gone.jsonl');
+        },
+      },
+    };
+
+    expect(resolveUnrecognisedFields(content, '/gone.jsonl', throwing)).toEqual([]);
+    expect(resolveUnrecognisedFields(content, undefined, sandboxEnv())).toEqual([]);
+    expect(resolveUnrecognisedFields(content, '/a.jsonl', answering(Buffer.alloc(0)))).toEqual([]);
+    expect(
+      resolveUnrecognisedFields(content, '/a.jsonl', answering(Buffer.from('{"type":'))),
+    ).toEqual([]);
+
+    const resolve = createUnrecognisedFieldsResolver(() => undefined, sandboxEnv());
+    expect(resolve(row({ session_id: 'no-such-session' }))).toEqual([]);
+  });
+
+  it('35. a field named __proto__ is listed as data and pollutes nothing', () => {
+    const hostile = {
+      ...humanLine('proto', TS(0)),
+      ...(JSON.parse('{"__proto__":{"polluted":true}}') as object),
+    };
+    const { db, path } = project([hostile]);
+    expect(readFileSync(path, 'utf8')).toContain('"__proto__":{"polluted":true}');
+
+    const fields = resolveUnrecognisedFields(
+      contentRow(db, `${hostile.uuid as string}:0`),
+      path,
+      sandboxEnv(),
+    );
+
+    expect(fields).toEqual([{ line: 'emitting', name: '__proto__', value: '{"polluted":true}' }]);
+    expect(Object.getPrototypeOf(fields[0])).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

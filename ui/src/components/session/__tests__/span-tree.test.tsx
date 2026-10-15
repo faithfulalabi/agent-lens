@@ -348,6 +348,8 @@ describe('the keyboard handler is bound and the tabindex roves (Test 8)', () => 
       // permanent alarm — green everywhere else, and AC3 broken.
       'hasDrift={data.session.has_drift}',
       'harnessVersion={data.session.harness_version}',
+      'unrecognised={unrecognised}',
+      'getUnrecognisedFields(selectedEventId',
     ]) {
       expect(source, `${wire} is not wired through`).toContain(wire);
     }

@@ -1,4 +1,4 @@
-// The v2 read API: eleven routes, every param guard an exported pure function, and
+// The v2 read API: twelve routes, every param guard an exported pure function, and
 // ZERO SQL — `src/db/read.ts` is the only door, the invariant `db/index.ts:18`
 // states and `__tests__/sql-one-door.test.ts` enforces.
 //
@@ -15,6 +15,7 @@
 import type { Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { DatabaseSync } from 'node:sqlite';
+import type { UnrecognisedField } from '../content/resolve.js';
 import type { CorpusSweep } from '../corpus/watch.js';
 import { ensureProjectedFold, fingerprint, type ProjectionOutcome } from '../db/freshness.js';
 import {
@@ -49,7 +50,7 @@ import type { WarmQueue } from './warm.js';
 export { aggregateDrift } from './drift-report.js';
 export type { DriftReport, DriftSession, RawDrift } from './drift-report.js';
 
-/** Wiring the eleven routes need. */
+/** Wiring the twelve routes need. */
 export interface ApiDeps {
   db: DatabaseSync;
   /**
@@ -77,6 +78,8 @@ export interface ApiDeps {
   resolveContent?: ContentResolver;
   /** Absent -> every image answers 410, as a pruned archive would. */
   resolveImage?: ImageResolver;
+  /** Absent -> every event answers with no unrecognised fields. */
+  resolveUnrecognisedFields?: UnrecognisedFieldsResolver;
 }
 
 /** Page size when `?limit` is absent, on the list and on search. */
@@ -326,6 +329,7 @@ const IMAGE_FAILURES = {
   too_large: { status: 413, error: 'image too large to serve' },
   unsupported: { status: 415, error: 'image type not servable' },
 } as const;
+export type UnrecognisedFieldsResolver = (row: EventContentRow) => UnrecognisedField[];
 
 /** The column half of a content answer — no file touched. */
 function storedContent(row: EventContentRow, field: ContentField): ResolvedContent {
@@ -349,7 +353,7 @@ export function jsonNotFound(c: Context): Response {
 }
 
 /**
- * Register the eleven routes. No catch-all among them, so the `/api/*` terminator
+ * Register the twelve routes. No catch-all among them, so the `/api/*` terminator
  * stays `buildApiApp`'s to place — see its header for why the position matters.
  */
 export function registerApi(app: Hono, deps: ApiDeps): void {
@@ -583,4 +587,12 @@ export function registerApi(app: Hono, deps: ApiDeps): void {
       projector_version: readMeta(db, 'projector_version') ?? null,
     }),
   );
+
+  // 11. Top-level fields the classifier did not consume, read live off the archive.
+  //     A list of pairs, so no client object is ever keyed by a transcript's name.
+  app.get('/api/events/:id/unrecognised-fields', (c) => {
+    const row = readEventContentRow(db, c.req.param('id'));
+    if (row === undefined) return jsonNotFound(c);
+    return c.json({ id: row.id, fields: deps.resolveUnrecognisedFields?.(row) ?? [] });
+  });
 }

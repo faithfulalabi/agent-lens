@@ -1,4 +1,4 @@
-// AC1: all ten routes, each asserted by SET-EQUALITY on its response key set
+// All twelve routes, each asserted by SET-EQUALITY on its response key set
 // against the field list transcribed from `spec/data-model-v2.md`, plus its
 // status code. Never containment — `db/__tests__/read.test.ts:5-7` records that
 // containment is provably blind to a dropped field, which is the failure this
@@ -20,6 +20,7 @@ import {
   createContentEnv,
   createContentResolver,
   createImageResolver,
+  createUnrecognisedFieldsResolver,
 } from '../../content/resolve.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { foldArchive } from '../../db/freshness.js';
@@ -94,6 +95,11 @@ interface ContentBody {
   content: string;
   truncated: boolean;
   spill_path?: string;
+}
+
+interface UnrecognisedFieldsBody {
+  id: string;
+  fields: { line: string; name: string; value: string }[];
 }
 
 interface SearchBody {
@@ -219,6 +225,37 @@ async function call(path: string, init: RequestInit = {}): Promise<Response> {
 async function getJson<T>(path: string): Promise<{ status: number; body: T }> {
   const res = await call(path);
   return { status: res.status, body: (await res.json()) as T };
+}
+
+/** The app with the PRODUCTION content resolvers — the wiring `start.ts` builds. */
+function guardedApp(): Hono {
+  const archivePathOf = (id: string): string | undefined =>
+    readEventArchivePath(db, id)?.archive_path;
+  const contentEnv = createContentEnv(createArchiveReader(), [
+    sandbox.archiveRoot,
+    sandbox.sourceRoot,
+  ]);
+  return buildApiApp({
+    db,
+    env: fileEnv(),
+    token: TOKEN,
+    uiDir: join(sandbox.root, 'no-such-ui'),
+    hub: createStreamHub(),
+    // Never POSTed through, so it starts nothing there is anything to close.
+    warm: stubWarm(),
+    resolveContent: createContentResolver(archivePathOf, contentEnv),
+    resolveUnrecognisedFields: createUnrecognisedFieldsResolver(archivePathOf, contentEnv),
+  });
+}
+
+async function contentOf(
+  app: Hono,
+  eventId: string,
+): Promise<{ status: number; body: ContentBody }> {
+  const res = await app.request(`/api/events/${eventId}/content?field=text`, {
+    headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
+  });
+  return { status: res.status, body: (await res.json()) as ContentBody };
 }
 
 describe('1. GET /api/sessions (spec:271-286)', () => {
@@ -549,33 +586,6 @@ describe('F1 — an out-of-root spill path never serves its bytes', () => {
     return sentinel;
   }
 
-  /** The app with the PRODUCTION content resolver — the wiring `start.ts` builds. */
-  function guardedApp(): Hono {
-    return buildApiApp({
-      db,
-      env: fileEnv(),
-      token: TOKEN,
-      uiDir: join(sandbox.root, 'no-such-ui'),
-      hub: createStreamHub(),
-      // Never POSTed through, so it starts nothing there is anything to close.
-      warm: stubWarm(),
-      resolveContent: createContentResolver(
-        (id) => readEventArchivePath(db, id)?.archive_path,
-        createContentEnv(createArchiveReader(), [sandbox.archiveRoot, sandbox.sourceRoot]),
-      ),
-    });
-  }
-
-  async function contentOf(
-    app: Hono,
-    eventId: string,
-  ): Promise<{ status: number; body: ContentBody }> {
-    const res = await app.request(`/api/events/${eventId}/content?field=text`, {
-      headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
-    });
-    return { status: res.status, body: (await res.json()) as ContentBody };
-  }
-
   it('a hostile transcript projects to missing, and the route serves the labelled degrade', async () => {
     const sentinel = plantSentinel();
     const hostileId = 'h05711e0-1111-4111-8111-h05711e00001';
@@ -904,6 +914,74 @@ describe('10. GET /api/health (spec:394-396)', () => {
       headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
     });
     expect(((await res.json()) as HealthBody).files_indexed).toBe(42);
+  });
+});
+
+describe('11. GET /api/events/:id/unrecognised-fields', () => {
+  async function fieldsOf(
+    app: Hono,
+    eventId: string,
+  ): Promise<{ status: number; body: UnrecognisedFieldsBody }> {
+    const res = await app.request(`/api/events/${eventId}/unrecognised-fields`, {
+      headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN },
+    });
+    return { status: res.status, body: (await res.json()) as UnrecognisedFieldsBody };
+  }
+
+  /** The archive, and the id of its one clean row. */
+  function plantFutureSession(): { archive: string; cleanId: string } {
+    const session = 'f0f0f0f0-1111-4111-8111-f0f0f0f0f0f0';
+    const prompt = humanLine('try the new harness', '2026-08-14T09:20:00.000Z');
+    const archive = writeTranscript(join(sandbox.archiveRoot, `${session}.jsonl`), [
+      prompt,
+      { ...toolCallLine('toolu_future', 'Bash', '2026-08-14T09:20:01.000Z'), futureField: 'm' },
+      {
+        ...toolResultLine('toolu_future', 'ok', '2026-08-14T09:20:02.000Z'),
+        futureResultField: { kept: true },
+      },
+    ]);
+    seedIndexRow(db, archive, { id: session });
+    projectSession(db, session, fileEnv(), foldArchive(archive)!);
+    return { archive, cleanId: `${prompt.uuid as string}:0` };
+  }
+
+  it('answers 200 with a fixed key set, one entry per field, labelled by line', async () => {
+    plantFutureSession();
+    const { status, body } = await fieldsOf(guardedApp(), 'toolu_future');
+    expect(status).toBe(200);
+    expectKeys(body, ['id', 'fields']);
+    for (const field of body.fields) expectKeys(field, ['line', 'name', 'value']);
+    expect(body).toEqual({
+      id: 'toolu_future',
+      fields: [
+        { line: 'emitting', name: 'futureField', value: '"m"' },
+        { line: 'result', name: 'futureResultField', value: '{"kept":true}' },
+      ],
+    });
+  });
+
+  it('answers an empty list for a clean event, and when no resolver is wired', async () => {
+    const { cleanId } = plantFutureSession();
+    expect((await fieldsOf(guardedApp(), cleanId)).body).toEqual({ id: cleanId, fields: [] });
+
+    const { status, body } = await getJson<UnrecognisedFieldsBody>(
+      '/api/events/toolu_future/unrecognised-fields',
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ id: 'toolu_future', fields: [] });
+  });
+
+  it('404s an unknown event as JSON', async () => {
+    const res = await call('/api/events/no-such-event/unrecognised-fields');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'not found' });
+  });
+
+  it('answers 200 with no fields when the archive file is gone', async () => {
+    rmSync(plantFutureSession().archive);
+    const { status, body } = await fieldsOf(guardedApp(), 'toolu_future');
+    expect(status).toBe(200);
+    expect(body).toEqual({ id: 'toolu_future', fields: [] });
   });
 });
 

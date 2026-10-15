@@ -4,10 +4,11 @@ import {
   contentStateOf,
   imageViewsOf,
   storageOf,
+  unrecognisedFieldsOf,
   wireDivergenceOf,
   type ContentStorage,
 } from '../event-content';
-import { makeEventContent, makeEventRow } from './fixtures';
+import { makeEventContent, makeEventRow, makeUnrecognisedFields } from './fixtures';
 
 /*
  * AC3 — six labelled states, and the bytes check that runs before them.
@@ -368,5 +369,23 @@ describe('imageViewsOf draws a fetched image or says why it cannot', () => {
       { url: 'blob:first', note: null },
       { url: null, note },
     ]);
+  });
+});
+
+describe('the unrecognised fields are shown only for the event they were asked about', () => {
+  const FIELD = { line: 'emitting', name: 'futureHarnessField', value: '"m"' } as const;
+
+  it('answers the fields for the selected event', () => {
+    const body = makeUnrecognisedFields({ fields: [FIELD] });
+    expect(unrecognisedFieldsOf(makeEventRow(), body)).toEqual([FIELD]);
+  });
+
+  it('answers null for no body, an empty list, and a body for another event', () => {
+    const event = makeEventRow();
+    expect(unrecognisedFieldsOf(event, null)).toBeNull();
+    expect(unrecognisedFieldsOf(event, makeUnrecognisedFields())).toBeNull();
+    expect(
+      unrecognisedFieldsOf(event, makeUnrecognisedFields({ id: 'ev-2', fields: [FIELD] })),
+    ).toBeNull();
   });
 });

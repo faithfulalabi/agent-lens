@@ -90,6 +90,7 @@ function lineAt(
   archivePath: string,
   byteOffset: number,
   len: number,
+  drift: DriftCounter,
 ): ParsedLine | undefined {
   let bytes: Buffer;
   try {
@@ -104,7 +105,7 @@ function lineAt(
     return classifyLine(JSON.parse(bytes.toString('utf8')), {
       byteOffset,
       byteLength: len,
-      drift: new DriftCounter(),
+      drift,
     });
   } catch {
     return undefined;
@@ -118,8 +119,63 @@ function blockAt(
   len: number,
   blockIndex: number,
 ): Block | undefined {
-  const line = lineAt(env, archivePath, byteOffset, len);
-  return line === undefined ? undefined : contentBlocks(line)[blockIndex];
+  const line = lineAt(env, archivePath, byteOffset, len, new DriftCounter());
+  if (line === undefined) return undefined;
+  try {
+    return contentBlocks(line)[blockIndex];
+  } catch {
+    return undefined;
+  }
+}
+
+/** A top-level field the classifier did not consume, its value as JSON text. */
+export interface UnrecognisedField {
+  /** The event's own line, or the tool result line joined onto it. */
+  line: 'emitting' | 'result';
+  name: string;
+  value: string;
+}
+
+/**
+ * The fields on one archived line that its drift count would record. Names come
+ * from the counter's own output, so this cannot disagree with `sessions.drift_json`.
+ */
+function unrecognisedFieldsAt(
+  env: ContentEnv,
+  archivePath: string,
+  byteOffset: number,
+  len: number,
+  tag: UnrecognisedField['line'],
+): UnrecognisedField[] {
+  const drift = new DriftCounter();
+  const line = lineAt(env, archivePath, byteOffset, len, drift);
+  if (line === undefined) return [];
+  try {
+    const counted: unknown = JSON.parse(drift.serialize()).unknown_top_level_fields;
+    if (typeof counted !== 'object' || counted === null) return [];
+    const names = new Set(Object.keys(counted));
+    return Object.entries(line.raw)
+      .filter(([name]) => names.has(name))
+      .map(([name, value]) => ({ line: tag, name, value: JSON.stringify(value) }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The emitting line's fields, then the joined result line's: a line carrying only
+ * result blocks emits no row of its own, so this is the only place they surface.
+ */
+export function resolveUnrecognisedFields(
+  row: EventContentRow,
+  archivePath: string | undefined,
+  env: ContentEnv,
+): UnrecognisedField[] {
+  if (archivePath === undefined) return [];
+  const own = unrecognisedFieldsAt(env, archivePath, row.src_offset, row.src_len, 'emitting');
+  const { result_offset, result_len } = row;
+  if (result_offset === null || result_len === null) return own;
+  return [...own, ...unrecognisedFieldsAt(env, archivePath, result_offset, result_len, 'result')];
 }
 
 /** The column half, used verbatim and as the degraded answer for every arm. */
@@ -375,7 +431,10 @@ export function resolveImage(
   const at = imageLineOf(row);
   if (at === undefined) return { ok: false, reason: 'gone' };
   if (at.len > IMAGE_LINE_MAX) return { ok: false, reason: 'too_large' };
-  const line = archivePath === undefined ? undefined : lineAt(env, archivePath, at.offset, at.len);
+  const line =
+    archivePath === undefined
+      ? undefined
+      : lineAt(env, archivePath, at.offset, at.len, new DriftCounter());
   const source = line === undefined ? undefined : imageSourceAt(line, at.block, ordinal);
   if (source === undefined) return { ok: false, reason: 'gone' };
   // Served as `Content-Type`, so a harness-chosen `text/html` would be markup from this server.
@@ -413,6 +472,14 @@ export function createContentResolver(
   env: ContentEnv,
 ): (row: EventContentRow, field: ContentField) => ResolvedContent {
   return (row, field) => resolveContent(row, field, archivePathOf(row.session_id), env);
+}
+
+/** Bind `resolveUnrecognisedFields` onto `ApiDeps.resolveUnrecognisedFields`. */
+export function createUnrecognisedFieldsResolver(
+  archivePathOf: (session_id: string) => string | undefined,
+  env: ContentEnv,
+): (row: EventContentRow) => UnrecognisedField[] {
+  return (row) => resolveUnrecognisedFields(row, archivePathOf(row.session_id), env);
 }
 
 /** The probe-only half of the spill arm: where the body is readable now. Reads no bytes. */

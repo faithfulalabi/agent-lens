@@ -244,6 +244,20 @@ export interface EventContentBody {
   spill_path?: string;
 }
 
+/** A top-level field the server's classifier did not consume. `value` is JSON text. */
+export interface UnrecognisedField {
+  /** `result` when it sat on the tool result line joined onto this event. */
+  line: 'emitting' | 'result';
+  name: string;
+  value: string;
+}
+
+/** `GET /api/events/:id/unrecognised-fields`. An empty list means nothing to show. */
+export interface UnrecognisedFieldsBody {
+  id: string;
+  fields: UnrecognisedField[];
+}
+
 /**
  * One search hit, mirroring `SearchHit` (`src/db/read.ts:201-212`) verbatim.
  *
@@ -416,6 +430,7 @@ export interface ApiClient {
   ): Promise<EventContentBody>;
   /** The `n`th of an event's images. Fetched rather than `<img src>`'d: the token is a header. */
   getEventImage(id: string, n: number, options?: RequestOptions): Promise<Blob>;
+  getUnrecognisedFields(id: string, options?: RequestOptions): Promise<UnrecognisedFieldsBody>;
   /**
    * FTS5 over the projected corpus, or over one session when `query.session` is
    * set. `q` is sent raw: the server retries an unparseable term as a literal
@@ -499,6 +514,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         throw new NetworkError(cause);
       }
     },
+    getUnrecognisedFields: (id, options) =>
+      request<UnrecognisedFieldsBody>(
+        `/api/events/${encodeURIComponent(id)}/unrecognised-fields`,
+        {},
+        options,
+      ),
 
     search: (q, query = {}, options) =>
       request<SearchBody>('/api/search', { q, ...query, limit: SEARCH_LIMIT }, options),

@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { ContentState } from '../../../lib/event-content';
-import { makeEventContent, makeEventRow } from '../../../lib/__tests__/fixtures';
+import {
+  makeEventContent,
+  makeEventRow,
+  makeUnrecognisedFields,
+} from '../../../lib/__tests__/fixtures';
 import { EventDetail } from '../EventDetail';
 
 /*
@@ -241,5 +245,63 @@ describe('an event that returned images shows them under its output', () => {
   it('renders no image section for an event with no images', () => {
     const html = render(<EventDetail event={makeEventRow({ image_count: 0 })} fetched={null} />);
     expect(html).not.toContain('detail-images');
+  });
+});
+
+describe('the unrecognised fields disclosure', () => {
+  it('renders closed, naming each field and its value, and labels a result-line field', () => {
+    const unrecognised = makeUnrecognisedFields({
+      fields: [
+        { line: 'emitting', name: 'futureHarnessField', value: '"m"' },
+        { line: 'result', name: 'futureResultField', value: '{"kept":true}' },
+      ],
+    });
+
+    const html = render(
+      <EventDetail event={makeEventRow()} fetched={null} unrecognised={unrecognised} />,
+    );
+
+    expect(html).toContain('data-slot="detail-unrecognised"');
+    expect(html).toContain('Unrecognized fields (2)');
+    expect(html).not.toMatch(/<details[^>]*detail-unrecognised[^>]*\sopen/);
+    expect(html).toContain('futureHarnessField');
+    expect(html).toContain('&quot;m&quot;');
+    expect(html).toContain('futureResultField');
+    expect(html).toContain('{&quot;kept&quot;:true}');
+    expect(html).toContain('(on the tool result)');
+  });
+
+  it('renders no disclosure at all when the event carries nothing to show', () => {
+    const event = makeEventRow();
+    const field = { line: 'emitting', name: 'futureHarnessField', value: '1' } as const;
+    for (const unrecognised of [
+      undefined,
+      null,
+      makeUnrecognisedFields(),
+      makeUnrecognisedFields({ id: 'ev-other', fields: [field] }),
+    ]) {
+      const html = render(<EventDetail event={event} fetched={null} unrecognised={unrecognised} />);
+      expect(html).not.toContain('detail-unrecognised');
+      expect(html).not.toContain('Unrecognized');
+      expect(html).toContain('detail-raw');
+    }
+  });
+
+  it('prints a value carrying markup, and a field named __proto__, as text', () => {
+    const unrecognised = makeUnrecognisedFields({
+      fields: [
+        { line: 'emitting', name: '__proto__', value: '{"polluted":true}' },
+        { line: 'emitting', name: 'futureHtml', value: '"<img src=x onerror=alert(1)>"' },
+      ],
+    });
+
+    const html = render(
+      <EventDetail event={makeEventRow()} fetched={null} unrecognised={unrecognised} />,
+    );
+
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('__proto__');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

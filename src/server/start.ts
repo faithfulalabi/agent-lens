@@ -20,6 +20,7 @@ import {
   createContentEnv,
   createContentResolver,
   createImageResolver,
+  createUnrecognisedFieldsResolver,
 } from '../content/resolve.js';
 import { createCorpusSweep } from '../corpus/watch.js';
 import { createProjectionEnv } from '../corpus/env.js';
@@ -159,6 +160,7 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     warm,
     resolveContent: createContentResolver(archivePathOf, contentEnv),
     resolveImage: createImageResolver(archivePathOf, contentEnv),
+    resolveUnrecognisedFields: createUnrecognisedFieldsResolver(archivePathOf, contentEnv),
   });
   const fetch = app.fetch;
 

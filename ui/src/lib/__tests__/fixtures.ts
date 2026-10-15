@@ -22,6 +22,7 @@ import type {
   SessionDetailHeaderRow,
   SessionListRow,
   TurnRow,
+  UnrecognisedFieldsBody,
 } from '../api.js';
 import type { SessionData } from '../session-data.js';
 import { buildTurnGroups, flatten, type Row, type TreeModel } from '../turn-tree.js';
@@ -254,6 +255,13 @@ export function makeEventContent(overrides: Partial<EventContentBody> = {}): Eve
   };
 }
 
+/** A `GET /api/events/:id/unrecognised-fields` body for `ev-1`, with no fields by default. */
+export function makeUnrecognisedFields(
+  overrides: Partial<UnrecognisedFieldsBody> = {},
+): UnrecognisedFieldsBody {
+  return { id: 'ev-1', fields: [], ...overrides };
+}
+
 /**
  * An `ApiClient` whose methods a test replaces one at a time.
  *
@@ -270,6 +278,7 @@ export function stubApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getSession: unstubbed('getSession'),
     getEventContent: unstubbed('getEventContent'),
     getEventImage: unstubbed('getEventImage'),
+    getUnrecognisedFields: unstubbed('getUnrecognisedFields'),
     search: unstubbed('search'),
     warm: unstubbed('warm'),
     ...overrides,
