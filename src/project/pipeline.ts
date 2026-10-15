@@ -26,7 +26,7 @@
 
 import { asyncAgentLaunch, taskNotification, type TaskNotification } from '../transcript/agents.js';
 import { attachmentRecord } from '../transcript/attachments.js';
-import { type Block, contentBlocks } from '../transcript/blocks.js';
+import { type Block, contentBlocks, resultText } from '../transcript/blocks.js';
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
 import {
@@ -265,15 +265,6 @@ function prose(blocks: readonly Block[]): string {
     .flatMap((block) => (block.kind === 'text' ? [block.text] : []))
     .join('\n')
     .trim();
-}
-
-/**
- * A tool result's own text, from the blocks hanging off it. Joined but NEVER
- * trimmed, unlike `prose`: both marker predicates test index 0 and `text_bytes`
- * is a size, so a stripped leading space would change all three answers.
- */
-function resultText(children: readonly Block[]): string {
-  return children.flatMap((child) => (child.kind === 'text' ? [child.text] : [])).join('\n');
 }
 
 /** What a block renders as. A tool call's output is the join's, never a block's. */

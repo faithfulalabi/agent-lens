@@ -240,6 +240,16 @@ export function classifyContent(content: unknown): readonly Block[] {
 }
 
 /**
+ * A tool result's text, then its image placeholders. Never trimmed, and text always leads:
+ * the spill-marker predicates test index 0 and `text_bytes` sizes this exact string.
+ */
+export function resultText(children: readonly Block[]): string {
+  const texts = children.flatMap((child) => (child.kind === 'text' ? [child.text] : []));
+  const images = children.flatMap((child) => (child.kind === 'image' ? [child.placeholder] : []));
+  return [...texts, ...images].join('\n');
+}
+
+/**
  * A classified line's own top-level blocks. Empty for every line that carries
  * no message at all — 1,592 uuid-carrying lines measured, which still project a
  * row each, so an empty answer here is data and never an error.

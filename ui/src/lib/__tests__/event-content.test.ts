@@ -80,6 +80,22 @@ describe('the bytes check runs before the storage check', () => {
     expect(state.body).toBeNull();
   });
 
+  it('an `inline` tool result that held only an image shows its placeholder, not the empty arm', () => {
+    const state = contentStateOf(
+      makeEventRow({
+        kind: 'tool_call',
+        output_storage: 'inline',
+        text: '[image image/png, 131.4 KB]',
+      }),
+      'text',
+      null,
+    );
+
+    expect(state.kind).toBe('inline');
+    expect(state.body).toBe('[image image/png, 131.4 KB]');
+    expect(state.note).not.toBe('Nothing was recorded for this half.');
+  });
+
   it('names no raw_type in the no-body sentence, whatever the row is', () => {
     // Ruled 2026-08-30. The arm fires on the input half of 14,211 rows, and
     // `raw_type` is `assistant` on 12,008 of them — a word that tells a reader
