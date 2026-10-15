@@ -68,6 +68,7 @@ const EVENT_CONTENT_KEYS = [
   'result_offset',
   'result_len',
   'result_block',
+  'image_count',
 ].sort();
 
 function keysOf(value: object): string[] {

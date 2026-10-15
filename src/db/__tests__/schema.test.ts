@@ -183,6 +183,7 @@ const EVENTS_COLUMNS = [
   'result_offset',
   'result_len',
   'result_block',
+  'image_count',
   'model',
   'tokens_in',
   'tokens_out',
@@ -249,7 +250,7 @@ describe('★ the full column set of every table, as SET EQUALITY', () => {
   it.each([
     ['sessions', SESSIONS_COLUMNS, 53],
     ['turns', TURNS_COLUMNS, 19],
-    ['events', EVENTS_COLUMNS, 40],
+    ['events', EVENTS_COLUMNS, 41],
     ['meta', META_COLUMNS, 2],
     // `PRAGMA table_info` lists an FTS5 table's DECLARED columns.
     ['spill_fts', SPILL_FTS_COLUMNS, 5],
@@ -279,7 +280,7 @@ describe('★ the full column set of every table, as SET EQUALITY', () => {
       expect(objectNames(eaten, 'table')).toEqual(expect.arrayContaining(EXPECTED_TABLES));
       expect(objectNames(eaten, 'index')).toEqual(expect.arrayContaining(EXPECTED_INDEXES));
       expect(columnNames(eaten, 'turns')).toHaveLength(19);
-      expect(columnNames(eaten, 'events')).toHaveLength(40);
+      expect(columnNames(eaten, 'events')).toHaveLength(41);
     } finally {
       eaten.close();
     }
@@ -461,6 +462,20 @@ function statementsAt75(): string {
   return bumped + STATEMENTS_ADDED_AT_7_5;
 }
 
+// Version 5 and `image_count` on `events`, on the same replace-with-guard terms.
+function statementsAt005(): string {
+  const at004 = statementsAt004();
+  const bumped = at004.replace('PRAGMA user_version = 4;', 'PRAGMA user_version = 5;');
+  expect(bumped).not.toBe(at004);
+  // `  result_block INTEGER,\n` occurs once, on `events`.
+  const withImages = bumped.replace(
+    '  result_block INTEGER,\n',
+    '  result_block INTEGER,\n  image_count INTEGER NOT NULL DEFAULT 0,\n',
+  );
+  expect(withImages).not.toBe(bumped);
+  return withImages;
+}
+
 // Version 4 and the three wire-input columns on `events`, applied as replaces
 // over the 0.17 oracle on the same terms: the frozen constants stay untouched and
 // each replace carries its own non-vacuity guard.
@@ -549,13 +564,13 @@ const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> =
 
 describe('the audit changed comments only — the statements did not move, and 7.5 added exactly two', () => {
   it('the DDL, stripped of comments, equals main @ d5c66d1 plus every later statement exactly', () => {
-    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt004()));
+    expect(withoutComments(SCHEMA_DDL)).toBe(withoutComments(statementsAt005()));
   });
 
   it('the version bump is SCHEMA_VERSION itself, so the two sites cannot drift', () => {
     // A mismatch between the two sites would recreate cache.db on every open.
     expect(SCHEMA_DDL).toContain(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
   });
 });
 

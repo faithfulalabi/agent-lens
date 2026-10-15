@@ -10,13 +10,17 @@
 // the freshness gate and a gate over a fictional path proves nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Hono } from 'hono';
 import { cleanup, makeSandbox, type Sandbox } from '../../archive/__tests__/fixtures.js';
 import { createArchiveReader } from '../../archive/read.js';
-import { createContentEnv, createContentResolver } from '../../content/resolve.js';
+import {
+  createContentEnv,
+  createContentResolver,
+  createImageResolver,
+} from '../../content/resolve.js';
 import { createProjectionEnv } from '../../corpus/env.js';
 import { foldArchive } from '../../db/freshness.js';
 import { projectSession } from '../../db/write.js';
@@ -54,7 +58,7 @@ import {
 } from '../../db/read.js';
 import { TOKEN_HEADER } from '../../shared/index.js';
 import { buildApiApp } from '../app.js';
-import type { DriftReport } from '../api.js';
+import type { DriftReport, ImageResolver } from '../api.js';
 import { createStreamHub, type StreamHub } from '../stream.js';
 import { createWarmQueue, type WarmQueue } from '../warm.js';
 import { stubWarm } from './helpers.js';
@@ -407,6 +411,130 @@ describe('4. GET /api/events/:id/content (spec:334-345)', () => {
       storage: 'line_ref',
       content: 'resolved ev-1 text',
     });
+  });
+});
+
+describe('4b. GET /api/events/:id/images/:n', () => {
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGNgYPjPwPAfAAUCAf97ThpEAAAAAElFTkSuQmCC';
+  const SHOT_SESSION = '5c4ee75e-1111-4111-8111-5c4ee75e0001';
+
+  function imageChild(media_type: string): Record<string, unknown> {
+    return { type: 'image', source: { type: 'base64', media_type, data: PNG } };
+  }
+
+  /** `toolResultLine`, with its result's children replaced by `children`. */
+  function resultCarrying(children: unknown[]): Record<string, unknown> {
+    const line = toolResultLine('toolu_shot', '', '2026-08-14T09:20:02.000Z');
+    const { content: blocks, ...message } = line.message as { content: object[] };
+    return { ...line, message: { ...message, content: [{ ...blocks[0], content: children }] } };
+  }
+
+  /** One `Read` answered by a single image, projected the way production projects it. */
+  function projectScreenshot(media_type = 'image/png'): string {
+    const archive = writeTranscript(join(sandbox.archiveRoot, `${SHOT_SESSION}.jsonl`), [
+      humanLine('screenshot it', '2026-08-14T09:20:00.000Z'),
+      toolCallLine('toolu_shot', 'Read', '2026-08-14T09:20:01.000Z'),
+      resultCarrying([imageChild(media_type)]),
+    ]);
+    seedIndexRow(db, archive, { id: SHOT_SESSION });
+    projectSession(
+      db,
+      SHOT_SESSION,
+      createProjectionEnv(createArchiveReader(), {
+        archiveRoot: sandbox.archiveRoot,
+        transcriptRoot: sandbox.sourceRoot,
+      }),
+      foldArchive(archive)!,
+    );
+    return archive;
+  }
+
+  function appWith(resolveImage?: ImageResolver): Hono {
+    return buildApiApp({
+      db,
+      env: fileEnv(),
+      token: TOKEN,
+      uiDir: join(sandbox.root, 'no-such-ui'),
+      hub: createStreamHub(),
+      warm: stubWarm(),
+      ...(resolveImage === undefined ? {} : { resolveImage }),
+    });
+  }
+
+  /** The production wiring `start.ts` builds. */
+  function productionApp(): Hono {
+    return appWith(
+      createImageResolver(
+        (id) => readEventArchivePath(db, id)?.archive_path,
+        createContentEnv(createArchiveReader(), [sandbox.archiveRoot, sandbox.sourceRoot]),
+      ),
+    );
+  }
+
+  function get(app: Hono, path: string): Promise<Response> {
+    return Promise.resolve(
+      app.request(path, { headers: { Host: 'localhost', [TOKEN_HEADER]: TOKEN } }),
+    );
+  }
+
+  it('serves the decoded bytes under their own type, with nosniff', async () => {
+    projectScreenshot();
+    const res = await get(productionApp(), '/api/events/toolu_shot/images/0');
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from(PNG, 'base64'));
+  });
+
+  it.each(['-1', '1e2', 'x', '0.5'])('400s an image index of %j', async (n) => {
+    projectScreenshot();
+    const res = await get(productionApp(), `/api/events/toolu_shot/images/${n}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid image index' });
+  });
+
+  it('404s an unknown event, an event with no images, and an index past the count', async () => {
+    projectScreenshot();
+    const app = productionApp();
+    for (const path of [
+      '/api/events/no-such-event/images/0',
+      '/api/events/ev-1/images/0',
+      '/api/events/toolu_shot/images/1',
+    ]) {
+      const res = await get(app, path);
+      expect(res.status, path).toBe(404);
+      expect(await res.json(), path).toEqual({ error: 'not found' });
+    }
+  });
+
+  it('answers 410 with a JSON reason once the archive is pruned, never a 500', async () => {
+    rmSync(projectScreenshot());
+    const res = await get(productionApp(), '/api/events/toolu_shot/images/0');
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ error: 'image no longer on disk' });
+  });
+
+  it('answers 415 for a type outside the allowlist rather than serving it as-is', async () => {
+    projectScreenshot('text/html');
+    const res = await get(productionApp(), '/api/events/toolu_shot/images/0');
+
+    expect(res.status).toBe(415);
+    expect(res.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('maps a too-large line to 413, and an app with no resolver to 410', async () => {
+    projectScreenshot();
+    const tooLarge = await get(
+      appWith(() => ({ ok: false, reason: 'too_large' })),
+      '/api/events/toolu_shot/images/0',
+    );
+    expect(tooLarge.status).toBe(413);
+    expect(await tooLarge.json()).toEqual({ error: 'image too large to serve' });
+
+    expect((await get(appWith(), '/api/events/toolu_shot/images/0')).status).toBe(410);
   });
 });
 

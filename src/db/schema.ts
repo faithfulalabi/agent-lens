@@ -13,7 +13,7 @@
 // archive: a bump here makes `openDb` remove the file and re-sweep.
 
 /** Bumping this makes `openDb` remove cache.db and recreate it. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 --
@@ -37,7 +37,7 @@ export const SCHEMA_DDL = `-- ~/.agent-lens/cache.db
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = OFF;    -- projections are dropped wholesale, per session, by hand
-PRAGMA user_version = 4;      -- SCHEMA_VERSION; mismatch => unlink + recreate
+PRAGMA user_version = 5;      -- SCHEMA_VERSION; mismatch => unlink + recreate
 
 -- =====================================================================  sessions
 -- The file index AND the session-list row AND the projection freshness header,
@@ -270,6 +270,7 @@ CREATE TABLE events (
   result_offset      INTEGER,               -- byte offset of the tool_result line
   result_len         INTEGER,
   result_block       INTEGER,
+  image_count        INTEGER NOT NULL DEFAULT 0, -- images servable by ordinal; never their bytes
 
   model              TEXT,                  -- \\  stamped on the FIRST event of each requestId
   tokens_in          INTEGER,               --  } group ONLY. Naive summing is 1.51x HIGH,

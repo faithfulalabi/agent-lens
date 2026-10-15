@@ -177,6 +177,8 @@ export interface EventRow {
    * sent it.
    */
   raw_subtype: string | null;
+  /** How many images `getEventImage` can fetch for this row, by index from 0. */
+  image_count: number;
 }
 
 /**
@@ -412,6 +414,8 @@ export interface ApiClient {
     field: ContentField,
     options?: RequestOptions,
   ): Promise<EventContentBody>;
+  /** The `n`th of an event's images. Fetched rather than `<img src>`'d: the token is a header. */
+  getEventImage(id: string, n: number, options?: RequestOptions): Promise<Blob>;
   /**
    * FTS5 over the projected corpus, or over one session when `query.session` is
    * set. `q` is sent raw: the server retries an unparseable term as a literal
@@ -432,15 +436,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const bootstrap = options.bootstrap ?? readBootstrap();
 
-  async function request<T>(
+  async function send(
     path: string,
     query: Record<string, string | number | undefined>,
     requestOptions: RequestOptions | undefined,
-    // Defaulted rather than required, so the three GET callers stay unchanged
-    // and the one POST inherits the token header, the error taxonomy and
-    // `buildUrl` without a second request path to keep in step.
+    // Defaulted rather than required, so the GET callers stay unchanged and the
+    // one POST inherits the token header, the error taxonomy and `buildUrl`
+    // without a second request path to keep in step.
     method: 'GET' | 'POST' = 'GET',
-  ): Promise<T> {
+  ): Promise<Response> {
     const url = buildUrl(path, query);
     let res: Response;
     try {
@@ -455,10 +459,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       throw new NetworkError(cause);
     }
 
-    const body = await readText(res);
-    if (!res.ok) throw toApiError(res, body);
+    if (!res.ok) throw toApiError(res, await readText(res));
+    return res;
+  }
 
-    const parsed = tryParseJson(body);
+  async function request<T>(
+    path: string,
+    query: Record<string, string | number | undefined>,
+    requestOptions: RequestOptions | undefined,
+    method: 'GET' | 'POST' = 'GET',
+  ): Promise<T> {
+    const res = await send(path, query, requestOptions, method);
+    const parsed = tryParseJson(await readText(res));
     if (!parsed.ok) {
       throw new HttpError(res.status, `agent-lens: ${path} returned a body that is not JSON`);
     }
@@ -478,6 +490,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         { field },
         options,
       ),
+
+    getEventImage: async (id, n, options) => {
+      const res = await send(`/api/events/${encodeURIComponent(id)}/images/${n}`, {}, options);
+      try {
+        return await res.blob();
+      } catch (cause) {
+        throw new NetworkError(cause);
+      }
+    },
 
     search: (q, query = {}, options) =>
       request<SearchBody>('/api/search', { q, ...query, limit: SEARCH_LIMIT }, options),

@@ -16,7 +16,11 @@ import { mkdirSync } from 'node:fs';
 import { readOrCreateToken } from '../shared/index.js';
 import { resolveArchiveRoot, resolveTranscriptRoot } from '../archive/index.js';
 import { createArchiveReader } from '../archive/read.js';
-import { createContentResolver, createContentEnv } from '../content/resolve.js';
+import {
+  createContentEnv,
+  createContentResolver,
+  createImageResolver,
+} from '../content/resolve.js';
 import { createCorpusSweep } from '../corpus/watch.js';
 import { createProjectionEnv } from '../corpus/env.js';
 import { openDb } from '../db/open.js';
@@ -141,6 +145,9 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
   // nothing.
   const warm = createWarmQueue({ db, env: createProjectionEnv(reader, roots), hub });
 
+  const archivePathOf = (id: string) => readEventArchivePath(db, id)?.archive_path;
+  const contentEnv = createContentEnv(reader, [roots.archiveRoot, roots.transcriptRoot]);
+
   const app = buildApiApp({
     db,
     token,
@@ -150,10 +157,8 @@ export async function startServer(options: StartOptions = {}): Promise<ServerHan
     sweep,
     hub,
     warm,
-    resolveContent: createContentResolver(
-      (id) => readEventArchivePath(db, id)?.archive_path,
-      createContentEnv(reader, [roots.archiveRoot, roots.transcriptRoot]),
-    ),
+    resolveContent: createContentResolver(archivePathOf, contentEnv),
+    resolveImage: createImageResolver(archivePathOf, contentEnv),
   });
   const fetch = app.fetch;
 
