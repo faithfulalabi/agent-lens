@@ -13,7 +13,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  FIELD_TIER_BUCKETS,
   countUnprojected,
+  hasStructuralDrift,
   readDriftRows,
   readEventArchivePath,
   readEventContentRow,
@@ -28,6 +30,9 @@ import {
   searchEvents,
   type SessionRow,
 } from '../read.js';
+import { aggregateDrift } from '../../server/drift-report.js';
+import { DriftCounter } from '../../transcript/drift.js';
+import { classifyLine } from '../../transcript/line.js';
 import { PROJECTOR_VERSION } from '../../transcript/version.js';
 import type { Page } from '../../shared/api.js';
 import { openCache, seedProjection, seedSessionRow, seedSidecarRow } from './fixtures/index.js';
@@ -921,5 +926,115 @@ describe('searchEvents reads spill_fts as a second arm', () => {
     seedSpill('sp', 'toolu_sp', 'zzspilltoken lives here');
     db.prepare(`UPDATE events SET output_storage = 'missing', spill_path = NULL`).run();
     expect(ids('zzspilltoken')).toEqual([]);
+  });
+});
+
+/* Hand-written, never derived from `FIELD_TIER_BUCKETS`: the oracle must not share the code's mistake. */
+const STRUCTURAL_DRIFT: ReadonlyArray<{ bucket: string; value: unknown }> = [
+  { bucket: 'unknown_line_types', value: { 'holographic-preview': 1 } },
+  { bucket: 'unknown_block_types', value: { hologram: 1 } },
+  { bucket: 'unjoined_tool_uses', value: 1 },
+  { bucket: 'sidecar_agent_id_mismatch', value: 1 },
+  { bucket: 'unresolved_spills', value: 1 },
+];
+
+const FIELD_ONLY = JSON.stringify({ unknown_top_level_fields: { novelField: 2 } });
+
+function listedDrift(id: string): boolean | undefined {
+  return readSessionList(db, PAGE).items.find((row) => row.id === id)?.has_drift;
+}
+
+describe('has_drift is raised by structural drift and never by an unknown field alone', () => {
+  it.each(STRUCTURAL_DRIFT)('$bucket alone raises has_drift', ({ bucket, value }) => {
+    const id = seedSessionRow(db, {
+      id: 'one-bucket',
+      drift_json: JSON.stringify({ [bucket]: value }),
+    });
+
+    expect(listedDrift(id)).toBe(true);
+    expect(readSessionHeader(db, id)?.has_drift).toBe(true);
+  });
+
+  it('unknown_top_level_fields alone leaves has_drift false on the list and the header', () => {
+    const id = seedSessionRow(db, { id: 'field-only', drift_json: FIELD_ONLY });
+
+    expect(listedDrift(id)).toBe(false);
+    expect(readSessionHeader(db, id)?.has_drift).toBe(false);
+  });
+
+  it('an unrecognised system subtype raises has_drift, because the classifier counts it as a record type', () => {
+    const drift = new DriftCounter();
+    classifyLine(
+      { type: 'system', subtype: 'quantum_entanglement' },
+      { byteOffset: 0, byteLength: 0, drift },
+    );
+    const drift_json = drift.serialize();
+    const id = seedSessionRow(db, { id: 'system-subtype', drift_json });
+
+    expect(Object.keys(JSON.parse(drift_json) as object)).toEqual(['unknown_line_types']);
+    expect(listedDrift(id)).toBe(true);
+  });
+
+  it('record-type and field drift together raise has_drift and keep the field names stored', () => {
+    const id = seedSessionRow(db, {
+      id: 'both-tiers',
+      drift_json: JSON.stringify({
+        unknown_line_types: { 'holographic-preview': 1 },
+        unknown_top_level_fields: { novelField: 2 },
+      }),
+    });
+
+    expect(listedDrift(id)).toBe(true);
+    const stored = readDriftRows(db).find((row) => row.id === id);
+    expect(stored?.drift_json).toContain('novelField');
+    expect(aggregateDrift(readDriftRows(db)).unknown_top_level_fields).toEqual({ novelField: 2 });
+  });
+
+  it('a bucket no tier lists raises has_drift rather than being swallowed', () => {
+    const id = seedSessionRow(db, {
+      id: 'untiered',
+      drift_json: JSON.stringify({ unknown_hologram_layers: 1 }),
+    });
+
+    expect(listedDrift(id)).toBe(true);
+  });
+
+  it('every bucket the writers emit is tiered, and only the top-level fields are silent', () => {
+    const drift = new DriftCounter();
+    drift.noteLine({ novelField: 1 }, new Set());
+    drift.noteUnknownType('holographic-preview');
+    drift.noteUnknownBlock('hologram');
+    drift.noteUnjoinedToolUse();
+    drift.noteSidecarMismatch();
+    // `withUnresolvedSpills` is private to the writer, so its key is added by hand.
+    const emitted = Object.keys({
+      ...(JSON.parse(drift.serialize()) as object),
+      unresolved_spills: 1,
+    });
+
+    expect(emitted.filter((bucket) => FIELD_TIER_BUCKETS.has(bucket))).toEqual([
+      'unknown_top_level_fields',
+    ]);
+    expect(emitted.filter((bucket) => !FIELD_TIER_BUCKETS.has(bucket)).sort()).toEqual(
+      STRUCTURAL_DRIFT.map(({ bucket }) => bucket).sort(),
+    );
+  });
+
+  it('the list flag agrees with the shared predicate on every drifting row the census reads', () => {
+    for (const { bucket, value } of STRUCTURAL_DRIFT) {
+      seedSessionRow(db, { id: `only-${bucket}`, drift_json: JSON.stringify({ [bucket]: value }) });
+    }
+    seedSessionRow(db, { id: 'field-only', drift_json: FIELD_ONLY });
+    seedSessionRow(db, {
+      id: 'untiered',
+      drift_json: JSON.stringify({ unknown_hologram_layers: 1 }),
+    });
+
+    const drifting = aggregateDrift(readDriftRows(db)).sessions_with_drift;
+
+    expect(drifting).toHaveLength(STRUCTURAL_DRIFT.length + 2);
+    for (const session of drifting) {
+      expect(listedDrift(session.id), session.id).toBe(hasStructuralDrift(session.counts));
+    }
   });
 });

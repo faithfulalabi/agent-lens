@@ -24,6 +24,14 @@ describe('the drift banner raises on the row it is given', () => {
     expect(markup).not.toContain('href="/api/');
   });
 
+  it('speaks of records and never of fields, which drift silently', () => {
+    const markup = renderToStaticMarkup(
+      <DriftBanner sessionId="session-a" hasDrift harnessVersion="2.2.0" />,
+    );
+    expect(markup).toContain('Unrecognized records in this session.');
+    expect(markup).not.toMatch(/field/i);
+  });
+
   it('still raises when the transcript named no version', () => {
     const markup = renderToStaticMarkup(
       <DriftBanner sessionId="session-a" hasDrift harnessVersion={null} />,
