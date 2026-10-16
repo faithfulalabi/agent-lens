@@ -3,11 +3,11 @@ import {
   contentStateOf,
   type ContentState,
   type FetchedImages,
-  imageViewsOf,
   unrecognisedFieldsOf,
   wireDivergenceOf,
   type WireDivergence,
 } from '@/lib/event-content';
+import { EventImages } from './EventImages';
 
 /*
  * The right-hand pane for the selected event (Task 5.3), props-in.
@@ -91,7 +91,7 @@ export function EventDetail({
             fetched={fetched}
             onShowFull={onShowFull}
           />
-          <Images event={event} images={images} />
+          <EventImages event={event} images={images} />
           <UnrecognisedFields event={event} body={unrecognised ?? null} />
           <RawRecord event={event} />
         </>
@@ -262,38 +262,6 @@ function UnrecognisedFields({
         </div>
       ))}
     </details>
-  );
-}
-
-/**
- * The output's images, drawn from same-origin object URLs. An `<img>` is mounted only once its
- * bytes are in hand, so a refused fetch reads as a sentence and never as a broken-image glyph.
- */
-function Images({ event, images }: { event: EventRow; images: FetchedImages | null }) {
-  const views = imageViewsOf(event, images);
-  if (views.length === 0) return null;
-
-  return (
-    <section data-slot="detail-images" className="flex flex-col gap-2 pt-2">
-      {views.map((view, n) => (
-        <figure key={n} data-slot="detail-image">
-          {view.url === null ? null : (
-            <a href={view.url} target="_blank" rel="noreferrer">
-              <img
-                src={view.url}
-                alt={`image ${n + 1} of ${views.length}`}
-                className="max-h-96 max-w-full rounded-md border border-border object-contain"
-              />
-            </a>
-          )}
-          {view.note === null ? null : (
-            <figcaption data-slot="detail-image-note" className="text-2xs text-faint">
-              {view.note}
-            </figcaption>
-          )}
-        </figure>
-      ))}
-    </section>
   );
 }
 

@@ -7,6 +7,8 @@ import { activitySummary, groupThread, type ThreadRow, type ThreadMessageRow } f
 import type { ApiClient, ContentField, EventContentBody, EventRow } from '@/lib/api';
 import { contentStateOf } from '@/lib/event-content';
 import { hrefFor } from '@/lib/route-match';
+import { useEventImages } from '@/lib/use-event-images';
+import { EventImages } from './EventImages';
 import { RowChips } from './SpanRow';
 import { SPAN_VISUALS } from './span-visuals';
 import { MessageContent } from './MessageContent';
@@ -20,7 +22,10 @@ export interface ThreadViewProps {
 /** A lossless transcript with a quiet default and explicit disclosure of activity. */
 export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
   const sections = useMemo(() => groupThread(rows), [rows]);
-  const prompts = rows.filter((row) => row.kind === 'message' && row.eventKind === 'prompt');
+  // A pasted image is its own prompt row, but the outline lists the message once.
+  const prompts = rows.filter(
+    (row) => row.kind === 'message' && row.eventKind === 'prompt' && row.event.image_count === 0,
+  );
   const scroller = useRef<HTMLDivElement>(null);
   const [activePrompt, setActivePrompt] = useState<string | null>(null);
 
@@ -63,45 +68,11 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
                   data-event-id={section.id}
                   className="scroll-mt-6"
                 >
-                  <MessageRow row={section.row} startedAt={startedAt} />
+                  <MessageRow row={section.row} startedAt={startedAt} api={api} />
                 </li>
               ) : (
                 <li key={section.id}>
-                  <details
-                    data-slot="thread-activity"
-                    className="rounded-md border border-dashed border-border bg-background"
-                  >
-                    <summary className="flex cursor-pointer items-center gap-2.5 px-4 py-3 text-xs text-muted transition-colors hover:text-foreground">
-                      <ChevronRight
-                        size={14}
-                        className="disclosure-chevron shrink-0"
-                        aria-hidden="true"
-                      />
-                      <Terminal size={14} className="shrink-0 text-span-tool" aria-hidden="true" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-medium">Activity</span>
-                        <span className="mt-1 block text-2xs text-muted">
-                          {activitySummary(section.rows)}
-                        </span>
-                      </span>
-                      {section.rows.some((row) => row.kind === 'tool' && row.status === 'error') ? (
-                        <span className="shrink-0 text-error">Errors</span>
-                      ) : null}
-                      <span className="text-2xs text-faint">View activity</span>
-                    </summary>
-                    <ol className="border-t border-border px-4">
-                      {section.rows.map((row) => (
-                        <li
-                          key={row.event.id}
-                          data-thread-kind={row.kind}
-                          data-event-id={row.event.id}
-                          className="border-b border-border py-3 last:border-b-0"
-                        >
-                          <ActivityRow row={row} startedAt={startedAt} api={api} />
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
+                  <ActivityGroup rows={section.rows} startedAt={startedAt} api={api} />
                 </li>
               ),
             )}
@@ -150,6 +121,51 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
   );
 }
 
+/** Collapsed by default; its rows fetch their images only while it is open. */
+function ActivityGroup({
+  rows,
+  startedAt,
+  api,
+}: {
+  rows: readonly ThreadRow[];
+  startedAt: string;
+  api?: ApiClient;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      data-slot="thread-activity"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="rounded-md border border-dashed border-border bg-background"
+    >
+      <summary className="flex cursor-pointer items-center gap-2.5 px-4 py-3 text-xs text-muted transition-colors hover:text-foreground">
+        <ChevronRight size={14} className="disclosure-chevron shrink-0" aria-hidden="true" />
+        <Terminal size={14} className="shrink-0 text-span-tool" aria-hidden="true" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-medium">Activity</span>
+          <span className="mt-1 block text-2xs text-muted">{activitySummary(rows)}</span>
+        </span>
+        {rows.some((row) => row.kind === 'tool' && row.status === 'error') ? (
+          <span className="shrink-0 text-error">Errors</span>
+        ) : null}
+        <span className="text-2xs text-faint">View activity</span>
+      </summary>
+      <ol className="border-t border-border px-4">
+        {rows.map((row) => (
+          <li
+            key={row.event.id}
+            data-thread-kind={row.kind}
+            data-event-id={row.event.id}
+            className="border-b border-border py-3 last:border-b-0"
+          >
+            <ActivityRow row={row} startedAt={startedAt} api={api} open={open} />
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function RowTime({ ts, startedAt }: { ts: string; startedAt: string }) {
   return (
     <time dateTime={ts} className="shrink-0 font-mono text-2xs text-muted">
@@ -158,7 +174,17 @@ function RowTime({ ts, startedAt }: { ts: string; startedAt: string }) {
   );
 }
 
-function MessageRow({ row, startedAt }: { row: ThreadMessageRow; startedAt: string }) {
+function MessageRow({
+  row,
+  startedAt,
+  api,
+  open = true,
+}: {
+  row: ThreadMessageRow;
+  startedAt: string;
+  api?: ApiClient;
+  open?: boolean;
+}) {
   const prompt = row.eventKind === 'prompt';
   const isError = row.eventKind === 'error';
   const reply = row.eventKind === 'text';
@@ -215,20 +241,25 @@ function MessageRow({ row, startedAt }: { row: ThreadMessageRow; startedAt: stri
           )}
         </div>
       )}
+      {open ? <ThreadImages event={row.event} api={api} /> : null}
     </article>
   );
 }
 
-function ActivityRow({
+export function ActivityRow({
   row,
   startedAt,
   api,
+  open,
 }: {
   row: ThreadRow;
   startedAt: string;
   api?: ApiClient;
+  /** Whether the enclosing Activity group is open; images are fetched only while it is. */
+  open: boolean;
 }) {
-  if (row.kind === 'message') return <MessageRow row={row} startedAt={startedAt} />;
+  if (row.kind === 'message')
+    return <MessageRow row={row} startedAt={startedAt} api={api} open={open} />;
   if (row.kind === 'unknown')
     return (
       <div>
@@ -312,6 +343,7 @@ function ActivityRow({
         <Payload slot="thread-output" title="Output" body={row.output} />
         <FullPayload event={row.event} field="text" api={api} />
       </details>
+      {open ? <ThreadImages event={row.event} api={api} /> : null}
       {row.event.child_session_id ? (
         <a
           href={hrefFor({ name: 'session', sessionId: row.event.child_session_id })}
@@ -323,6 +355,11 @@ function ActivityRow({
       ) : null}
     </div>
   );
+}
+
+function ThreadImages({ event, api }: { event: EventRow; api?: ApiClient }) {
+  const images = useEventImages(api, event);
+  return <EventImages event={event} images={images} />;
 }
 
 function Payload({ slot, title, body }: { slot: string; title: string; body: string | null }) {

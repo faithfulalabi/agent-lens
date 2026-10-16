@@ -75,7 +75,7 @@ export const SELECTORS = {
   spanExpand: 'span-expand',
   spanWire: 'span-wire',
   spanDetail: 'span-detail',
-  detailImage: 'detail-image',
+  eventImage: 'event-image',
   threadToggle: 'thread-toggle',
   driftBanner: 'drift-banner',
   inSessionSearch: 'in-session-search',
@@ -916,7 +916,46 @@ async function probeImage(
   await page.goto(`${viteUrl}${sessionPath}/event/${target.seq}`);
   const pane = `${slot(SELECTORS.spanDetail)}[data-event-id="${cssAttrValue(target.id)}"]`;
   await page.waitForSelector(pane);
-  const figures = `${pane} ${slot(SELECTORS.detailImage)}`;
+  const inPane = await readFigures(
+    page,
+    `${pane} ${slot(SELECTORS.eventImage)}`,
+    target.image_count,
+  );
+
+  // The same event in the thread: a tool call sits in a collapsed Activity group, a pasted image
+  // in its prompt card.
+  await page.locator(slot(SELECTORS.threadToggle)).click();
+  const row = `[data-thread-kind][data-event-id="${cssAttrValue(target.id)}"]`;
+  const activity = page
+    .locator(row)
+    .locator('xpath=ancestor::details[@data-slot="thread-activity"]');
+  if ((await activity.count()) > 0 && (await activity.getAttribute('open')) === null) {
+    await activity.locator(':scope > summary').click();
+  }
+  const inThread = await readFigures(
+    page,
+    `${row} ${slot(SELECTORS.eventImage)}`,
+    target.image_count,
+  );
+
+  return {
+    eventId: target.id,
+    imageCount: target.image_count,
+    decoded: inPane.decoded,
+    notes: inPane.notes,
+    thread: inThread,
+  };
+}
+
+/**
+ * Wait until `count` figures each hold a finished image or a sentence, then count what the
+ * browser decoded. A surface that never settles is read as it stands.
+ */
+async function readFigures(
+  page: Page,
+  figures: string,
+  count: number,
+): Promise<{ decoded: number; notes: string[] }> {
   await page
     .waitForFunction(
       ({ selector, count }) => {
@@ -931,9 +970,8 @@ async function probeImage(
           })
         );
       },
-      { selector: figures, count: target.image_count },
+      { selector: figures, count },
     )
-    // A pane that never settles is read as it stands; the assertion says what it lacked.
     .catch(() => undefined);
 
   const read = await page.$$eval(figures, (nodes) =>
@@ -946,8 +984,6 @@ async function probeImage(
     }),
   );
   return {
-    eventId: target.id,
-    imageCount: target.image_count,
     decoded: read.filter((figure) => figure.decoded).length,
     notes: read.flatMap((figure) => (figure.note === null ? [] : [figure.note])),
   };

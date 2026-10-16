@@ -292,14 +292,13 @@ function blockText(block: Block | undefined): string | undefined {
 function eventKind(line: ParsedLine, block: Block | undefined, human: boolean): EventKind {
   switch (block?.kind) {
     case 'text':
+    case 'image':
       return human ? 'prompt' : 'text';
     case 'thinking':
     case 'thinking_elided':
       return 'thinking';
     case 'tool_use':
       return 'tool_call';
-    case 'image':
-      return 'text';
   }
 
   if (line.kind === 'system') {
