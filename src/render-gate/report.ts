@@ -94,6 +94,8 @@ export interface ImageProbe {
   decoded: number;
   /** Whatever the pane said instead of drawing. */
   notes: readonly string[];
+  /** The same event read back from the thread, its Activity group opened if it sits in one. */
+  thread: { decoded: number; notes: readonly string[] };
 }
 
 /**
@@ -648,6 +650,16 @@ function imageAssertions(probe: ImageProbe | null): AssertionRecord[] {
         `${probe.eventId}: ${probe.decoded} of ${probe.imageCount} decoded` +
         (probe.notes.length === 0 ? '' : `, notes ${probe.notes.map(quote).join(', ')}`),
       expected: 'every image the event carries is drawn in the pane',
+    },
+    {
+      name: 'thread-image-rendered',
+      ok: probe.imageCount > 0 && probe.thread.decoded === probe.imageCount,
+      actual:
+        `${probe.eventId}: ${probe.thread.decoded} of ${probe.imageCount} decoded` +
+        (probe.thread.notes.length === 0
+          ? ''
+          : `, notes ${probe.thread.notes.map(quote).join(', ')}`),
+      expected: 'every image the event carries is drawn in the thread',
     },
   ];
 }

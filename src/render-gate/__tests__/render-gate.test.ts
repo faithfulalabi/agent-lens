@@ -117,7 +117,13 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       paneMatched: true,
       headingShown: true,
     },
-    image: { eventId: 'toolu_shot', imageCount: 2, decoded: 2, notes: [] },
+    image: {
+      eventId: 'toolu_shot',
+      imageCount: 2,
+      decoded: 2,
+      notes: [],
+      thread: { decoded: 2, notes: [] },
+    },
     eventDetail: {
       eventId: 'toolu_1',
       inputPrefix: '{"cmd":"ls"}',
@@ -1057,8 +1063,8 @@ describe('the gate source itself', () => {
      * row can find out the command is not the one that ran" gate-verified rather
      * than pinned in a render test.
      *
-     * ★ RAISED 15 -> 16 BY THE IMAGE PROBE: `detail-image` is READ — each figure's
-     * decoded `<img>` or its sentence, asserted by `image-rendered`.
+     * ★ RAISED 15 -> 16 BY THE IMAGE PROBE: `event-image` is READ — each figure's
+     * decoded `<img>` or its sentence, in the pane and in the thread.
      */
     expect(values).toHaveLength(16);
     expect(new Set(values).size).toBe(16);
@@ -1636,6 +1642,7 @@ describe('an image the pane failed to draw fails the gate, and no image is an ob
         imageCount: 2,
         decoded: 1,
         notes: ['Image no longer on disk.'],
+        thread: { decoded: 2, notes: [] },
       },
     });
 
@@ -1649,5 +1656,37 @@ describe('an image the pane failed to draw fails the gate, and no image is an ob
 
     expect(record?.ok).toBe(true);
     expect(record?.actual).toContain('toolu_shot: 2 of 2 decoded');
+  });
+});
+
+describe('an image the thread failed to draw fails the gate', () => {
+  const threadRecord = (report: ReturnType<typeof buildReport>): AssertionRecord | undefined =>
+    report.assertions.find((a) => a.name === 'thread-image-rendered');
+
+  it('passes when the thread decoded every image the event carries', () => {
+    const record = threadRecord(reportFor());
+
+    expect(record?.ok).toBe(true);
+    expect(record?.actual).toContain('toolu_shot: 2 of 2 decoded');
+  });
+
+  it('fails when the thread drew fewer images than the pane, and quotes what it said', () => {
+    const report = reportFor({
+      image: {
+        eventId: 'toolu_shot',
+        imageCount: 2,
+        decoded: 2,
+        notes: [],
+        thread: { decoded: 0, notes: ['Image could not be read.'] },
+      },
+    });
+
+    expect(threadRecord(report)?.ok).toBe(false);
+    expect(threadRecord(report)?.actual).toContain('Image could not be read.');
+    expect(report.ok).toBe(false);
+  });
+
+  it('asserts nothing when the corpus offered no image event', () => {
+    expect(threadRecord(reportFor({ image: null }))).toBeUndefined();
   });
 });

@@ -222,7 +222,7 @@ describe('an event that returned images shows them under its output', () => {
       />,
     );
 
-    expect(html.match(/data-slot="detail-image"/g)).toHaveLength(2);
+    expect(html.match(/data-slot="event-image"/g)).toHaveLength(2);
     expect(html).toContain('<img src="blob:one"');
     expect(html).toContain('<img src="blob:two"');
   });
@@ -244,7 +244,7 @@ describe('an event that returned images shows them under its output', () => {
 
   it('renders no image section for an event with no images', () => {
     const html = render(<EventDetail event={makeEventRow({ image_count: 0 })} fetched={null} />);
-    expect(html).not.toContain('detail-images');
+    expect(html).not.toContain('event-images');
   });
 });
 

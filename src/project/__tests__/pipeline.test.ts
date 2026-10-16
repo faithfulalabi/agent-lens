@@ -736,3 +736,23 @@ describe('image_count says how many images a row can serve, and nothing more', (
     expect(JSON.stringify(project('image-ordinals.jsonl').events)).not.toContain('iVBOR');
   });
 });
+
+describe('a pasted image reads as part of the prompt it was pasted into', () => {
+  it('projects an image in a human line as a prompt, beside its text', () => {
+    const events = project('pasted-image.jsonl').events.filter(
+      (event) => event.raw_type === 'user',
+    );
+
+    expect(events.map((event) => [event.kind, event.text])).toEqual([
+      ['prompt', '[Image #1] what is on this screen?'],
+      ['prompt', '[image image/png, 0.1 KB]'],
+    ]);
+  });
+
+  it('keeps an image the assistant produced as text', () => {
+    const image = project('turn-kinds.jsonl').events.find(
+      (event) => event.text?.startsWith('[image') === true,
+    );
+    expect(image?.kind).toBe('text');
+  });
+});

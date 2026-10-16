@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { EventRow } from '../../../lib/api';
 import { REASONING_NOT_RECORDED, buildThread } from '../../../lib/thread';
 import { makeEventRow, makeSessionRow } from '../../../lib/__tests__/fixtures';
-import { ThreadView } from '../ThreadView';
+import { ActivityRow, ThreadView } from '../ThreadView';
 import { SessionHeader } from '../SessionHeader';
 
 /*
@@ -301,5 +301,69 @@ describe('a record carrying text puts it on screen', () => {
   it('does not call a record it is showing unrecognized', () => {
     expect(markup).not.toContain('unrecognized record');
     expect(markup).toContain('attachment/date');
+  });
+});
+
+describe('an event that returned images draws them in the thread', () => {
+  const shot = {
+    kind: 'tool_call',
+    name: 'Read',
+    text: '[image image/png, 131.4 KB]',
+    output_storage: 'inline',
+    image_count: 1,
+  } as const;
+
+  /** One activity row, rendered as its group would render it. */
+  function activityMarkup(event: Partial<EventRow>, open: boolean): string {
+    const [row] = buildThread([makeEventRow({ id: 'ev-shot', ...event })]);
+    if (row === undefined) throw new Error('no row');
+    return renderToStaticMarkup(<ActivityRow row={row} startedAt={SESSION_START} open={open} />);
+  }
+
+  it('reserves a figure under the tool line once its group is open, with no img before bytes', () => {
+    const markup = activityMarkup(shot, true);
+
+    expect(occurrences(markup, /data-slot="event-image"/g)).toBe(1);
+    expect(markup).not.toContain('<img');
+    expect(markup.indexOf('thread-tool-detail')).toBeLessThan(markup.indexOf('event-images'));
+  });
+
+  it('draws nothing for a tool row while its group is closed', () => {
+    expect(activityMarkup(shot, false)).not.toContain('event-images');
+  });
+
+  it('draws nothing for a tool that returned no image', () => {
+    expect(activityMarkup({ ...shot, image_count: 0 }, true)).not.toContain('event-images');
+  });
+
+  it('starts every activity group closed, so no image is fetched on load', () => {
+    const markup = threadMarkup([shot]);
+
+    expect(markup).toContain('data-slot="thread-activity"');
+    expect(markup).not.toMatch(/<details[^>]*data-slot="thread-activity"[^>]*open/);
+    expect(markup).not.toContain('event-images');
+  });
+
+  it('draws a pasted image inside its prompt card, under "You"', () => {
+    const markup = threadMarkup([
+      { kind: 'prompt', text: '[Image #1] what is this?' },
+      { kind: 'prompt', text: '[image image/png, 0.1 KB]', image_count: 1 },
+    ]);
+    const card = markup.slice(markup.lastIndexOf('<article'));
+
+    expect(card).toContain('You');
+    expect(occurrences(card, /data-slot="event-image"/g)).toBe(1);
+  });
+
+  it('lists a pasted message once in the outline, not once per image', () => {
+    const markup = threadMarkup([
+      { kind: 'prompt', text: 'first' },
+      { kind: 'prompt', text: '[Image #1] second' },
+      { kind: 'prompt', text: '[image image/png, 0.1 KB]', image_count: 1 },
+    ]);
+
+    expect(markup).toContain('2 prompts');
+    const outline = markup.slice(markup.indexOf('Conversation outline'));
+    expect(outline).not.toContain('[image image/png');
   });
 });
