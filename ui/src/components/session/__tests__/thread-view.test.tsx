@@ -304,6 +304,29 @@ describe('a record carrying text puts it on screen', () => {
   });
 });
 
+describe('a record rendered in a role names it', () => {
+  const record = { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: 'x' };
+
+  it('renders the role chip only when the row has a role', () => {
+    expect(threadMarkup([{ ...record, rendered_role: 'user' }])).toMatch(
+      /data-slot="thread-record-role"[^>]*>user</,
+    );
+    expect(threadMarkup([{ ...record, rendered_role: null }])).not.toContain(
+      'data-slot="thread-record-role"',
+    );
+  });
+
+  it('puts the chip beside the label, ahead of the text', () => {
+    const markup = threadMarkup([{ ...record, rendered_role: 'system' }]);
+    expect(markup.indexOf('data-slot="thread-record-role"')).toBeGreaterThan(
+      markup.indexOf('data-slot="thread-unknown"'),
+    );
+    expect(markup.indexOf('data-slot="thread-record-role"')).toBeLessThan(
+      markup.indexOf('data-slot="thread-record-text"'),
+    );
+  });
+});
+
 describe('an event that returned images draws them in the thread', () => {
   const shot = {
     kind: 'tool_call',

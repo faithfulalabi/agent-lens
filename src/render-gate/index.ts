@@ -365,6 +365,8 @@ export interface WireEvent {
   output_storage: string | null;
   /** The executed form. Null — the majority — means it agreed with `input`. */
   wire_input: string | null;
+  /** The role the harness rendered `text` in. Null before 2.1.296. */
+  rendered_role: string | null;
 }
 
 /** One `tool_call` row the virtualizer actually rendered, as read off the page. */
@@ -527,6 +529,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   /** Main-frame navigations. A live tail must cause none. */
   let navigations = 0;
   let wireEvents: Promise<WireEvent[]> | null = null;
+  let wireHarness: string | null = null;
   page.on('framenavigated', (frame) => {
     if (frame === page.mainFrame()) navigations += 1;
   });
@@ -549,7 +552,10 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
       // PARENT's page — a later sidecar response must not overwrite it.
       wireEvents ??= response
         .json()
-        .then((body: { events?: WireEvent[] }) => body.events ?? [])
+        .then((body: { events?: WireEvent[]; session?: { harness_version?: string | null } }) => {
+          wireHarness = body.session?.harness_version ?? null;
+          return body.events ?? [];
+        })
         .catch(() => []);
     }
     if (isSessionListPath(response.url()) && response.status() < 400) {
@@ -644,7 +650,7 @@ async function chromeDriver(ctx: DriveContext): Promise<DriveOutcome> {
   // `totalRows` off the tree canvas and would answer null once the tree is gone.
   // There is no trip back: a return would be dead motion, and the response count
   // below spans the whole drive either way, which is what makes AC1 survive it.
-  const threadInline = await probeThreadInline(page, events, shoot);
+  const threadInline = await probeThreadInline(page, events, wireHarness, shoot);
 
   // LAST OF ALL, after the thread probe. An unrecognised line becomes an event
   // row, so appending one any earlier would move the `totalRows` reading the
@@ -1327,6 +1333,7 @@ async function probeDriftBanner(
 async function probeThreadInline(
   page: Page,
   events: readonly WireEvent[],
+  harnessVersion: string | null,
   shoot: (name: ShotName) => Promise<void>,
 ): Promise<ThreadProbe | null> {
   const toggle = page.locator(slot(SELECTORS.threadToggle));
@@ -1352,6 +1359,7 @@ async function probeThreadInline(
     nodes.map((node) => ({
       id: node.getAttribute('data-event-id') ?? '',
       text: node.querySelector('[data-slot="thread-record-text"]')?.textContent ?? '',
+      role: node.querySelector('[data-slot="thread-record-role"]')?.textContent ?? null,
     })),
   );
 
@@ -1374,6 +1382,7 @@ async function probeThreadInline(
   const pinnedIds = new Set(
     events.filter((event) => event.raw_type === PINNED_RECORD_TYPE).map((event) => event.id),
   );
+  const roles = new Map(events.map((event) => [event.id, event.rendered_role]));
 
   return {
     eventId: wire.id,
@@ -1389,6 +1398,9 @@ async function probeThreadInline(
     attachmentEvents: pinnedIds.size,
     emptyAttachmentRows: pinned.filter((row) => pinnedIds.has(row.id) && oneLine(row.text) === '')
       .length,
+    roleRows: pinned.filter((row) => row.role !== null && roles.get(row.id) === row.role).length,
+    roleEvents: events.filter((event) => typeof event.rendered_role === 'string').length,
+    harnessVersion,
   };
 }
 

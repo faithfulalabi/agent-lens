@@ -334,6 +334,27 @@ describe('a record that carries text shows it, and is not called unrecognized', 
   });
 });
 
+describe('an unknown row carries the role its text was rendered in', () => {
+  it.each([
+    ['system', 'system'],
+    ['user', 'user'],
+    ['no role', null],
+  ])('an event with %s answers it, or null', (_label, rendered_role) => {
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'date', text: 'x', rendered_role },
+    ]);
+    expect(row?.kind === 'unknown' && row.role).toBe(rendered_role);
+  });
+
+  it('discloses the role in the raw record', () => {
+    const [row] = rowsFor([
+      { kind: 'unknown', raw_type: 'attachment', text: 'x', rendered_role: 'user' },
+    ]);
+    const record = row?.kind === 'unknown' ? row.record : '{}';
+    expect((JSON.parse(record) as Record<string, unknown>).rendered_role).toBe('user');
+  });
+});
+
 /* ---------------------------------------------------- the mode vocabulary --- */
 
 describe('the two surfaces are one closed list', () => {

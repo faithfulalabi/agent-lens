@@ -179,6 +179,8 @@ export interface EventRow {
   raw_subtype: string | null;
   /** How many images `getEventImage` can fetch for this row, by index from 0. */
   image_count: number;
+  /** The role the harness rendered `text` in, verbatim. Null on every older harness. */
+  rendered_role: string | null;
 }
 
 /**

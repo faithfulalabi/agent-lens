@@ -31,6 +31,8 @@ export interface AttachmentRecord {
   readonly subtype: string;
   /** The harness's own rendering, or a placeholder naming the subtype. */
   readonly text: string;
+  /** `renderedRole` as sent — whose voice the harness rendered {@link text} in. */
+  readonly role: string | undefined;
 }
 
 const NO_ELEMENTS: readonly unknown[] = Object.freeze([]);
@@ -57,5 +59,9 @@ export function attachmentRecord(line: ParsedLine): AttachmentRecord | undefined
   const first = arr(line.raw.rendered, NO_ELEMENTS)[0];
   const rendered = str(obj(first, undefined)?.content, undefined);
 
-  return { subtype, text: rendered ?? placeholder(subtype) };
+  return {
+    subtype,
+    text: rendered ?? placeholder(subtype),
+    role: str(line.raw.renderedRole, undefined),
+  };
 }

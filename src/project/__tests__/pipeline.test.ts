@@ -21,6 +21,7 @@ import {
   type Projection,
 } from '../pipeline.js';
 import { contentBlocks } from '../../transcript/blocks.js';
+import { classifyLine } from '../../transcript/line.js';
 import {
   callAt,
   census,
@@ -736,6 +737,51 @@ describe('image_count says how many images a row can serve, and nothing more', (
     expect(JSON.stringify(project('image-ordinals.jsonl').events)).not.toContain('iVBOR');
   });
 });
+
+describe('a rendered record carries the role the harness rendered it in', () => {
+  const FIXTURE = 'rendered-role.jsonl';
+  const rendered = (): ProjectedEvent[] =>
+    project(FIXTURE).events.filter((event) => event.raw_subtype !== undefined);
+
+  it('projects one event per uuid-carrying line of rendered-role.jsonl', () => {
+    const result = project(FIXTURE);
+    expect(result.events).toHaveLength(result.lines.filter((line) => line.uuid).length);
+    expect(rendered()).toHaveLength(4);
+  });
+
+  it('stores the role in attrs, and nothing when the line carried none', () => {
+    expect(rendered().map((event) => [event.raw_subtype, event.attrs])).toEqual([
+      ['total_tokens_reminder', '{"renderedRole":"system"}'],
+      ['remote_session_change', '{"renderedRole":"user"}'],
+      ['deferred_tools_record', '{}'],
+      ['session_context', '{}'],
+    ]);
+  });
+
+  it('a line without renderedRole projects byte-identically, and a role changes only attrs', () => {
+    const withRole = offsetLines(projectFixtureBytes(FIXTURE).toString('utf8'))
+      .map((entry) => JSON.parse(entry.text) as Record<string, unknown>)
+      .filter((raw) => raw.renderedRole !== undefined);
+    expect(withRole).toHaveLength(2);
+
+    for (const raw of withRole) {
+      const without = { ...raw };
+      delete without.renderedRole;
+      const [roled] = projectOne(raw);
+      const [plain] = projectOne(without);
+
+      expect(plain?.attrs).toBe('{}');
+      expect(JSON.stringify({ ...roled, attrs: '{}' })).toBe(JSON.stringify(plain));
+    }
+  });
+});
+
+/** One line through the classifier and the pipeline, under a pinned byte span. */
+function projectOne(raw: Record<string, unknown>): readonly ProjectedEvent[] {
+  const drift = new DriftCounter();
+  const line = classifyLine(raw, { byteOffset: 0, byteLength: 100, drift });
+  return runPipeline([line], { session_id: SESSION, drift }).events;
+}
 
 describe('a pasted image reads as part of the prompt it was pasted into', () => {
   it('projects an image in a human line as a prompt, beside its text', () => {

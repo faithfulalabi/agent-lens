@@ -114,6 +114,47 @@ describe('renderedInHumanTurn is read by nothing', () => {
   });
 });
 
+describe('renderedRole is the role the harness rendered the text in', () => {
+  it.each(['system', 'user', 'narrator'])('returns %s verbatim', (role) => {
+    expect(attachmentRecord(attachment({ renderedRole: role }))?.role).toBe(role);
+  });
+
+  it('a line without renderedRole has no role', () => {
+    expect(
+      attachmentRecord(attachment({ rendered: [{ content: WRAPPED }] }))?.role,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['a number', 42],
+    ['null', null],
+    ['an object', { role: 'system' }],
+    ['an array', ['system']],
+  ])('a renderedRole that is %s reads as no role, without throwing', (_label, renderedRole) => {
+    expect(attachmentRecord(attachment({ renderedRole }))?.role).toBeUndefined();
+  });
+
+  it('a line carrying a role and both renderings answers text from rendered and role from renderedRole', () => {
+    const record = attachmentRecord(
+      attachment({
+        rendered: [{ content: WRAPPED }],
+        renderedInHumanTurn: [{ content: 'the other rendering' }],
+        renderedRole: 'system',
+      }),
+    );
+    expect(record).toEqual({ subtype: '', text: WRAPPED, role: 'system' });
+  });
+});
+
+describe('renderedBesideToolResult is read by nothing', () => {
+  it('changes nothing a record answers', () => {
+    const base = { attachment: { type: 'remote_session_change' }, renderedRole: 'user' };
+    expect(attachmentRecord(attachment({ ...base, renderedBesideToolResult: true }))).toEqual(
+      attachmentRecord(attachment(base)),
+    );
+  });
+});
+
 describe('every read is total', () => {
   it.each([
     ['a revoked proxy payload', Proxy.revocable({}, {}).proxy],

@@ -178,6 +178,8 @@ export interface EventRow {
   raw_subtype: string | null;
   /** Images `GET /api/events/:id/images/:n` can serve, by ordinal. */
   image_count: number;
+  /** The role the harness rendered this row's text in, verbatim. */
+  rendered_role: string | null;
 }
 
 /**
@@ -485,7 +487,8 @@ const EVENT_COLUMNS = `id, turn_id, seq, kind, ts, request_id, block_index, name
      wire_input, wire_input_bytes, wire_input_storage,
      text, text_bytes, output_storage, spill_path, spill_bytes,
      model, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, est_cost,
-     child_session_id, agent_type, agent_status, raw_type, raw_subtype, image_count`;
+     child_session_id, agent_type, agent_status, raw_type, raw_subtype, image_count,
+     json_extract(attrs, '$.renderedRole') AS rendered_role`;
 
 export interface EventPageQuery {
   from_seq: number;
