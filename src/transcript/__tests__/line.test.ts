@@ -33,7 +33,7 @@ const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['fork-context-ref', 0],
 ];
 
-/** The 7 declared `system` subtypes. `api_error` is the one with no witness. */
+/** The declared `system` subtypes. */
 const SYSTEM_SUBTYPES = [
   'turn_duration',
   'stop_hook_summary',
@@ -147,9 +147,7 @@ describe('started and result are sidecar-only and both classify', () => {
   });
 });
 
-describe('api_error keeps its branch with no live witness', () => {
-  // No corpus witness, so the fixture is hand-authored. Deleting the branch because "nothing
-  // produces it" would make the next API outage classify as unknown.
+describe('api_error classifies as its own system subtype', () => {
   it('classifies from a synthetic fixture', () => {
     const { lines } = classifyFixture('system-subtypes.jsonl');
     const apiError = lines.find((line) => line.kind === 'system' && line.subtype === 'api_error');

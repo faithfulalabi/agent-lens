@@ -99,6 +99,12 @@ export interface RawSystemLine {
   hookErrors?: unknown;
   hookInfos?: unknown;
   hookAdditionalContext?: unknown;
+  /** On `subtype: 'api_error'`: the failed request and the retry the harness scheduled. */
+  error?: unknown;
+  maxRetries?: unknown;
+  retryAttempt?: unknown;
+  retryInMs?: unknown;
+  source?: unknown;
   userType?: unknown;
   isMeta?: unknown;
   isSidechain?: unknown;

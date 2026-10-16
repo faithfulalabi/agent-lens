@@ -190,6 +190,58 @@ describe('the 2.1.277-2.1.284 shapes are absorbed, and only those', () => {
     classifyLine({ type: 'mode', mode: 'default', rendered: 'text' }, onMode);
     expect(JSON.parse(onMode.drift.serialize()).unknown_top_level_fields).toEqual({ rendered: 1 });
   });
+
+  const RETRY_FIELDS = {
+    error: { formatted: 'API Error: Request timed out.' },
+    maxRetries: 1,
+    retryAttempt: 1,
+    retryInMs: 0,
+    source: 'request_retry',
+  };
+
+  it('the retry fields are silent on system and still count on a type that does not own them', () => {
+    const onSystem = ctx();
+    classifyLine(
+      {
+        type: 'system',
+        subtype: 'api_error',
+        uuid: '77777777-7777-4777-8777-777777777777',
+        ...RETRY_FIELDS,
+      },
+      onSystem,
+    );
+    expect(onSystem.drift.serialize()).toBe('{}');
+
+    const onUser = ctx();
+    classifyLine(
+      { type: 'user', uuid: '88888888-8888-4888-8888-888888888888', ...RETRY_FIELDS },
+      onUser,
+    );
+    expect(JSON.parse(onUser.drift.serialize()).unknown_top_level_fields).toEqual({
+      error: 1,
+      maxRetries: 1,
+      retryAttempt: 1,
+      retryInMs: 1,
+      source: 1,
+    });
+  });
+
+  it('a never-seen field beside the retry fields on a system line still drifts', () => {
+    const shared = ctx();
+    classifyLine(
+      {
+        type: 'system',
+        subtype: 'api_error',
+        uuid: '99999999-9999-4999-8999-999999999999',
+        ...RETRY_FIELDS,
+        zzzBrandNew: true,
+      },
+      shared,
+    );
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
+      zzzBrandNew: 1,
+    });
+  });
 });
 
 describe('the counter is total and cannot be tricked by a transcript', () => {

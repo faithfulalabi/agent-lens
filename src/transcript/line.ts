@@ -203,6 +203,11 @@ const LINE_TYPES = new Map<string, LineType>([
         'hookAdditionalContext',
         'pendingBackgroundAgentCount',
         'pendingWorkflowCount',
+        'error',
+        'maxRetries',
+        'retryAttempt',
+        'retryInMs',
+        'source',
       ]),
     },
   ],
@@ -404,6 +409,37 @@ export function turnDurationMs(line: ParsedLine): number | undefined {
   return line.kind === 'system' && line.subtype === 'turn_duration'
     ? num(line.raw.durationMs, undefined)
     : undefined;
+}
+
+/** The string without surrounding whitespace or trailing punctuation, or `undefined` if empty. */
+function phrase(value: unknown): string | undefined {
+  let text = str(value, '').trim();
+  while (/[.!?:;,]/.test(text.slice(-1))) text = text.slice(0, -1).trimEnd();
+  return text === '' ? undefined : text;
+}
+
+/**
+ * What a `system`/`api_error` line says went wrong and how the harness retried, as one sentence.
+ * Each clause appears only when the line carries it; a line carrying none gets no text.
+ */
+export function apiErrorText(line: ParsedLine): string | undefined {
+  if (line.kind !== 'system' || line.subtype !== 'api_error') return undefined;
+  const error = obj(line.raw.error, undefined);
+  const cause = phrase(error?.formatted) ?? phrase(error?.message);
+  const code = phrase(obj(error?.connection, undefined)?.code);
+  const ceiling = num(line.raw.maxRetries, undefined);
+  const delayMs = num(line.raw.retryInMs, undefined);
+  const retry = [
+    num(line.raw.retryAttempt, undefined),
+    ceiling === undefined ? undefined : `of ${ceiling}`,
+    delayMs === undefined ? undefined : `in ${delayMs} ms`,
+  ].filter((part) => part !== undefined);
+
+  const clauses: string[] = [];
+  const what = cause !== undefined && code !== undefined ? `${cause} (${code})` : (cause ?? code);
+  if (what !== undefined) clauses.push(`${what}.`);
+  if (retry.length > 0) clauses.push(`Retry ${retry.join(' ')}.`);
+  return clauses.length === 0 ? undefined : clauses.join(' ');
 }
 
 /** The harness's placeholder on a line it manufactured. It names no model. */
