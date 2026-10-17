@@ -643,6 +643,51 @@ describe('an attachment line projects an event that can be read', () => {
   });
 });
 
+describe('an api_error line says what failed and how it was retried', () => {
+  const result = (): Projection => project('api-error-retry.jsonl');
+  const apiErrors = (): ProjectedEvent[] =>
+    result().events.filter((event) => event.raw_subtype === 'api_error');
+
+  it('projects an error event per api_error line', () => {
+    expect(apiErrors().map((event) => [event.kind, event.raw_type])).toEqual([
+      ['error', 'system'],
+      ['error', 'system'],
+      ['error', 'system'],
+      ['error', 'system'],
+    ]);
+  });
+
+  it('names the cause, the attempt, the ceiling and the backoff', () => {
+    expect(apiErrors()[0]?.text).toBe(
+      'API Error: Request timed out (StreamNoResponse). Retry 1 of 1 in 0 ms.',
+    );
+  });
+
+  it('reads the retry numbers and the code from the line, not assumed', () => {
+    expect(apiErrors()[1]?.text).toBe('Overloaded (ECONNRESET). Retry 3 of 10 in 4000 ms.');
+  });
+
+  it('falls back to the message when formatted is empty, and omits a missing code', () => {
+    expect(apiErrors()[2]?.text).toBe('Connection reset by peer. Retry 2 of 5 in 1500 ms.');
+  });
+
+  it('invents no text for an api_error line carrying no retry facts', () => {
+    expect(apiErrors()[3]?.text).toBeUndefined();
+  });
+
+  it('leaves every other system row without text', () => {
+    const others = result().events.filter(
+      (event) => event.raw_type === 'system' && event.raw_subtype !== 'api_error',
+    );
+    expect(others.length).toBeGreaterThan(0);
+    for (const event of others) expect(event.text).toBeUndefined();
+  });
+
+  it('a witness-shaped api_error line raises no drift', () => {
+    expect(result().drift).toBe('{}');
+  });
+});
+
 describe('a tool result carrying an image reads as the image, never as nothing', () => {
   const PLACEHOLDER = '[image image/png, 0.1 KB]';
 

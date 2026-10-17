@@ -213,11 +213,6 @@ CREATE TABLE events (
   seq                INTEGER NOT NULL,      -- thread order; deterministic from the file bytes
   kind               TEXT NOT NULL,         -- prompt | text | thinking | tool_call
                                             -- | error | compaction | unknown
-                                            -- MEASURED 2026-09-11 (30,286 events): 'error'
-                                            -- has 0 rows, REACHABLE BUT UNOBSERVED — writer
-                                            -- pipeline.ts:306, gated on the harness line
-                                            -- subtype 'api_error'. Keep the arm; see
-                                            -- task 0.12.
   ts                 TEXT NOT NULL,
   request_id         TEXT,                  -- groups the N lines of ONE assistant response
                                             -- (1:1 with message.id; 13,629/13,630 lines = 1 block)

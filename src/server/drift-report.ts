@@ -17,6 +17,7 @@ export interface RawDrift {
   unjoined_tool_uses?: number;
   unresolved_spills?: number;
   sidecar_agent_id_mismatch?: number;
+  permission_decision_mismatch?: number;
 }
 
 export interface DriftSession {

@@ -30,9 +30,11 @@ import { type Block, contentBlocks, imageCount, resultText } from '../transcript
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
 import {
+  apiErrorText,
   foldControlLines,
   foldSessionEnvelope,
   type ParsedLine,
+  permissionDecision,
   promptGroupId,
   toolDenialKind,
   turnDurationMs,
@@ -411,6 +413,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         text: output,
         is_error: block.is_error,
         denial: toolDenialKind(line),
+        decision: permissionDecision(line),
         launch: asyncAgentLaunch(line, output),
         ts: line.timestamp ?? '',
         result_offset: line.byte_offset,
@@ -468,7 +471,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     // must always win, and a harness that starts sending both would otherwise
     // leak this onto a block row.
     const record = blocks.length === 0 ? attachmentRecord(line) : undefined;
-    const lineText = record?.text;
+    const lineText = blocks.length === 0 ? (record?.text ?? apiErrorText(line)) : undefined;
     const attrs = record?.role === undefined ? '{}' : JSON.stringify({ renderedRole: record.role });
     let stamped = false;
 

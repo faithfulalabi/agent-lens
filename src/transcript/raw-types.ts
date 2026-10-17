@@ -33,6 +33,8 @@ export interface RawUserLine {
   slug?: unknown;
   entrypoint?: unknown;
   permissionMode?: unknown;
+  /** `{ decision, source, reasonType }` on a tool result line; absent on older harness builds. */
+  permissionDecision?: unknown;
   serverClassifierContext?: unknown;
   /** `"human"` / `"sdk"`, stated outright. A corroborator for `origin.kind`, not an authority. */
   turnOrigin?: unknown;
@@ -99,6 +101,12 @@ export interface RawSystemLine {
   hookErrors?: unknown;
   hookInfos?: unknown;
   hookAdditionalContext?: unknown;
+  /** On `subtype: 'api_error'`: the failed request and the retry the harness scheduled. */
+  error?: unknown;
+  maxRetries?: unknown;
+  retryAttempt?: unknown;
+  retryInMs?: unknown;
+  source?: unknown;
   userType?: unknown;
   isMeta?: unknown;
   isSidechain?: unknown;

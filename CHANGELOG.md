@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/faithfulalabi/agent-lens/compare/v0.10.0...v0.11.0) (2026-10-17)
+
+
+### Features
+
+* **projector:** say what an api_error retry was ([#137](https://github.com/faithfulalabi/agent-lens/issues/137)) ([5b250d4](https://github.com/faithfulalabi/agent-lens/commit/5b250d46413757332ee769dfe59454d1034e8951))
+
+## [0.10.0](https://github.com/faithfulalabi/agent-lens/compare/v0.9.0...v0.10.0) (2026-10-17)
+
+
+### Features
+
+* **projector:** take tool permission outcome from the stated decision ([#136](https://github.com/faithfulalabi/agent-lens/issues/136)) ([3015714](https://github.com/faithfulalabi/agent-lens/commit/301571417c988517b12075798d5e0c4b7dbc5c15))
+
+## [0.9.0](https://github.com/faithfulalabi/agent-lens/compare/v0.8.0...v0.9.0) (2026-10-16)
+
+
+### Features
+
+* **thread:** draw screenshots in the thread, not only the tree pane ([#134](https://github.com/faithfulalabi/agent-lens/issues/134)) ([b93898a](https://github.com/faithfulalabi/agent-lens/commit/b93898a3ac914de394932e36aea687a6ad378461))
+
 ## [0.8.0](https://github.com/faithfulalabi/agent-lens/compare/v0.7.1...v0.8.0) (2026-10-15)
 
 
