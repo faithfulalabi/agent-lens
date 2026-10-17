@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/faithfulalabi/agent-lens/compare/v0.10.0...v0.11.0) (2026-10-17)
+
+
+### Features
+
+* **projector:** say what an api_error retry was ([#137](https://github.com/faithfulalabi/agent-lens/issues/137)) ([5b250d4](https://github.com/faithfulalabi/agent-lens/commit/5b250d46413757332ee769dfe59454d1034e8951))
+
 ## [0.10.0](https://github.com/faithfulalabi/agent-lens/compare/v0.9.0...v0.10.0) (2026-10-17)
 
 
