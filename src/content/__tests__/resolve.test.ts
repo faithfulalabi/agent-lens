@@ -1083,7 +1083,7 @@ describe('the fields the classifier did not consume, read live off the archived 
         subtype: 'future_subtype',
         timestamp: TS(3),
         content: 'a notice from a newer harness',
-        error: 'known on assistant lines, not on system ones',
+        apiBlockIndex: 'known on assistant lines, not on system ones',
       }),
     ]);
 
@@ -1091,7 +1091,12 @@ describe('the fields the classifier did not consume, read live off the archived 
       unknown_top_level_fields?: Record<string, number>;
     };
     const recorded = Object.keys(drift.unknown_top_level_fields ?? {}).sort();
-    expect(recorded).toEqual(['error', 'futureCallField', 'futureResultField', 'futureUserField']);
+    expect(recorded).toEqual([
+      'apiBlockIndex',
+      'futureCallField',
+      'futureResultField',
+      'futureUserField',
+    ]);
 
     const env = sandboxEnv();
     const shown = new Set(

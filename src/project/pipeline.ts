@@ -30,6 +30,7 @@ import { type Block, contentBlocks, imageCount, resultText } from '../transcript
 import type { DriftCounter } from '../transcript/drift.js';
 import { isHumanPrompt, MACHINERY_TAGS } from '../transcript/human.js';
 import {
+  apiErrorText,
   foldControlLines,
   foldSessionEnvelope,
   type ParsedLine,
@@ -469,7 +470,8 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     // Gated on the blockless case rather than trusted to it: a block's own text
     // must always win, and a harness that starts sending both would otherwise
     // leak this onto a block row.
-    const lineText = blocks.length === 0 ? attachmentRecord(line)?.text : undefined;
+    const lineText =
+      blocks.length === 0 ? (attachmentRecord(line)?.text ?? apiErrorText(line)) : undefined;
     let stamped = false;
 
     const emit = (block: Block | undefined, blockIndex: number): void => {

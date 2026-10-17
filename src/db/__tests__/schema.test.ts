@@ -547,15 +547,13 @@ function columnBlock(table: string, column: string): string {
   return lines.slice(start, end).join('\n');
 }
 
-// The nine columns the task 0.12 audit flagged: at least one declared value has
-// zero rows in the dev corpus. Live columns carry no marker by design — that is
-// what keeps the comment-only equality above meaningful.
+// Columns with a declared value that has zero rows in the dev corpus. Live columns
+// carry no marker, which keeps the comment-only equality above meaningful.
 const AUDITED_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> = [
   ['sessions', 'source_state'],
   ['sessions', 'archive_state'],
   ['sessions', 'projection_state'],
   ['turns', 'kind'],
-  ['events', 'kind'],
   ['events', 'duration_source'],
   ['events', 'input_storage'],
   ['events', 'output_storage'],
@@ -579,10 +577,11 @@ describe('measurement markers landed at the declared lines', () => {
     expect(columnBlock(table, column)).toMatch(/MEASURED 2026-/);
   });
 
-  it('live columns stay untouched — no marker outside the audited nine', () => {
+  it('live columns carry no MEASURED marker', () => {
     for (const [table, column] of [
       ['sessions', 'rollup_state'],
       ['turns', 'duration_source'],
+      ['events', 'kind'],
       ['events', 'status'],
     ] as const) {
       expect(columnBlock(table, column)).not.toMatch(/MEASURED 2026-/);
