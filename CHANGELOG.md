@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/faithfulalabi/agent-lens/compare/v0.9.0...v0.10.0) (2026-10-17)
+
+
+### Features
+
+* **projector:** take tool permission outcome from the stated decision ([#136](https://github.com/faithfulalabi/agent-lens/issues/136)) ([3015714](https://github.com/faithfulalabi/agent-lens/commit/301571417c988517b12075798d5e0c4b7dbc5c15))
+
 ## [0.9.0](https://github.com/faithfulalabi/agent-lens/compare/v0.8.0...v0.9.0) (2026-10-16)
 
 
