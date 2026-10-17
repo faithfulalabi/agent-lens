@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/faithfulalabi/agent-lens/compare/v0.8.0...v0.9.0) (2026-10-16)
+
+
+### Features
+
+* **thread:** draw screenshots in the thread, not only the tree pane ([#134](https://github.com/faithfulalabi/agent-lens/issues/134)) ([b93898a](https://github.com/faithfulalabi/agent-lens/commit/b93898a3ac914de394932e36aea687a6ad378461))
+
 ## [0.8.0](https://github.com/faithfulalabi/agent-lens/compare/v0.7.1...v0.8.0) (2026-10-15)
 
 
