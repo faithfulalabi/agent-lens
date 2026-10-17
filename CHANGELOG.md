@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/faithfulalabi/agent-lens/compare/v0.11.0...v0.12.0) (2026-10-17)
+
+
+### Features
+
+* **thread:** label injected text with the role the harness rendered it in ([#138](https://github.com/faithfulalabi/agent-lens/issues/138)) ([5c352b1](https://github.com/faithfulalabi/agent-lens/commit/5c352b194dbd09b9d882dcd63e1277d08ada3a6b))
+
 ## [0.11.0](https://github.com/faithfulalabi/agent-lens/compare/v0.10.0...v0.11.0) (2026-10-17)
 
 
