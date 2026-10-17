@@ -13,7 +13,8 @@
 //      The flag is ABSENT on 6,096 results, so any `!is_error` reading marks
 //      thousands of successful calls as failures. All 8 measured denials also
 //      carry `is_error: true`, so a ladder that tests the flag first labels 8 of
-//      8 denials wrongly.
+//      8 denials wrongly. The harness's stated decision says `denied` where it
+//      sent one; the denial kind is the fallback, so older harnesses keep theirs.
 //   2. **The spill marker beats the size rule.** All 61 spill claims measure
 //      1,480–6,286 bytes, far under the inline cap, so the size rule alone would
 //      publish `"<persisted-output>\nOutput too large (59.4KB)…"` as if it were
@@ -61,6 +62,8 @@ export interface ToolResult {
   is_error: boolean;
   /** The refusal reason the RESULT LINE carried, when the call was refused. */
   denial: string | undefined;
+  /** The permission decision the RESULT LINE stated, verbatim; undefined when it stated none. */
+  decision: string | undefined;
   /** Set when this result announces a background launch rather than an answer. */
   launch: AsyncAgentLaunch | undefined;
   /** The result line's own timestamp, for the elapsed subtraction. */
@@ -193,9 +196,19 @@ function elapsedMs(call: string, result: string): number {
   return ms < 0 ? 0 : ms;
 }
 
-/** The ladder, in order. `denied` before `error`: all 8 denials are errors too. */
+/** Whether the stated decision denies the call; undefined when this build cannot read one. */
+function statedDenial(decision: string | undefined): boolean | undefined {
+  if (decision === 'reject') return true;
+  if (decision === 'accept') return false;
+  return undefined;
+}
+
+/**
+ * The ladder, in order. The stated decision outranks the inferred denial, and `denied` comes
+ * before `error`: all 8 denials are errors too.
+ */
 function statusOf(result: ToolResult): 'ok' | 'error' | 'denied' {
-  if (result.denial !== undefined) return 'denied';
+  if (statedDenial(result.decision) ?? result.denial !== undefined) return 'denied';
   return result.is_error ? 'error' : 'ok';
 }
 
@@ -298,6 +311,12 @@ export function joinToolCalls(
     event.duration_ms = elapsedMs(event.ts, result.ts);
     event.duration_source = 'elapsed';
     event.status = statusOf(result);
+    if (
+      result.decision !== undefined &&
+      statedDenial(result.decision) !== (result.denial !== undefined)
+    ) {
+      drift.notePermissionDecisionMismatch();
+    }
 
     if (event.name === 'Agent' && result.launch !== undefined) {
       backPatch(event, answers.get(event.id));

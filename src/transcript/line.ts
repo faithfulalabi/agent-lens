@@ -171,6 +171,7 @@ const LINE_TYPES = new Map<string, LineType>([
         'classifierMetaLines',
         'toolEndsTurn',
         'toolDenialKind',
+        'permissionDecision',
         'imagePasteIds',
         // Seen on `user` only.
         'serverClassifierContext',
@@ -402,6 +403,12 @@ export function promptGroupId(line: ParsedLine): string | undefined {
  */
 export function toolDenialKind(line: ParsedLine): string | undefined {
   return str(line.raw.toolDenialKind, undefined);
+}
+
+/** The permission decision a result line stated, verbatim; `''` when unreadable, never silence. */
+export function permissionDecision(line: ParsedLine): string | undefined {
+  if (line.raw.permissionDecision === undefined) return undefined;
+  return str(obj(line.raw.permissionDecision, undefined)?.decision, '');
 }
 
 /** The turn duration a `system`/`turn_duration` line reports, when it reports one. */

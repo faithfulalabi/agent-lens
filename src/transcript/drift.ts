@@ -35,6 +35,7 @@ export class DriftCounter {
   /** A scalar, not a bucket: the spec declares `unjoined_tool_uses` a number. */
   private unjoinedToolUses = 0;
   private sidecarAgentIdMismatches = 0;
+  private permissionDecisionMismatches = 0;
 
   /** Count every top-level key of `line` that `knownFields` does not list. */
   noteLine(line: Readonly<Record<string, unknown>>, knownFields: ReadonlySet<string>): void {
@@ -87,14 +88,21 @@ export class DriftCounter {
     this.sidecarAgentIdMismatches += 1;
   }
 
+  /** One call whose stated permission decision contradicted the inference or was unrecognised. */
+  notePermissionDecisionMismatch(): void {
+    this.permissionDecisionMismatches += 1;
+  }
+
   /** `sessions.drift_json`: sorted keys, and exactly `'{}'` when clean. */
   serialize(): string {
     return JSON.stringify({
       // Omitted at zero, never emitted as `0`: a clean session must serialize to
       // exactly `'{}'`, and `JSON.stringify` drops an undefined-valued key.
-      // `'sidecar' < 'unjoined' < 'unknown'`, so the keys are emitted in the
-      // order they must serialize in. The column is a SORTED string, and the
-      // writer appends `unresolved_spills` after all of these.
+      // `'permission' < 'sidecar' < 'unjoined' < 'unknown'`, so the keys are
+      // emitted in the order they must serialize in. The column is a SORTED
+      // string, and the writer appends `unresolved_spills` after all of these.
+      permission_decision_mismatch:
+        this.permissionDecisionMismatches === 0 ? undefined : this.permissionDecisionMismatches,
       sidecar_agent_id_mismatch:
         this.sidecarAgentIdMismatches === 0 ? undefined : this.sidecarAgentIdMismatches,
       unjoined_tool_uses: this.unjoinedToolUses === 0 ? undefined : this.unjoinedToolUses,
