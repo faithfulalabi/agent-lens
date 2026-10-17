@@ -146,6 +146,9 @@ function passingObservations(overrides: Partial<Observations> = {}): Observation
       attachmentRows: 4,
       attachmentEvents: 4,
       emptyAttachmentRows: 0,
+      roleRows: 2,
+      roleEvents: 2,
+      harnessVersion: '2.1.296',
     },
     liveUpdate: {
       before: 30,
@@ -611,6 +614,7 @@ describe('buildReport', () => {
     expect(names).toContain('thread-tool-inline');
     expect(names).toContain('thread-thinking-markers');
     expect(names).toContain('thread-attachment-text');
+    expect(names).toContain('thread-record-role');
     expect(report.assertions.find((a) => a.name === 'thread-tool-inline')?.actual).toContain(
       'toolu_1',
     );
@@ -634,11 +638,38 @@ describe('buildReport', () => {
     // Zero is a dead drive, not a clean corpus: 63 of 64 archived files carry
     // one of these records and the gate opens the newest session.
     ['no pinned record reached the thread at all', { attachmentRows: 0, attachmentEvents: 0 }],
+    ['a role-carrying record rendered without its role', { roleRows: 1 }],
+    ['a chip disagrees with the wire', { roleRows: 0 }],
+    ['a 2.1.296 session served no role at all', { roleRows: 0, roleEvents: 0 }],
+    [
+      'a later harness served no role at all',
+      { roleRows: 0, roleEvents: 0, harnessVersion: '2.1.300' },
+    ],
   ])('reds when %s', (_label, overrides) => {
     const threadInline = { ...passingObservations().threadInline!, ...overrides };
     const report = reportFor({ threadInline });
     expect(report.ok).toBe(false);
   });
+
+  it.each([
+    ['an older harness', '2.1.284'],
+    ['an unknown harness', null],
+  ])(
+    'passes a session from %s that served no role, printing the zero',
+    (_label, harnessVersion) => {
+      const threadInline = {
+        ...passingObservations().threadInline!,
+        roleRows: 0,
+        roleEvents: 0,
+        harnessVersion,
+      };
+      const role = reportFor({ threadInline }).assertions.find(
+        (a) => a.name === 'thread-record-role',
+      );
+      expect(role?.ok).toBe(true);
+      expect(role?.actual).toContain('0 row(s)');
+    },
+  );
 
   it('FAILS on an absent thread control rather than warning about it', () => {
     /*
@@ -1096,6 +1127,7 @@ describe('the gate source itself', () => {
       text: 'ok',
       output_storage: 'inline',
       wire_input: null,
+      rendered_role: null,
       ...overrides,
     });
     const map = (...events: WireEvent[]): Map<string, WireEvent> =>
@@ -1225,6 +1257,7 @@ describe('the gate source itself', () => {
       text: null,
       output_storage: 'inline',
       wire_input: null,
+      rendered_role: null,
       ...overrides,
     });
 
@@ -1468,6 +1501,7 @@ describe('the wire-input probe decides which row proves the divergence', () => {
     text: 'a b c',
     output_storage: 'inline',
     wire_input: null,
+    rendered_role: null,
     ...overrides,
   });
   const map = (...events: WireEvent[]): Map<string, WireEvent> =>

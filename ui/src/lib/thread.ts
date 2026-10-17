@@ -114,6 +114,8 @@ export interface ThreadUnknownRow extends ThreadRowBase {
   readonly label: string;
   /** Whatever the projector gave the row, or null. */
   readonly text: string | null;
+  /** Whose voice the harness rendered {@link text} in, or null. */
+  readonly role: string | null;
   /** The wire row's own scalars as pretty JSON. */
   readonly record: string;
 }
@@ -180,6 +182,7 @@ function unknownRow(event: EventRow): ThreadUnknownRow {
     event,
     label: text === null ? `unrecognized record (type=${typeOf(event)})` : typeOf(event),
     text,
+    role: event.rendered_role,
     record: JSON.stringify(scalarsOf(event), null, 2),
   };
 }
@@ -204,6 +207,7 @@ function scalarsOf(event: EventRow): Record<string, string | number | null> {
     kind: event.kind,
     raw_type: event.raw_type,
     raw_subtype: event.raw_subtype,
+    rendered_role: event.rendered_role,
   };
 }
 

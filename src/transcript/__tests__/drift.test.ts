@@ -296,6 +296,54 @@ describe('the 2.1.277-2.1.284 shapes are absorbed, and only those', () => {
   });
 });
 
+describe('the 2.1.296 rendering fields are absorbed on their measured type only', () => {
+  it('the 2.1.296 witness classifies clean', () => {
+    const { lines, drift } = classifyFixture('harness-2-1-296.jsonl');
+    expect(lines.map((line) => line.kind)).toEqual(['attachment', 'attachment', 'attachment']);
+    expect(drift.serialize()).toBe('{}');
+  });
+
+  it('renderedRole on a mode line still counts', () => {
+    const shared = ctx();
+    classifyLine({ type: 'mode', mode: 'default', renderedRole: 'system' }, shared);
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
+      renderedRole: 1,
+    });
+  });
+
+  it('renderedBesideToolResult on a user line still counts', () => {
+    const shared = ctx();
+    classifyLine(
+      {
+        type: 'user',
+        uuid: '77777777-7777-4777-8777-777777777777',
+        renderedBesideToolResult: true,
+      },
+      shared,
+    );
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
+      renderedBesideToolResult: 1,
+    });
+  });
+
+  it('an absorbed role does not cover for a new field beside it', () => {
+    const shared = ctx();
+    classifyLine(
+      {
+        type: 'attachment',
+        uuid: '88888888-8888-4888-8888-888888888888',
+        renderedRole: 'user',
+        renderedBesideToolResult: true,
+        zzzBrandNew: true,
+      },
+      shared,
+    );
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
+      zzzBrandNew: 1,
+    });
+  });
+});
+
 describe('the counter is total and cannot be tricked by a transcript', () => {
   it('a literal __proto__ field is counted as data, not applied as a prototype', () => {
     // A transcript controls these key names. `Object.fromEntries` DEFINES rather than

@@ -142,6 +142,10 @@ export interface RawAttachmentLine {
   rendered?: unknown;
   /** The same shape, holding a DIFFERENT rendering of the same payload. Read by nothing. */
   renderedInHumanTurn?: unknown;
+  /** Whose voice `rendered` was injected in, e.g. `"system"` or `"user"`. */
+  renderedRole?: unknown;
+  /** Read by nothing: it names no tool id, so there is no result to place the text beside. */
+  renderedBesideToolResult?: unknown;
 }
 
 /** An element of `rendered` / `renderedInHumanTurn`. The measured keys are exactly this one. */

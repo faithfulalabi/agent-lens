@@ -50,7 +50,7 @@ import {
 } from '../write.js';
 import { estimateCost } from '../../shared/pricing.js';
 import { ensureProjectedFold, foldArchive } from '../freshness.js';
-import { searchEvents } from '../read.js';
+import { readEventPage, searchEvents } from '../read.js';
 import { indexSpills, type SpillIndexEnv } from '../spill-index.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../../project/tools.js';
 
@@ -1696,6 +1696,20 @@ describe('harness boilerplate reaches the row but not the search index', () => {
       )
       .all() as { kind: string }[];
     expect(indexed.map((row) => row.kind)).toEqual(['prompt', 'unknown']);
+  });
+
+  it('serves the rendered role as rendered_role, and null when the line carried none', () => {
+    const db = cache();
+    const { path } = plant('rendered-role', [
+      humanLine('findableprompt please', TS(0)),
+      { ...pinnedRecord(TS(1)), version: '2.1.296', renderedRole: 'user' },
+      pinnedRecord(TS(2)),
+    ]);
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+
+    const { items } = readEventPage(db, id, { from_seq: 0, limit: 10 });
+    expect(items.map((row) => row.rendered_role)).toEqual([null, 'user', null]);
   });
 });
 

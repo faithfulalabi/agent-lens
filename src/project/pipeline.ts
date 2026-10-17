@@ -470,8 +470,9 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     // Gated on the blockless case rather than trusted to it: a block's own text
     // must always win, and a harness that starts sending both would otherwise
     // leak this onto a block row.
-    const lineText =
-      blocks.length === 0 ? (attachmentRecord(line)?.text ?? apiErrorText(line)) : undefined;
+    const record = blocks.length === 0 ? attachmentRecord(line) : undefined;
+    const lineText = blocks.length === 0 ? (record?.text ?? apiErrorText(line)) : undefined;
+    const attrs = record?.role === undefined ? '{}' : JSON.stringify({ renderedRole: record.role });
     let stamped = false;
 
     const emit = (block: Block | undefined, blockIndex: number): void => {
@@ -535,7 +536,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         tokens_cache_write: tokens?.cache_creation_input_tokens,
         raw_type: rawTypeOf(line),
         raw_subtype: rawSubtypeOf(line),
-        attrs: '{}',
+        attrs,
       });
       ownerOfEvent.push(segmentOf[index]!);
     };

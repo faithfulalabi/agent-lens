@@ -270,6 +270,14 @@ export function ActivityRow({
           >
             {row.label}
           </span>
+          {row.role === null ? null : (
+            <span
+              data-slot="thread-record-role"
+              className="rounded-md bg-surface-raised px-1.5 py-0.5 font-mono text-2xs text-muted"
+            >
+              {row.role}
+            </span>
+          )}
           <RowTime ts={row.event.ts} startedAt={startedAt} />
         </div>
         {row.text === null ? null : (

@@ -156,6 +156,12 @@ export interface ThreadProbe {
    * that empty row is the whole defect this probe exists to catch.
    */
   emptyAttachmentRows: number;
+  /** Rows whose role chip reads exactly their wire event's `rendered_role`. */
+  roleRows: number;
+  /** Events in the one detail response that carry a `rendered_role`. */
+  roleEvents: number;
+  /** The driven session's harness, which decides whether zero roles is a dead drive. */
+  harnessVersion: string | null;
 }
 
 /**
@@ -833,7 +839,24 @@ function threadAssertions(probe: ThreadProbe | null): AssertionRecord[] {
         `${probe.emptyAttachmentRows} show only a label`,
       expected: 'one row per pinned record, every one showing text beside its label',
     },
+    {
+      name: 'thread-record-role',
+      ok:
+        probe.roleRows === probe.roleEvents &&
+        (probe.roleEvents > 0 || !rendersRoles(probe.harnessVersion)),
+      actual:
+        `${probe.roleRows} row(s) for ${probe.roleEvents} role-carrying record(s) ` +
+        `on harness ${probe.harnessVersion ?? 'unknown'}`,
+      expected: `every role-carrying record shows its role; at least one from ${ROLE_HARNESS} on`,
+    },
   ];
+}
+
+/** The first harness that sends `renderedRole`. Older sessions honestly carry none. */
+const ROLE_HARNESS = '2.1.296';
+
+function rendersRoles(version: string | null): boolean {
+  return version !== null && version.localeCompare(ROLE_HARNESS, 'en', { numeric: true }) >= 0;
 }
 
 /**

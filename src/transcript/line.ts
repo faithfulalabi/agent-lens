@@ -221,6 +221,8 @@ const LINE_TYPES = new Map<string, LineType>([
         // Seen on `attachment` only.
         'rendered',
         'renderedInHumanTurn',
+        'renderedRole',
+        'renderedBesideToolResult',
       ]),
     },
   ],
