@@ -935,6 +935,7 @@ const STRUCTURAL_DRIFT: ReadonlyArray<{ bucket: string; value: unknown }> = [
   { bucket: 'unknown_block_types', value: { hologram: 1 } },
   { bucket: 'unjoined_tool_uses', value: 1 },
   { bucket: 'sidecar_agent_id_mismatch', value: 1 },
+  { bucket: 'permission_decision_mismatch', value: 1 },
   { bucket: 'unresolved_spills', value: 1 },
 ];
 
@@ -1006,6 +1007,7 @@ describe('has_drift is raised by structural drift and never by an unknown field 
     drift.noteUnknownBlock('hologram');
     drift.noteUnjoinedToolUse();
     drift.noteSidecarMismatch();
+    drift.notePermissionDecisionMismatch();
     // `withUnresolvedSpills` is private to the writer, so its key is added by hand.
     const emitted = Object.keys({
       ...(JSON.parse(drift.serialize()) as object),

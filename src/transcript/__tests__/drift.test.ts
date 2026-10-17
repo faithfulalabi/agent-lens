@@ -96,6 +96,31 @@ describe('unjoined tool calls are a scalar, and silence stays silent', () => {
     ]);
   });
 
+  it('the permission mismatch key is omitted at zero and sorts before every other key', () => {
+    const drift = new DriftCounter();
+    drift.noteUnknownBlock('hologram');
+    expect(drift.serialize()).toBe('{"unknown_block_types":{"hologram":1}}');
+
+    drift.noteLine({ novelField: 1 }, new Set());
+    drift.noteUnknownType('holographic-preview');
+    drift.noteUnjoinedToolUse();
+    drift.noteSidecarMismatch();
+    drift.notePermissionDecisionMismatch();
+    drift.notePermissionDecisionMismatch();
+
+    const keys = Object.keys(JSON.parse(drift.serialize()));
+    expect(keys).toEqual([
+      'permission_decision_mismatch',
+      'sidecar_agent_id_mismatch',
+      'unjoined_tool_uses',
+      'unknown_block_types',
+      'unknown_line_types',
+      'unknown_top_level_fields',
+    ]);
+    expect(keys).toEqual([...keys].sort());
+    expect(JSON.parse(drift.serialize()).permission_decision_mismatch).toBe(2);
+  });
+
   it('counts each unanswered call rather than merely flagging that one existed', () => {
     const drift = new DriftCounter();
     for (let i = 0; i < 3; i++) drift.noteUnjoinedToolUse();
@@ -173,6 +198,33 @@ describe('the 2.1.277-2.1.284 shapes are absorbed, and only those', () => {
     );
     expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
       zzzBrandNew: 1,
+    });
+  });
+
+  it('permissionDecision is silent on user and still counted on assistant', () => {
+    const decision = { decision: 'accept', source: 'config', reasonType: 'classifier' };
+    const onUser = ctx();
+    classifyLine(
+      {
+        type: 'user',
+        uuid: '77777777-7777-4777-8777-777777777777',
+        permissionDecision: decision,
+      },
+      onUser,
+    );
+    expect(onUser.drift.serialize()).toBe('{}');
+
+    const onAssistant = ctx();
+    classifyLine(
+      {
+        type: 'assistant',
+        uuid: '88888888-8888-4888-8888-888888888888',
+        permissionDecision: decision,
+      },
+      onAssistant,
+    );
+    expect(JSON.parse(onAssistant.drift.serialize()).unknown_top_level_fields).toEqual({
+      permissionDecision: 1,
     });
   });
 

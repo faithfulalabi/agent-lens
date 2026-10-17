@@ -19,7 +19,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { contentBlocks } from '../../transcript/blocks.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import { runPipeline } from '../pipeline.js';
+import type { ParsedLine } from '../../transcript/line.js';
+import { runPipeline, type ProjectedEvent } from '../pipeline.js';
 import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
 import {
   callAt,
@@ -114,6 +115,91 @@ describe('the status ladder, four arms and the order that decides two', () => {
     });
   });
 });
+
+describe('a stated permission decision outranks the inferred one, and never gates', () => {
+  it('a stated accept on a clean result projects ok, and on an error result projects error', () => {
+    for (const [id, status] of [
+      ['toolu_accept_ok', 'ok'],
+      ['toolu_accept_noreason', 'ok'],
+      ['toolu_accept_err', 'error'],
+    ] as const) {
+      const { call, mismatches } = projectOnly(id);
+      expect(call.status, id).toBe(status);
+      expect(mismatches, id).toBeUndefined();
+    }
+  });
+
+  it('a stated reject projects denied and outranks the error flag it also carries', () => {
+    const { call, mismatches, line } = projectOnly('toolu_reject');
+
+    expect(call.status).toBe('denied');
+    expect(line.raw.toolDenialKind).toBe('automode-blocked');
+    expect(contentBlocks(line)[0]).toMatchObject({ kind: 'tool_result', is_error: true });
+    expect(mismatches).toBeUndefined();
+  });
+
+  it('a result line with no permissionDecision keeps the inferred status', () => {
+    const joined = project('tool-join.jsonl');
+
+    expect(joined.lines.filter((line) => line.raw.permissionDecision !== undefined)).toEqual([]);
+    expect(callAt(joined, 'toolu_ok').status).toBe('ok');
+    expect(callAt(joined, 'toolu_err').status).toBe('error');
+    expect(callAt(joined, 'toolu_denied').status).toBe('denied');
+
+    const { call, mismatches, line } = projectOnly('toolu_error_without_decision');
+    expect(line.raw.permissionDecision).toBeUndefined();
+    expect(call.status).toBe('error');
+    expect(mismatches).toBeUndefined();
+  });
+
+  it('a synthetic reject with no denial kind projects denied and is reported as a disagreement', () => {
+    const { call, mismatches } = projectOnly('toolu_synthetic_reject_unkinded');
+
+    expect(call.status).toBe('denied');
+    expect(mismatches).toBe(1);
+  });
+
+  it('a synthetic accept beside a denial kind projects the stated error and is reported as a disagreement', () => {
+    const { call, mismatches } = projectOnly('toolu_synthetic_accept_kinded');
+
+    expect(call.status).toBe('error');
+    expect(call.duration_source).toBe('elapsed');
+    expect(mismatches).toBe(1);
+  });
+
+  it('a synthetic unrecognised decision falls back to the inference and is reported', () => {
+    const { call, mismatches } = projectOnly('toolu_synthetic_holographic_decision');
+
+    expect(call.status).toBe('denied');
+    expect(mismatches).toBe(1);
+  });
+
+  it('the whole fixture reports its three synthetic calls and nothing else', () => {
+    expect(project('permission-decision.jsonl').drift).toBe('{"permission_decision_mismatch":3}');
+  });
+});
+
+/** One call of the permission fixture, projected with only its own result line kept. */
+function projectOnly(id: string): {
+  call: ProjectedEvent;
+  mismatches: number | undefined;
+  line: ParsedLine;
+} {
+  const { lines } = classifyProjectFixture('permission-decision.jsonl');
+  const answers = (line: ParsedLine): boolean =>
+    contentBlocks(line).some((block) => block.kind === 'tool_result' && block.tool_call_id === id);
+  const kept = lines.filter(
+    (line) => answers(line) || !contentBlocks(line).some((block) => block.kind === 'tool_result'),
+  );
+  const drift = new DriftCounter();
+  const result = runPipeline(kept, { session_id: SESSION, drift });
+  const report = JSON.parse(drift.serialize()) as { permission_decision_mismatch?: number };
+  return {
+    call: callAt(result, id),
+    mismatches: report.permission_decision_mismatch,
+    line: kept.find(answers)!,
+  };
+}
 
 describe('the duration is labelled `elapsed`, and clamps rather than lies', () => {
   it.each(['tool-join.jsonl', 'async-agent.jsonl', 'large-output.jsonl'])(

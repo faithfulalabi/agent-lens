@@ -33,6 +33,8 @@ export interface RawUserLine {
   slug?: unknown;
   entrypoint?: unknown;
   permissionMode?: unknown;
+  /** `{ decision, source, reasonType }` on a tool result line; absent on older harness builds. */
+  permissionDecision?: unknown;
   serverClassifierContext?: unknown;
   /** `"human"` / `"sdk"`, stated outright. A corroborator for `origin.kind`, not an authority. */
   turnOrigin?: unknown;
