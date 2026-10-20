@@ -76,6 +76,27 @@ one reasoned exception to it. The generated plist and wrapper bytes are pinned b
 constants rather than snapshots, which is the no-update-script ruling below applied: `vitest -u`
 must not be able to rewrite them.
 
+## Measuring a harness's shape
+
+Two commands answer "what does this harness send that agent-lens has never seen?"
+
+- **`shapes:census`** inventories a transcript corpus: line counts and top-level keys per line
+  type, `system` subtypes, content-block types by position, and harness versions. It is a single
+  file, `scripts/shapes-census.mjs`, that runs under bare `node` (18 or newer) with no clone and no
+  install, so it can be copied to any machine. Its output names types, fields and counts only —
+  never a path or any message text — so it is safe to paste.
+- **`shapes:diff`** replays a census through the production classifier and pipeline and prints
+  every name production would count as drift, in the same bucket names `/api/drift` reports. With
+  no argument it censuses your local corpus first.
+
+```sh
+npm run -s shapes:census > census.json     # or: node shapes-census.mjs [root] > census.json
+npm run shapes:diff -- census.json
+```
+
+The default root is `AGENT_LENS_TRANSCRIPT_ROOT`, then `~/.claude/projects`. Use `-s` with the
+census: npm's banner would otherwise land in the file (the diff tolerates it anyway).
+
 ## Two things that will surprise you on a fresh clone
 
 **The UI parity tests pass on a clean clone, and they need no secret.** They pin tokens and
