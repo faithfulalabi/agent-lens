@@ -32,6 +32,7 @@ const ALL_KINDS: Record<ParsedKind, true> = {
   'atis-latch': true,
   'cost-state': true,
   'fork-context-ref': true,
+  'bridge-session': true,
   unknown: true,
 };
 

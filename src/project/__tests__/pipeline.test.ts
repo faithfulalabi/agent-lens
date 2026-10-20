@@ -489,6 +489,12 @@ describe('drift is one column, carrying three buckets', () => {
     expect(parsed.unknown_top_level_fields).toEqual({ novelField: 1 });
   });
 
+  it('counts an unknown block nested in a result, but not a known one or one on a uuid-less line', () => {
+    expect(project('nested-unknown-block.jsonl').drift).toBe(
+      '{"unknown_block_types":{"hologram":1}}',
+    );
+  });
+
   it('drops the empty bucket, so a clean counter still serializes to `{}`', () => {
     expect(project('one-line-session.jsonl').drift).toBe('{}');
   });

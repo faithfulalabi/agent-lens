@@ -84,11 +84,12 @@ export type ParsedLine =
   | Classified<'pr-link'>
   | Classified<'started'>
   | Classified<'result'>
-  // Uuid-less, so these three project no event. The kind name is the harness `type` VERBATIM,
+  // Uuid-less, so these four project no event. The kind name is the harness `type` VERBATIM,
   // which is what keeps `rawTypeOf` total without a second table.
   | Classified<'atis-latch'>
   | Classified<'cost-state'>
   | Classified<'fork-context-ref'>
+  | Classified<'bridge-session'>
   | UnknownLine;
 
 /**
@@ -150,6 +151,9 @@ const LINE_TYPES = new Map<string, LineType>([
         'wireIngestContext',
         'apiErrorStatus',
         'quotaLimits',
+        'requestedModel',
+        'thinkingDisplay',
+        'thinkingDurationMs',
       ]),
     },
   ],
@@ -179,6 +183,8 @@ const LINE_TYPES = new Map<string, LineType>([
         'queueSkipAttachments',
         'turnPosition',
         'turnCompanion',
+        'interruptedMessageId',
+        'classifierBoundary',
       ]),
     },
   ],
@@ -267,7 +273,16 @@ const LINE_TYPES = new Map<string, LineType>([
     'queue-operation',
     {
       kind: 'queue-operation',
-      knownFields: fields(['type', 'operation', 'content', 'timestamp', 'sessionId', 'reason']),
+      knownFields: fields([
+        'type',
+        'operation',
+        'content',
+        'timestamp',
+        'sessionId',
+        'reason',
+        'commandUuid',
+        'deliveryId',
+      ]),
     },
   ],
   [
@@ -280,7 +295,7 @@ const LINE_TYPES = new Map<string, LineType>([
   // Sidecar-only — a workflow span pair, from `subagents/workflows/wf_*/journal.jsonl`.
   ['started', { kind: 'started', knownFields: fields(['type', 'key', 'agentId']) }],
   ['result', { kind: 'result', knownFields: fields(['type', 'key', 'agentId', 'result']) }],
-  // These three are uuid-less, so none unions `ENVELOPE` and none projects an event.
+  // These four are uuid-less, so none unions `ENVELOPE` and none projects an event.
   ['atis-latch', { kind: 'atis-latch', knownFields: fields(['type', 'atis', 'sessionId']) }],
   // NOT a pricing source: pricing comes from `message.usage` x `shared/pricing.ts`.
   [
@@ -315,6 +330,13 @@ const LINE_TYPES = new Map<string, LineType>([
         'parentLastUuid',
         'contextLength',
       ]),
+    },
+  ],
+  [
+    'bridge-session',
+    {
+      kind: 'bridge-session',
+      knownFields: fields(['type', 'bridgeSessionId', 'lastSequenceNum', 'sessionId']),
     },
   ],
 ]);

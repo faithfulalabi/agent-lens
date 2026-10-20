@@ -183,6 +183,7 @@ describe('raw-types.ts is documentation that compiles', () => {
       'RawAtisLatchLine',
       'RawCostStateLine',
       'RawForkContextRefLine',
+      'RawBridgeSessionLine',
       'RawMessage',
       'RawUsage',
       'RawOrigin',

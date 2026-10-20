@@ -262,6 +262,11 @@ describe('shapes diff', () => {
       { blocks: { 'in_tool_result/tool_reference': 5 } },
       [],
     ],
+    [
+      'an invented block type nested in a result',
+      { blocks: { 'in_tool_result/inventedBlock': 3 } },
+      [{ bucket: 'unknown_block_types', name: 'inventedBlock', owner: '-', count: 3 }],
+    ],
   ])('reports %s', (_, input, expected) => {
     expect(diffCensus(input)).toEqual(expected);
   });
@@ -306,6 +311,7 @@ describe('shapes diff', () => {
     }
 
     expect(Object.keys(projected).sort()).toEqual([...SHAPE_BUCKETS].sort());
+    expect(projected.unknown_block_types?.inventedNested).toBe(1);
     expect(replayed).toEqual(projected);
   });
 

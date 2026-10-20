@@ -41,6 +41,8 @@ export interface RawUserLine {
   queueSkipAttachments?: unknown;
   turnPosition?: unknown;
   turnCompanion?: unknown;
+  interruptedMessageId?: unknown;
+  classifierBoundary?: unknown;
 }
 
 /** `type: 'assistant'` — one model response, carrying usage and content blocks. */
@@ -74,6 +76,10 @@ export interface RawAssistantLine {
   /** On a quota or outage refusal, beside `isApiErrorMessage`. */
   apiErrorStatus?: unknown;
   quotaLimits?: unknown;
+  /** Corroborates `message.model`; a disagreement would make it a pricing input. */
+  requestedModel?: unknown;
+  thinkingDisplay?: unknown;
+  thinkingDurationMs?: unknown;
 }
 
 /** `type: 'system'` — hooks, turn timings, compaction bookkeeping, notices. */
@@ -224,6 +230,14 @@ export interface RawForkContextRefLine {
   parentSessionId?: unknown;
   parentLastUuid?: unknown;
   contextLength?: unknown;
+}
+
+/** `type: 'bridge-session'` — harness bookkeeping. No uuid to hang an event on. */
+export interface RawBridgeSessionLine {
+  type?: unknown;
+  bridgeSessionId?: unknown;
+  lastSequenceNum?: unknown;
+  sessionId?: unknown;
 }
 
 /** `message` on a user or assistant line. `content` is a string OR a block array. */

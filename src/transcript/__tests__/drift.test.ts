@@ -344,6 +344,66 @@ describe('the 2.1.296 rendering fields are absorbed on their measured type only'
   });
 });
 
+describe('the 2.1.212-2.1.296 union fields are absorbed on their measured type only', () => {
+  const ASSISTANT_FIELDS = {
+    requestedModel: 'claude-opus-5-5',
+    thinkingDisplay: 'summarized',
+    thinkingDurationMs: 1599,
+  };
+  const USER_FIELDS = { interruptedMessageId: 'msg_union_1', classifierBoundary: null };
+  const QUEUE_FIELDS = { commandUuid: 'c1', deliveryId: 'd1' };
+
+  it('the union witness classifies clean', () => {
+    const { lines, drift } = classifyFixture('harness-2-1-union.jsonl');
+    expect(lines.map((line) => line.kind)).toEqual([
+      'assistant',
+      'user',
+      'user',
+      'queue-operation',
+    ]);
+    expect(drift.serialize()).toBe('{}');
+  });
+
+  it.each([
+    ['the assistant fields', 'a user line', { type: 'user', uuid: 'u1' }, ASSISTANT_FIELDS],
+    ['the user fields', 'an assistant line', { type: 'assistant', uuid: 'a1' }, USER_FIELDS],
+    ['the queue fields', 'a mode line', { type: 'mode', mode: 'default' }, QUEUE_FIELDS],
+  ])('%s still count on %s', (_fields, _line, base, absorbed) => {
+    const shared = ctx();
+    classifyLine({ ...base, ...absorbed }, shared);
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual(
+      Object.fromEntries(Object.keys(absorbed).map((name) => [name, 1])),
+    );
+  });
+
+  it('a never-seen field beside the assistant fields still drifts', () => {
+    const shared = ctx();
+    classifyLine({ type: 'assistant', uuid: 'a1', ...ASSISTANT_FIELDS, zzzBrandNew: true }, shared);
+    expect(JSON.parse(shared.drift.serialize()).unknown_top_level_fields).toEqual({
+      zzzBrandNew: 1,
+    });
+  });
+
+  it('a bridge-session line classifies, and its key list is closed', () => {
+    const shared = ctx();
+    const line = classifyLine(
+      {
+        type: 'bridge-session',
+        bridgeSessionId: 'bridge_0001',
+        lastSequenceNum: 1,
+        sessionId: 's',
+        zzzBrandNew: true,
+      },
+      shared,
+    );
+    expect(line.kind).toBe('bridge-session');
+    expect(line.uuid).toBeUndefined();
+    expect(JSON.parse(shared.drift.serialize())).toEqual({
+      unknown_top_level_fields: { zzzBrandNew: 1 },
+    });
+  });
+});
+
 describe('the counter is total and cannot be tricked by a transcript', () => {
   it('a literal __proto__ field is counted as data, not applied as a prototype', () => {
     // A transcript controls these key names. `Object.fromEntries` DEFINES rather than
