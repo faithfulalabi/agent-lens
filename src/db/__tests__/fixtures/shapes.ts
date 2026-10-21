@@ -96,6 +96,8 @@ export const EVENT_ROW_KEYS = [
   'raw_subtype',
   'image_count',
   'rendered_role',
+  'permission_source',
+  'permission_reason_type',
 ].sort();
 
 /** `spec/data-model-v2.md:349-354`. */

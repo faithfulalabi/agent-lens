@@ -197,6 +197,17 @@ export function wireDivergenceOf(event: EventRow): WireDivergence | null {
   return { body, note: event.wire_input_storage === 'line_ref' ? HEAD_PREVIEW : null };
 }
 
+/** Who decided a tool call's permission, and why. Either may be null; never both. */
+export interface PermissionGrounds {
+  readonly source: string | null;
+  readonly reason: string | null;
+}
+
+export function permissionOf(event: EventRow): PermissionGrounds | null {
+  const { permission_source: source, permission_reason_type: reason } = event;
+  return source === null && reason === null ? null : { source, reason };
+}
+
 /** One image fetch, settled: a drawable object URL, or the HTTP status that refused it. */
 export type ImageOutcome = { readonly url: string } | { readonly status: number | null };
 

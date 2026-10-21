@@ -181,6 +181,9 @@ export interface EventRow {
   image_count: number;
   /** The role the harness rendered `text` in, verbatim. Null on every older harness. */
   rendered_role: string | null;
+  /** Who decided a tool call's permission, and why, verbatim. Null when the call stated neither. */
+  permission_source: string | null;
+  permission_reason_type: string | null;
 }
 
 /**
