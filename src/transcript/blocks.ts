@@ -11,10 +11,10 @@
 //     turns the string into one `text` block once, at the top, so no call site
 //     downstream has to remember the case. A projector that assumes an array
 //     drops all 549 and re-ships plan 001's empty-session defect.
-//   - **Every `thinking` block in the corpus is empty and signed — 6,698 of
-//     6,698, no exceptions.** A naive projector renders 6,698 blank rows.
-//     One `thinking_elided` marker per block instead: never a blank row, and
-//     never zero, because dropping them hides that the model reasoned at all.
+//   - **A `thinking` block can arrive empty and signed**, and a naive projector
+//     renders each empty one as a blank row. One `thinking_elided` marker per
+//     empty block instead: never a blank row, and never zero, because dropping
+//     them hides that the model reasoned at all.
 //   - **Images are the largest payloads in the corpus** (65.0 KB to 477.1 KB
 //     decoded, 40 blocks). The base64 is read for its `.length` and dropped at
 //     this boundary; it is never bound to anything that outlives the call.
@@ -55,7 +55,7 @@ export interface RawToolReferenceBlock {
 /** Where a block was found. Position decides which kinds can exist at all. */
 export type BlockPosition = 'top' | 'in_tool_result';
 
-/** What an empty `thinking` block renders as. 100% of the corpus, today. */
+/** What an empty `thinking` block renders as. */
 export const THINKING_ELIDED_MARKER = 'reasoning not recorded (signature only)';
 
 interface TextBlock {

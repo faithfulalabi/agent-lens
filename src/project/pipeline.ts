@@ -552,7 +552,13 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
       // A result block is the OUTPUT HALF of its call's row, not a row of its
       // own — `joinToolCalls` below folds it onto that row. This is what keeps
       // blocks-in minus results equal to rows-out.
-      if (block.kind !== 'tool_result') emit(block, blockIndex);
+      if (block.kind !== 'tool_result') {
+        emit(block, blockIndex);
+        continue;
+      }
+      for (const child of block.children) {
+        if (child.kind === 'unknown_block') ctx.drift.noteUnknownBlock(child.raw_type);
+      }
     }
   }
 

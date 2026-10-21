@@ -27,10 +27,11 @@ const TOP_LEVEL_TYPES: ReadonlyArray<readonly [string, number]> = [
   ['file-history-delta', 125],
   ['started', 12],
   ['result', 12],
-  // `0` because these three arrived after the archive the column reports on was frozen.
+  // `0` because these four arrived after the archive the column reports on was frozen.
   ['atis-latch', 0],
   ['cost-state', 0],
   ['fork-context-ref', 0],
+  ['bridge-session', 0],
 ];
 
 /** The declared `system` subtypes. */
@@ -47,9 +48,9 @@ const SYSTEM_SUBTYPES = [
 describe('every measured top-level type classifies to its own kind', () => {
   const { lines } = classifyFixture('all-types.jsonl');
 
-  it('covers all 17 measured types, one fixture line each', () => {
-    expect(TOP_LEVEL_TYPES).toHaveLength(17);
-    expect(lines).toHaveLength(17);
+  it('covers all 18 measured types, one fixture line each', () => {
+    expect(TOP_LEVEL_TYPES).toHaveLength(18);
+    expect(lines).toHaveLength(18);
     // A set: neither the fixture's order nor the list's is a property worth pinning.
     expect(new Set(lines.map((line) => line.kind))).toEqual(
       new Set(TOP_LEVEL_TYPES.map(([name]) => name)),
@@ -81,6 +82,7 @@ describe('every measured top-level type classifies to its own kind', () => {
         case 'atis-latch':
         case 'cost-state':
         case 'fork-context-ref':
+        case 'bridge-session':
           return line.kind;
         case 'system':
           return `system.${line.subtype}`;
@@ -245,7 +247,7 @@ describe('byte offsets are archive-relative and multibyte-safe', () => {
   });
 });
 
-describe('the 13 uuid-less types project to nothing, bar two exceptions', () => {
+describe('the 14 uuid-less types project to nothing, bar two exceptions', () => {
   const UUID_LESS: readonly ParsedKind[] = [
     'mode',
     'permission-mode',
@@ -257,21 +259,22 @@ describe('the 13 uuid-less types project to nothing, bar two exceptions', () => 
     'pr-link',
     'started',
     'result',
-    // None of these three carries a uuid, which is why absorbing them changes `drift_json`
+    // None of these four carries a uuid, which is why absorbing them changes `drift_json`
     // and no projected row.
     'atis-latch',
     'cost-state',
     'fork-context-ref',
+    'bridge-session',
   ];
 
-  it('is exactly 13 types, and none of them carries a uuid', () => {
-    expect(UUID_LESS).toHaveLength(13);
+  it('is exactly 14 types, and none of them carries a uuid', () => {
+    expect(UUID_LESS).toHaveLength(14);
     const { lines } = classifyFixture('all-types.jsonl');
     const uuidLess = lines.filter((line) => line.uuid === undefined).map((line) => line.kind);
     expect(new Set(uuidLess)).toEqual(new Set(UUID_LESS));
   });
 
-  it('projects nothing at all from the eleven that are not exceptions', () => {
+  it('projects nothing at all from the twelve that are not exceptions', () => {
     const { lines } = classifyFixture('all-types.jsonl');
     const projection = foldControlLines(
       lines.filter((line) => line.kind !== 'ai-title' && line.kind !== 'last-prompt'),
