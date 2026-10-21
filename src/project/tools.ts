@@ -31,6 +31,7 @@
 // dialog. A labelled approximation beats a precise-looking lie (RFC §4).
 
 import type { DriftCounter } from '../transcript/drift.js';
+import type { PermissionGrounds } from '../transcript/line.js';
 import {
   type AsyncAgentLaunch,
   claimsPersistedOutput,
@@ -64,6 +65,7 @@ export interface ToolResult {
   denial: string | undefined;
   /** The permission decision the RESULT LINE stated, verbatim; undefined when it stated none. */
   decision: string | undefined;
+  grounds: PermissionGrounds;
   /** Set when this result announces a background launch rather than an answer. */
   launch: AsyncAgentLaunch | undefined;
   /** The result line's own timestamp, for the elapsed subtraction. */
@@ -316,6 +318,14 @@ export function joinToolCalls(
       statedDenial(result.decision) !== (result.denial !== undefined)
     ) {
       drift.notePermissionDecisionMismatch();
+    }
+    const { source, reasonType } = result.grounds;
+    if (source !== undefined || reasonType !== undefined) {
+      event.attrs = JSON.stringify({
+        ...(JSON.parse(event.attrs) as object),
+        permissionSource: source,
+        permissionReasonType: reasonType,
+      });
     }
 
     if (event.name === 'Agent' && result.launch !== undefined) {

@@ -19,9 +19,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { contentBlocks } from '../../transcript/blocks.js';
 import { DriftCounter } from '../../transcript/drift.js';
-import type { ParsedLine } from '../../transcript/line.js';
+import { classifyLine, type ParsedLine } from '../../transcript/line.js';
 import { runPipeline, type ProjectedEvent } from '../pipeline.js';
-import { INLINE_MAX, PREVIEW_MAX } from '../tools.js';
+import { INLINE_MAX, joinToolCalls, PREVIEW_MAX, type ToolResult } from '../tools.js';
 import {
   callAt,
   census,
@@ -179,26 +179,96 @@ describe('a stated permission decision outranks the inferred one, and never gate
   });
 });
 
+describe('the call row carries who decided its permission and why, read off its result line', () => {
+  const OBSERVED = [
+    ['toolu_accept_ok', '{"permissionSource":"config","permissionReasonType":"classifier"}'],
+    ['toolu_accept_err', '{"permissionSource":"config","permissionReasonType":"mode"}'],
+    ['toolu_accept_noreason', '{"permissionSource":"user_temporary"}'],
+    ['toolu_reject', '{"permissionSource":"config","permissionReasonType":"classifier"}'],
+  ] as const;
+
+  it.each(OBSERVED)('%s stores its source and reason in attrs', (id, attrs) => {
+    expect(projectOnly(id).call.attrs).toBe(attrs);
+  });
+
+  it('a call whose result line stated no decision keeps attrs empty', () => {
+    expect(projectOnly('toolu_error_without_decision').call.attrs).toBe('{}');
+    for (const event of project('tool-join.jsonl').events) expect(event.attrs).toBe('{}');
+  });
+
+  it.each(OBSERVED)('a stated decision on %s changes only attrs', (id) => {
+    const stated = projectOnly(id);
+    const plain = projectOnly(id, { withoutDecision: true });
+
+    expect(plain.call.attrs).toBe('{}');
+    expect(
+      JSON.stringify(
+        stated.events.map((event) => (event.id === id ? { ...event, attrs: '{}' } : event)),
+      ),
+    ).toBe(JSON.stringify(plain.events));
+  });
+
+  it('merges into attrs the call row already carries rather than replacing them', () => {
+    const { call } = projectOnly('toolu_accept_noreason', { withoutDecision: true });
+    const event = { ...call, attrs: '{"renderedRole":"assistant"}' };
+    const result: ToolResult = {
+      text: '',
+      is_error: false,
+      denial: undefined,
+      decision: 'accept',
+      grounds: { source: 'user_temporary', reasonType: undefined },
+      launch: undefined,
+      ts: call.ts,
+      result_offset: 0,
+      result_len: 0,
+      result_block: 0,
+      image_count: 0,
+    };
+
+    joinToolCalls([event], new Map([[call.id, result]]), [], new DriftCounter());
+
+    expect(event.attrs).toBe('{"renderedRole":"assistant","permissionSource":"user_temporary"}');
+  });
+});
+
 /** One call of the permission fixture, projected with only its own result line kept. */
-function projectOnly(id: string): {
+function projectOnly(
+  id: string,
+  { withoutDecision = false } = {},
+): {
   call: ProjectedEvent;
+  events: readonly ProjectedEvent[];
   mismatches: number | undefined;
   line: ParsedLine;
 } {
   const { lines } = classifyProjectFixture('permission-decision.jsonl');
   const answers = (line: ParsedLine): boolean =>
     contentBlocks(line).some((block) => block.kind === 'tool_result' && block.tool_call_id === id);
-  const kept = lines.filter(
-    (line) => answers(line) || !contentBlocks(line).some((block) => block.kind === 'tool_result'),
-  );
+  const kept = lines
+    .filter(
+      (line) => answers(line) || !contentBlocks(line).some((block) => block.kind === 'tool_result'),
+    )
+    .map((line) => (withoutDecision && answers(line) ? undecided(line) : line));
   const drift = new DriftCounter();
   const result = runPipeline(kept, { session_id: SESSION, drift });
   const report = JSON.parse(drift.serialize()) as { permission_decision_mismatch?: number };
   return {
     call: callAt(result, id),
+    events: result.events,
     mismatches: report.permission_decision_mismatch,
     line: kept.find(answers)!,
   };
+}
+
+/** The same line at the same bytes, as a harness that never sent `permissionDecision` writes it. */
+function undecided(line: ParsedLine): ParsedLine {
+  const raw: Record<string, unknown> = { ...line.raw };
+  delete raw.permissionDecision;
+  return classifyLine(raw, {
+    byteOffset: line.byte_offset,
+    byteLength: line.byte_length,
+    drift: new DriftCounter(),
+  });
 }
 
 describe('the duration is labelled `elapsed`, and clamps rather than lies', () => {

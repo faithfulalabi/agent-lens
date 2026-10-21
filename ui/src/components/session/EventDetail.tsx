@@ -3,6 +3,7 @@ import {
   contentStateOf,
   type ContentState,
   type FetchedImages,
+  permissionOf,
   unrecognisedFieldsOf,
   wireDivergenceOf,
   type WireDivergence,
@@ -76,6 +77,7 @@ export function EventDetail({
       ) : (
         <>
           <EventHeading event={event} />
+          <PermissionSection event={event} />
           <ContentSection
             event={event}
             field="input"
@@ -106,6 +108,32 @@ function EventHeading({ event }: { event: EventRow }) {
       <p className="truncate font-mono text-sm">{event.name ?? event.kind}</p>
       <p className="truncate font-mono text-2xs text-faint">{event.ts}</p>
     </header>
+  );
+}
+
+function PermissionSection({ event }: { event: EventRow }) {
+  const permission = permissionOf(event);
+  if (permission === null) return null;
+
+  return (
+    <section data-slot="detail-permission" className="pt-3">
+      <h2 className="text-2xs tracking-widest text-muted">PERMISSION</h2>
+      <dl className="pt-1 font-mono text-2xs">
+        <Ground label="source" value={permission.source} />
+        <Ground label="reason" value={permission.reason} />
+      </dl>
+    </section>
+  );
+}
+
+function Ground({ label, value }: { label: string; value: string | null }) {
+  if (value === null) return null;
+
+  return (
+    <div className="flex gap-2">
+      <dt className="text-faint">{label}</dt>
+      <dd className="break-words text-foreground">{value}</dd>
+    </div>
   );
 }
 

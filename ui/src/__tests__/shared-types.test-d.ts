@@ -45,6 +45,10 @@ type _AssertImageCount = EventRow['image_count'] extends number ? true : never;
 
 // Read off `attrs` by `json_extract`, which answers NULL for every row that carried no role.
 type _AssertRenderedRole = EventRow['rendered_role'] extends string | null ? true : never;
+type _AssertPermissionSource = EventRow['permission_source'] extends string | null ? true : never;
+type _AssertPermissionReason = EventRow['permission_reason_type'] extends string | null
+  ? true
+  : never;
 
 // The five keys the DETAIL header adds for a sidecar. All optional, because
 // `toDetailHeader` assigns each one only when the column is non-null.
@@ -76,5 +80,7 @@ export type SharedTypesResolve = [
   _AssertWireInput,
   _AssertImageCount,
   _AssertRenderedRole,
+  _AssertPermissionSource,
+  _AssertPermissionReason,
   _AssertSidecarHeader,
 ];

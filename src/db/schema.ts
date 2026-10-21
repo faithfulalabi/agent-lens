@@ -288,6 +288,7 @@ CREATE TABLE events (
   attrs              TEXT NOT NULL DEFAULT '{}'  -- ALLOWLIST ONLY: attributionSkill,
                                             -- attributionAgent, effort, permissionMode,
                                             -- compactMetadata, toolDenialKind, renderedRole,
+                                            -- permissionSource, permissionReasonType,
                                             -- unknown_fields[]
 );
 CREATE UNIQUE INDEX idx_events_session_seq ON events(session_id, seq);
