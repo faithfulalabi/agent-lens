@@ -9,7 +9,7 @@
 
 import type { DriftRow } from '../db/read.js';
 
-/** `drift_json` as `transcript/drift.ts:99` serializes it — a superset of `DriftCounts`. */
+/** `drift_json` as `DriftCounter.serialize` writes it — a superset of `DriftCounts`. */
 export interface RawDrift {
   unknown_line_types?: Record<string, number>;
   unknown_block_types?: Record<string, number>;
@@ -18,6 +18,7 @@ export interface RawDrift {
   unresolved_spills?: number;
   sidecar_agent_id_mismatch?: number;
   permission_decision_mismatch?: number;
+  requested_model_mismatch?: number;
 }
 
 export interface DriftSession {
@@ -38,7 +39,7 @@ export interface DriftReport {
   sessions_with_drift: DriftSession[];
 }
 
-/** A clean session serializes to exactly this (`transcript/drift.ts:90`). */
+/** A clean session serializes to exactly this (`DriftCounter.serialize`). */
 const NO_DRIFT = '{}';
 
 /** Exported for `doctor`'s per-version census, which merges the same buckets. */

@@ -940,12 +940,13 @@ const STRUCTURAL_DRIFT: ReadonlyArray<{ bucket: string; value: unknown }> = [
 ];
 
 const FIELD_ONLY = JSON.stringify({ unknown_top_level_fields: { novelField: 2 } });
+const MODEL_ONLY = JSON.stringify({ requested_model_mismatch: 1 });
 
 function listedDrift(id: string): boolean | undefined {
   return readSessionList(db, PAGE).items.find((row) => row.id === id)?.has_drift;
 }
 
-describe('has_drift is raised by structural drift and never by an unknown field alone', () => {
+describe('has_drift is raised by structural drift and never by a silent bucket alone', () => {
   it.each(STRUCTURAL_DRIFT)('$bucket alone raises has_drift', ({ bucket, value }) => {
     const id = seedSessionRow(db, {
       id: 'one-bucket',
@@ -958,6 +959,13 @@ describe('has_drift is raised by structural drift and never by an unknown field 
 
   it('unknown_top_level_fields alone leaves has_drift false on the list and the header', () => {
     const id = seedSessionRow(db, { id: 'field-only', drift_json: FIELD_ONLY });
+
+    expect(listedDrift(id)).toBe(false);
+    expect(readSessionHeader(db, id)?.has_drift).toBe(false);
+  });
+
+  it('requested_model_mismatch alone leaves has_drift false on the list and the header', () => {
+    const id = seedSessionRow(db, { id: 'model-only', drift_json: MODEL_ONLY });
 
     expect(listedDrift(id)).toBe(false);
     expect(readSessionHeader(db, id)?.has_drift).toBe(false);
@@ -1000,7 +1008,7 @@ describe('has_drift is raised by structural drift and never by an unknown field 
     expect(listedDrift(id)).toBe(true);
   });
 
-  it('every bucket the writers emit is tiered, and only the top-level fields are silent', () => {
+  it('every bucket the writers emit is tiered, and only the top-level fields and the model disagreement are silent', () => {
     const drift = new DriftCounter();
     drift.noteLine({ novelField: 1 }, new Set());
     drift.noteUnknownType('holographic-preview');
@@ -1008,13 +1016,15 @@ describe('has_drift is raised by structural drift and never by an unknown field 
     drift.noteUnjoinedToolUse();
     drift.noteSidecarMismatch();
     drift.notePermissionDecisionMismatch();
+    drift.noteRequestedModelMismatch();
     // `withUnresolvedSpills` is private to the writer, so its key is added by hand.
     const emitted = Object.keys({
       ...(JSON.parse(drift.serialize()) as object),
       unresolved_spills: 1,
     });
 
-    expect(emitted.filter((bucket) => FIELD_TIER_BUCKETS.has(bucket))).toEqual([
+    expect(emitted.filter((bucket) => FIELD_TIER_BUCKETS.has(bucket)).sort()).toEqual([
+      'requested_model_mismatch',
       'unknown_top_level_fields',
     ]);
     expect(emitted.filter((bucket) => !FIELD_TIER_BUCKETS.has(bucket)).sort()).toEqual(
@@ -1027,6 +1037,7 @@ describe('has_drift is raised by structural drift and never by an unknown field 
       seedSessionRow(db, { id: `only-${bucket}`, drift_json: JSON.stringify({ [bucket]: value }) });
     }
     seedSessionRow(db, { id: 'field-only', drift_json: FIELD_ONLY });
+    seedSessionRow(db, { id: 'model-only', drift_json: MODEL_ONLY });
     seedSessionRow(db, {
       id: 'untiered',
       drift_json: JSON.stringify({ unknown_hologram_layers: 1 }),
@@ -1034,7 +1045,7 @@ describe('has_drift is raised by structural drift and never by an unknown field 
 
     const drifting = aggregateDrift(readDriftRows(db)).sessions_with_drift;
 
-    expect(drifting).toHaveLength(STRUCTURAL_DRIFT.length + 2);
+    expect(drifting).toHaveLength(STRUCTURAL_DRIFT.length + 3);
     for (const session of drifting) {
       expect(listedDrift(session.id), session.id).toBe(hasStructuralDrift(session.counts));
     }
