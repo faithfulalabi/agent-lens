@@ -350,6 +350,17 @@ function rawTypeKey(value: unknown): string {
   return value === null ? '<null>' : `<${typeof value}>`;
 }
 
+/** A line naming no served model, or only `<synthetic>`, has nothing to disagree with. */
+function servedOtherThanRequested(raw: Readonly<Record<string, unknown>>): boolean {
+  const served = str(obj(raw.message, undefined)?.model, undefined);
+  return (
+    raw.requestedModel !== undefined &&
+    served !== undefined &&
+    served !== SYNTHETIC_MODEL &&
+    raw.requestedModel !== served
+  );
+}
+
 /** Classify one parsed JSONL line, counting whatever it carried that we cannot name. */
 export function classifyLine(json: unknown, ctx: LineContext): ParsedLine {
   const raw = obj(json, EMPTY_RECORD);
@@ -371,6 +382,9 @@ export function classifyLine(json: unknown, ctx: LineContext): ParsedLine {
   }
 
   ctx.drift.noteLine(raw, entry.knownFields);
+  if (entry.kind === 'assistant' && servedOtherThanRequested(raw)) {
+    ctx.drift.noteRequestedModelMismatch();
+  }
 
   if (entry.kind === 'system') {
     const subtype = str(raw.subtype, '');
