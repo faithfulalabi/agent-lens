@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/faithfulalabi/agent-lens/compare/v0.13.0...v0.14.0) (2026-10-27)
+
+
+### Features
+
+* **drift:** count a requested model the harness did not serve ([#145](https://github.com/faithfulalabi/agent-lens/issues/145)) ([600cf77](https://github.com/faithfulalabi/agent-lens/commit/600cf777f04d989003df05d4942d5cb6f9520a30))
+
 ## [0.13.0](https://github.com/faithfulalabi/agent-lens/compare/v0.12.0...v0.13.0) (2026-10-21)
 
 
