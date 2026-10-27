@@ -303,11 +303,17 @@ const SESSION_LIST_COLUMNS = `id, title, preview, project_path, git_branch, mode
 /** Keeps sidecars — 65% of the corpus by bytes — out of every list scan. */
 const TOP_LEVEL_ONLY = 'parent_session_id IS NULL';
 
-/** A clean session serializes to exactly this (`transcript/drift.ts:90`). */
+/** A clean session serializes to exactly this (`DriftCounter.serialize`). */
 const NO_DRIFT = '{}';
 
-/** Drift buckets that change no event, turn or rollup, so they never raise the banner. */
-export const FIELD_TIER_BUCKETS: ReadonlySet<string> = new Set(['unknown_top_level_fields']);
+/**
+ * Drift buckets that change no event, turn or rollup, so they never raise the banner. That
+ * includes a disagreement between corroborating fields, since only `message.model` is projected.
+ */
+export const FIELD_TIER_BUCKETS: ReadonlySet<string> = new Set([
+  'requested_model_mismatch',
+  'unknown_top_level_fields',
+]);
 
 /**
  * The banner's predicate, shared with `doctor`'s census. A bucket missing from

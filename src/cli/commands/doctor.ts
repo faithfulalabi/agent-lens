@@ -61,6 +61,8 @@ export interface HarnessCensusRow {
   // every one of them would have to special-case.
   unknown_line_types?: Record<string, number>;
   unknown_top_level_fields?: Record<string, number>;
+  /** Lines, not responses: a streamed response repeats its model on every line. */
+  requested_model_mismatch?: number;
 }
 
 type NamedBucket = 'unknown_line_types' | 'unknown_top_level_fields';
@@ -121,6 +123,10 @@ export function readCacheStats(dataDir?: string): CacheReport {
       if (hasStructuralDrift(session.counts)) row.drifting += 1;
       mergeNamed(row, 'unknown_line_types', session.counts.unknown_line_types);
       mergeNamed(row, 'unknown_top_level_fields', session.counts.unknown_top_level_fields);
+      const mismatches = session.counts.requested_model_mismatch;
+      if (mismatches !== undefined) {
+        row.requested_model_mismatch = (row.requested_model_mismatch ?? 0) + mismatches;
+      }
     }
     return {
       state: 'ready',
@@ -192,6 +198,12 @@ export function formatCacheSection(cache: CacheReport): string[] {
     lines.push(`    ${row.version}: ${row.projected} projected, ${row.drifting} drifting`);
     lines.push(...namedDrift('unknown record types', row.unknown_line_types));
     lines.push(...namedDrift('unknown top-level fields', row.unknown_top_level_fields));
+    const mismatches = row.requested_model_mismatch;
+    if (mismatches !== undefined) {
+      lines.push(
+        `      requested model differed from served model: ${mismatches} line${mismatches === 1 ? '' : 's'}`,
+      );
+    }
   }
   return lines;
 }

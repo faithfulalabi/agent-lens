@@ -857,6 +857,24 @@ describe('9. GET /api/drift (spec:382-392)', () => {
     const carrier = body.sessions_with_drift.find((s) => s.id === FIELD_ONLY);
     expect(carrier?.counts).toEqual({ unknown_top_level_fields: { novelField: 5 } });
   });
+
+  it('a requested-model disagreement reaches /api/drift and never the session list', async () => {
+    const MODEL_ONLY = 'models-1111-4111-8111-models000001';
+    seedSessionRow(db, {
+      id: MODEL_ONLY,
+      harness_version: '2.3.1',
+      drift_json: JSON.stringify({ requested_model_mismatch: 4 }),
+    });
+
+    const listed = (await getJson<Page<ListedRow>>('/api/sessions')).body.items;
+    const modelOnly = listed.find((row) => row.id === MODEL_ONLY);
+    expect(modelOnly?.has_drift).toBe(false);
+    expect(JSON.stringify(modelOnly)).not.toContain('requested_model');
+
+    const { body } = await getJson<DriftBody>('/api/drift');
+    const carrier = body.sessions_with_drift.find((s) => s.id === MODEL_ONLY);
+    expect(carrier?.counts).toEqual({ requested_model_mismatch: 4 });
+  });
 });
 
 describe('10. GET /api/health (spec:394-396)', () => {

@@ -41,7 +41,7 @@ import { openDb } from '../../db/open.js';
 // The same specifier `corpus/__tests__/fixtures.ts` uses. A different one for
 // this file resolves to a SECOND module instance with its own `nextUuid` serial,
 // and the duplicate uuids fail projection on `UNIQUE constraint failed: events.id`.
-import { humanLine } from '../../db/__tests__/fixtures/index.js';
+import { humanLine, toolCallLine, toolResultLine } from '../../db/__tests__/fixtures/index.js';
 
 const SESSION = `${SLUG}/sess-1.jsonl`;
 const OTHER = `${SLUG}/sess-2.jsonl`;
@@ -458,6 +458,31 @@ function seedFieldOnlyCache(s: Sandbox): void {
   projectCache(s);
 }
 
+/** One clean session, and one whose only drift is a requested model the harness did not serve. */
+function seedModelMismatchCache(s: Sandbox): void {
+  writeSession(
+    s,
+    CACHE_ONE,
+    sessionRecords('c1', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:30.000Z'),
+  );
+  writeSession(
+    s,
+    CACHE_TWO,
+    onVersion(
+      [
+        humanLine('do the thing', '2026-08-14T09:01:00.000Z'),
+        {
+          ...toolCallLine('c2', 'Agent', '2026-08-14T09:01:00.000Z'),
+          requestedModel: 'claude-opus-5-5',
+        },
+        toolResultLine('c2', 'done', '2026-08-14T09:01:30.000Z'),
+      ],
+      DRIFTING_VERSION,
+    ),
+  );
+  projectCache(s);
+}
+
 function censusOf(output: string): HarnessCensusRow[] {
   const json = JSON.parse(output) as { cache: { stats: CacheStats } };
   return json.cache.stats.harness;
@@ -546,6 +571,31 @@ describe('the drift census names what each release drifted on', () => {
     expect(lines[at + 1]).toBe('      unknown top-level fields (1): novelField 1');
     expect(lines[at + 2] ?? '').not.toMatch(/^ {6}/);
     expect(lines.slice(at, at + 2).join('\n')).not.toContain('record');
+  });
+
+  it('a requested model the harness did not serve is counted in lines and leaves the release at 0 drifting', async () => {
+    const s = sb();
+    seedModelMismatchCache(s);
+
+    const row = rowFor(censusOf(await runDoctor(argsFor(s, ['--json']))), DRIFTING_VERSION);
+    expect(Object.keys(row).sort()).toEqual([
+      'drifting',
+      'projected',
+      'requested_model_mismatch',
+      'version',
+    ]);
+    expect(row).toEqual({
+      version: DRIFTING_VERSION,
+      projected: 1,
+      drifting: 0,
+      requested_model_mismatch: 1,
+    });
+
+    const lines = (await runDoctor(argsFor(s))).split('\n');
+    const at = lines.findIndex((line) => line.includes(`${DRIFTING_VERSION}: `));
+    expect(lines[at]).toBe(`    ${DRIFTING_VERSION}: 1 projected, 0 drifting`);
+    expect(lines[at + 1]).toBe('      requested model differed from served model: 1 line');
+    expect(lines[at + 2] ?? '').not.toMatch(/^ {6}/);
   });
 
   it('many distinct names cap in the rendered report and stay whole in --json', async () => {

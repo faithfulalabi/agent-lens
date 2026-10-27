@@ -105,12 +105,14 @@ describe('unjoined tool calls are a scalar, and silence stays silent', () => {
     drift.noteUnknownType('holographic-preview');
     drift.noteUnjoinedToolUse();
     drift.noteSidecarMismatch();
+    drift.noteRequestedModelMismatch();
     drift.notePermissionDecisionMismatch();
     drift.notePermissionDecisionMismatch();
 
     const keys = Object.keys(JSON.parse(drift.serialize()));
     expect(keys).toEqual([
       'permission_decision_mismatch',
+      'requested_model_mismatch',
       'sidecar_agent_id_mismatch',
       'unjoined_tool_uses',
       'unknown_block_types',
@@ -401,6 +403,71 @@ describe('the 2.1.212-2.1.296 union fields are absorbed on their measured type o
     expect(JSON.parse(shared.drift.serialize())).toEqual({
       unknown_top_level_fields: { zzzBrandNew: 1 },
     });
+  });
+});
+
+describe('a requested model the harness did not serve is counted per assistant line', () => {
+  const served = (model: unknown): Record<string, unknown> => ({
+    type: 'assistant',
+    uuid: 'a1',
+    message: { role: 'assistant', model },
+  });
+
+  function driftOf(...lines: unknown[]): string {
+    const shared = ctx();
+    for (const line of lines) classifyLine(line, shared);
+    return shared.drift.serialize();
+  }
+
+  it('an assistant line naming a different requested model counts once', () => {
+    expect(driftOf({ ...served('claude-sonnet-5'), requestedModel: 'claude-opus-5-5' })).toBe(
+      '{"requested_model_mismatch":1}',
+    );
+  });
+
+  it.each([
+    [
+      'an agreeing requested model',
+      { ...served('claude-opus-5-5'), requestedModel: 'claude-opus-5-5' },
+    ],
+    ['an absent requested model', served('claude-opus-5-5')],
+    ['a <synthetic> served model', { ...served('<synthetic>'), requestedModel: 'claude-opus-5-5' }],
+    [
+      'a missing served model',
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        message: { role: 'assistant' },
+        requestedModel: 'claude-opus-5-5',
+      },
+    ],
+  ])('%s counts nothing', (_case, line) => {
+    expect(driftOf(line)).toBe('{}');
+  });
+
+  it.each([
+    ['a number', 7],
+    ['null', null],
+  ])('a requested model that is %s counts as a disagreement', (_case, requestedModel) => {
+    expect(driftOf({ ...served('claude-opus-5-5'), requestedModel })).toBe(
+      '{"requested_model_mismatch":1}',
+    );
+  });
+
+  it('each streamed line of one disagreeing response counts, so the tally is in lines', () => {
+    const line = { ...served('claude-sonnet-5'), requestedModel: 'claude-opus-5-5' };
+    expect(driftOf(line, line)).toBe('{"requested_model_mismatch":2}');
+  });
+
+  it('a requested model on a user line drifts as a field and is never compared', () => {
+    expect(
+      driftOf({
+        type: 'user',
+        uuid: 'u1',
+        message: { model: 'claude-sonnet-5' },
+        requestedModel: 'claude-opus-5-5',
+      }),
+    ).toBe('{"unknown_top_level_fields":{"requestedModel":1}}');
   });
 });
 
