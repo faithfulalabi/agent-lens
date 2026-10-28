@@ -642,10 +642,10 @@ function ftsPhrase(q: string): string {
  * harness repeats on nearly every request is 48% of those rows, so without this
  * a string the user never wrote outranks every real hit. Stated on OUR kind
  * rather than the harness's record type, so this SQL names no harness
- * vocabulary; the cost is that an `unknown` row which later carries text worth
- * finding stays unfindable until it earns a kind of its own.
+ * vocabulary. A row whose attrs name a file is the exception, so a session can
+ * be found by a file it touched. Parenthesised so the OR cannot swallow the MATCH.
  */
-const SEARCHABLE = `e.kind <> 'unknown'`;
+const SEARCHABLE = `(e.kind <> 'unknown' OR json_extract(e.attrs, '$.filename') IS NOT NULL)`;
 
 // The session clause goes on BOTH arms or neither: node:sqlite throws on a bound
 // key the SQL lacks, so the SQL and the bind object come from one flag.

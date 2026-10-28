@@ -1622,7 +1622,10 @@ describe('harness boilerplate reaches the row but not the search index', () => {
   const RENDERED = 'tokensleftmarker a reminder nobody searched for';
 
   /** An `attachment` line: real text, and the kind that earns no FTS row. */
-  function pinnedRecord(ts: string): Record<string, unknown> {
+  function pinnedRecord(
+    ts: string,
+    note: Record<string, unknown> = { type: 'total_tokens_reminder' },
+  ): Record<string, unknown> {
     return {
       uuid: nextUuid(),
       version: '2.1.284',
@@ -1630,7 +1633,7 @@ describe('harness boilerplate reaches the row but not the search index', () => {
       gitBranch: 'main',
       type: 'attachment',
       timestamp: ts,
-      attachment: { type: 'total_tokens_reminder' },
+      attachment: note,
       rendered: [{ content: RENDERED }],
     };
   }
@@ -1664,11 +1667,15 @@ describe('harness boilerplate reaches the row but not the search index', () => {
     expect(searchEvents(db, { q: 'findableprompt', limit: 10 })).toHaveLength(1);
   });
 
-  it('survives three drop/reproject cycles with an unindexed row present', () => {
+  it('finds a note that names a file but not the reminder, across three drop/reproject cycles', () => {
     const db = cache();
     const { path } = plant('cycles-boilerplate', [
       humanLine('findableprompt please', TS(0)),
       pinnedRecord(TS(1)),
+      {
+        ...pinnedRecord(TS(2), { type: 'edited_text_file', filename: 'packaging.test.ts' }),
+        rendered: [{ content: 'filenotemarker packaging.test.ts was edited' }],
+      },
     ]);
     const id = seedIndexRow(db, path);
 
@@ -1680,6 +1687,8 @@ describe('harness boilerplate reaches the row but not the search index', () => {
       expect(() => ftsIntegrityCheck(db), `cycle ${cycle}`).not.toThrow();
     }
     expect(searchEvents(db, { q: 'findableprompt', limit: 10 })).toHaveLength(1);
+    expect(searchEvents(db, { q: 'filenotemarker', limit: 10 })).toHaveLength(1);
+    expect(searchEvents(db, { q: 'tokensleftmarker', limit: 10 })).toEqual([]);
   });
 
   it('still INDEXES the boilerplate row, because external content must be covered', () => {

@@ -299,6 +299,18 @@ describe('resultText names every image child and never moves text off index 0', 
   it('is empty for a result with no children', () => {
     expect(resultText(childrenOf([]))).toBe('');
   });
+
+  it('names each tool reference last, after the text and the image placeholders', () => {
+    const webFetch = { type: 'tool_reference', tool_name: 'WebFetch' };
+    const webSearch = { type: 'tool_reference', tool_name: 'WebSearch' };
+
+    expect(resultText(childrenOf([webFetch, webSearch]))).toBe(
+      '[tool_reference WebFetch]\n[tool_reference WebSearch]',
+    );
+    expect(
+      resultText(childrenOf([webFetch, imageBlock(400, 'image/png'), { type: 'text', text: 'a' }])),
+    ).toBe('a\n[image image/png, 0.3 KB]\n[tool_reference WebFetch]');
+  });
 });
 
 /** One classified `user` line carrying `content`. */

@@ -474,7 +474,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
     // leak this onto a block row.
     const record = blocks.length === 0 ? attachmentRecord(line) : undefined;
     const lineText = blocks.length === 0 ? (record?.text ?? apiErrorText(line)) : undefined;
-    const attrs = record?.role === undefined ? '{}' : JSON.stringify({ renderedRole: record.role });
+    const attrs = JSON.stringify({ renderedRole: record?.role, filename: record?.filename });
     let stamped = false;
 
     const emit = (block: Block | undefined, blockIndex: number): void => {
