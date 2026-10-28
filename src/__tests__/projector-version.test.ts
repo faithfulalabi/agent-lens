@@ -2,9 +2,11 @@
 // NO regeneration script and no env escape hatch: the test prints the recomputed hash, but
 // nothing writes it for you.
 //
-// The version lives INSIDE the hashed tree, so it cannot be bumped without rehashing. The
-// reverse — a new sha with no bump — is correct for a change that does not alter what projection
-// emits; nothing in-repo distinguishes the two, only review does.
+// The version lives INSIDE the hashed tree, so one branch cannot bump it without rehashing. Two
+// branches can still bump to the same number with different projectors; the pin carries the
+// version so that collision shows in the merge conflict. The reverse — a new sha with no bump — is
+// correct for a change that does not alter what projection emits; nothing in-repo distinguishes
+// the two, only review does.
 //
 // The hash covers non-test `.ts` only: a test edit cannot change projection output, and an
 // unfiltered walk would take stray untracked files with it, so a dev box and CI would disagree.
@@ -22,8 +24,9 @@ const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 /** Both halves of the projector. */
 const HASHED_TREES = ['transcript', 'project'] as const;
 
-/** The committed pair. Both change together or this file reds. */
-const PROJECTOR_SOURCE_SHA = 'f415f2a2ded729b0347c60f961cf82e9884f77ef1d632cb6ed85ac7fde669711';
+/** One string, not an object: git drops an identical wrapped version line out of the conflict. */
+const PROJECTOR_PIN = '20:85023e44111a0a625908baf48b9f091140f77e6cd9ae77fada468d4ee9a81a96';
+const PROJECTOR_SOURCE_SHA = PROJECTOR_PIN.slice(PROJECTOR_PIN.indexOf(':') + 1);
 
 interface HashedFile {
   path: string;
@@ -67,21 +70,23 @@ function bumpMessage(actual: string): string {
   return (
     'you changed the projector; bump PROJECTOR_VERSION\n' +
     `  recomputed: ${actual}\n` +
-    '  Paste that into PROJECTOR_SOURCE_SHA in the same diff that bumps the constant.\n' +
+    '  Paste that after the version prefix in PROJECTOR_PIN, ' +
+    'in the same diff that bumps the constant.\n' +
+    '  If this follows a merge or rebase where both sides bumped to the same version, the ' +
+    'projectors collide: bump past both, re-run, and paste the new sha.\n' +
     '  Adding or removing a file under src/transcript/ or src/project/ reds this too: ' +
     'recompute AFTER npm run format, then bump PROJECTOR_VERSION and paste the printed sha.'
   );
 }
 
 describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
-  it('the projector source still hashes to the committed sha', () => {
+  it('the pin still matches the version and the projector source hash', () => {
     const actual = projectorHash();
-    expect(actual, bumpMessage(actual)).toBe(PROJECTOR_SOURCE_SHA);
+    expect(`${PROJECTOR_VERSION}:${actual}`, bumpMessage(actual)).toBe(PROJECTOR_PIN);
   });
 
   it('the version is imported, not redeclared, and lives inside the hashed tree', () => {
-    // Deliberately NOT pinned to a literal: a pin would red a bump that is the correct
-    // response to a projector change. The hash above polices the value; this polices the shape.
+    // The pin above polices the value; this polices the shape.
     expect(Number.isInteger(PROJECTOR_VERSION)).toBe(true);
     expect(PROJECTOR_VERSION).toBeGreaterThan(0);
     expect(hashedFiles().map((file) => file.path)).toContain('transcript/version.ts');
@@ -173,7 +178,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     expect(projectorHash(withProject)).not.toBe(PROJECTOR_SOURCE_SHA);
   });
 
-  it('one byte, a rename, or a version bump each red it', () => {
+  it('one byte, a rename, a version bump, or a same-version collision each red it', () => {
     const files = hashedFiles();
     const index = files.findIndex((file) => file.path === 'transcript/line.ts');
     expect(index).toBeGreaterThanOrEqual(0);
@@ -184,6 +189,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
       bytes: Buffer.concat([files[index]!.bytes, Buffer.from(' ')]),
     };
     expect(projectorHash(edited)).not.toBe(PROJECTOR_SOURCE_SHA);
+    expect(`${PROJECTOR_VERSION}:${projectorHash(edited)}`).not.toBe(PROJECTOR_PIN);
 
     const renamed = [...files];
     renamed[index] = { ...files[index]!, path: 'transcript/lines.ts' };
@@ -221,6 +227,7 @@ describe('PROJECTOR_VERSION is guarded by a committed source hash', () => {
     expect(bumpMessage('abc')).toContain('abc');
     expect(bumpMessage('abc')).toContain('src/project/');
     expect(bumpMessage('abc')).toContain('paste the printed sha');
+    expect(bumpMessage('abc')).toContain('both sides bumped to the same version');
     expect(bumpMessage('abc')).not.toMatch(/task \(?\d+\.\d/i);
   });
 });
