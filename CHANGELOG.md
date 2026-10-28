@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/faithfulalabi/agent-lens/compare/v0.14.0...v0.15.0) (2026-10-28)
+
+
+### Features
+
+* **event-detail:** show who decided a tool's permission and why ([#146](https://github.com/faithfulalabi/agent-lens/issues/146)) ([7dec20b](https://github.com/faithfulalabi/agent-lens/commit/7dec20b060dcb4171db65e02b070b438209773e5))
+
 ## [0.14.0](https://github.com/faithfulalabi/agent-lens/compare/v0.13.0...v0.14.0) (2026-10-27)
 
 
