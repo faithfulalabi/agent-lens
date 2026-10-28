@@ -449,6 +449,21 @@ export function permissionDecision(line: ParsedLine): string | undefined {
   return str(obj(line.raw.permissionDecision, undefined)?.decision, '');
 }
 
+/** Who decided a result line's permission, and on what grounds. */
+export interface PermissionGrounds {
+  source: string | undefined;
+  reasonType: string | undefined;
+}
+
+/** Empty or non-string values drop, so a row never shows a blank or stringified ground. */
+export function permissionGrounds(line: ParsedLine): PermissionGrounds {
+  const stated = obj(line.raw.permissionDecision, undefined);
+  return {
+    source: str(stated?.source, '') || undefined,
+    reasonType: str(stated?.reasonType, '') || undefined,
+  };
+}
+
 /** The turn duration a `system`/`turn_duration` line reports, when it reports one. */
 export function turnDurationMs(line: ParsedLine): number | undefined {
   return line.kind === 'system' && line.subtype === 'turn_duration'

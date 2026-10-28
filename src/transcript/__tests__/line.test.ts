@@ -8,6 +8,7 @@ import {
   foldSessionEnvelope,
   type ParsedKind,
   type ParsedLine,
+  permissionGrounds,
 } from '../line.js';
 import { classifyFixture, ctx, fixtureBytes } from './fixtures.js';
 
@@ -400,5 +401,43 @@ describe('foldSessionEnvelope answers `model` on its own rule', () => {
     expect(envelope.project_path).toBe('/Users/dev/proj/deeper');
     expect(envelope.git_branch).toBe('release');
     expect(envelope.harness_version).toBe('2.1.213');
+  });
+});
+
+describe('permissionGrounds reads who decided and why, as strings only', () => {
+  const grounds = (permissionDecision: unknown) =>
+    permissionGrounds(classifyLine({ type: 'user', permissionDecision }, ctx()));
+
+  it('answers the source and the reason verbatim', () => {
+    expect(grounds({ decision: 'accept', source: 'config', reasonType: 'classifier' })).toEqual({
+      source: 'config',
+      reasonType: 'classifier',
+    });
+  });
+
+  it('answers a source with no reason when the line stated none', () => {
+    expect(grounds({ decision: 'accept', source: 'user_temporary' })).toEqual({
+      source: 'user_temporary',
+      reasonType: undefined,
+    });
+  });
+
+  it.each([
+    ['a number', 7],
+    ['an object', { kind: 'config' }],
+    ['null', null],
+    ['an empty string', ''],
+  ])('drops a source or reason that is %s, never stringifying it', (_label, value) => {
+    expect(grounds({ decision: 'accept', source: value, reasonType: value })).toEqual({
+      source: undefined,
+      reasonType: undefined,
+    });
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['not an object', 'accept'],
+  ])('answers neither when permissionDecision is %s', (_label, permissionDecision) => {
+    expect(grounds(permissionDecision)).toEqual({ source: undefined, reasonType: undefined });
   });
 });

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   contentStateOf,
   imageViewsOf,
+  permissionOf,
   storageOf,
   unrecognisedFieldsOf,
   wireDivergenceOf,
@@ -387,5 +388,18 @@ describe('the unrecognised fields are shown only for the event they were asked a
     expect(
       unrecognisedFieldsOf(event, makeUnrecognisedFields({ id: 'ev-2', fields: [FIELD] })),
     ).toBeNull();
+  });
+});
+
+describe('the permission grounds are shown only on a call that stated them', () => {
+  it.each([
+    ['neither', null, null, null],
+    ['a source only', 'user_temporary', null, { source: 'user_temporary', reason: null }],
+    ['a reason only', null, 'mode', { source: null, reason: 'mode' }],
+    ['both', 'config', 'classifier', { source: 'config', reason: 'classifier' }],
+  ])('answers %s verbatim', (_label, permission_source, permission_reason_type, expected) => {
+    expect(permissionOf(makeEventRow({ permission_source, permission_reason_type }))).toEqual(
+      expected,
+    );
   });
 });

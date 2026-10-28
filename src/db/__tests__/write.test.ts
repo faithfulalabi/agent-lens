@@ -1711,6 +1711,31 @@ describe('harness boilerplate reaches the row but not the search index', () => {
     const { items } = readEventPage(db, id, { from_seq: 0, limit: 10 });
     expect(items.map((row) => row.rendered_role)).toEqual([null, 'user', null]);
   });
+
+  it('serves who decided a tool call and why, and nulls on a call that stated no decision', () => {
+    const db = cache();
+    const { path } = plant('permission', [
+      humanLine('findableprompt please', TS(0)),
+      toolCallLine('toolu_decided', 'Bash', TS(1)),
+      toolResultLine('toolu_decided', 'ok', TS(2), {
+        permissionDecision: { decision: 'accept', source: 'config', reasonType: 'classifier' },
+      }),
+      toolCallLine('toolu_undecided', 'Bash', TS(3)),
+      toolResultLine('toolu_undecided', 'ok', TS(4)),
+    ]);
+    const id = seedIndexRow(db, path);
+    project(db, id, path);
+
+    const { items } = readEventPage(db, id, { from_seq: 0, limit: 10 });
+    expect(
+      items
+        .filter((row) => row.kind === 'tool_call')
+        .map((row) => [row.permission_source, row.permission_reason_type]),
+    ).toEqual([
+      ['config', 'classifier'],
+      [null, null],
+    ]);
+  });
 });
 
 describe('the wire-input columns round-trip through the writer', () => {

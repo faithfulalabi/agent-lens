@@ -305,3 +305,49 @@ describe('the unrecognised fields disclosure', () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
+
+describe('the pane names who decided the permission for a tool call, and why', () => {
+  it('renders PERMISSION with the source and the reason', () => {
+    const event = makeEventRow({
+      permission_source: 'config',
+      permission_reason_type: 'classifier',
+    });
+
+    const html = render(<EventDetail event={event} fetched={null} />);
+
+    expect(html).toContain('data-slot="detail-permission"');
+    expect(html).toContain('PERMISSION');
+    expect(html).toContain('>source</dt><dd');
+    expect(html).toContain('>config</dd>');
+    expect(html).toContain('>reason</dt><dd');
+    expect(html).toContain('>classifier</dd>');
+  });
+
+  it('omits the reason line when the harness stated only a source', () => {
+    const event = makeEventRow({ permission_source: 'user_temporary' });
+
+    const html = render(<EventDetail event={event} fetched={null} />);
+
+    expect(html).toContain('>user_temporary</dd>');
+    expect(html).not.toContain('>reason</dt>');
+  });
+
+  it('renders no permission section on a row without one', () => {
+    const html = render(<EventDetail event={makeEventRow()} fetched={null} />);
+
+    expect(html).not.toContain('PERMISSION');
+    expect(html).not.toContain('detail-permission');
+    expect(html).toContain('INPUT');
+    expect(html).toContain('OUTPUT');
+  });
+
+  it('prints a permission value carrying markup as text', () => {
+    const event = makeEventRow({ permission_source: '<img src=x onerror=alert(1)>' });
+
+    const html = render(<EventDetail event={event} fetched={null} />);
+
+    expect(html).toContain('>&lt;img src=x onerror=alert(1)&gt;</dd>');
+    expect(html).not.toContain('<img');
+    expect(SOURCE).not.toContain('dangerouslySetInnerHTML');
+  });
+});

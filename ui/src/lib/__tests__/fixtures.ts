@@ -139,6 +139,8 @@ export function makeEventRow(overrides: Partial<EventRow> = {}): EventRow {
     raw_type: 'assistant',
     raw_subtype: null,
     rendered_role: null,
+    permission_source: null,
+    permission_reason_type: null,
     ...overrides,
   };
 }
