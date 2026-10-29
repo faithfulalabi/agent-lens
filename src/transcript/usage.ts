@@ -18,12 +18,14 @@
 
 import { num, obj, str } from './accessors.js';
 
-/** The four token counts, folded across one `requestId` group. */
+/** The token counts, folded across one `requestId` group. */
 export interface FoldedUsage {
   input_tokens: number;
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  /** The part of `cache_creation_input_tokens` written with the 1-hour TTL. */
+  ephemeral_1h_input_tokens: number;
 }
 
 /** Taken once per group — constant across every line of all 7,575 measured. */
@@ -38,6 +40,7 @@ const ZERO: FoldedUsage = {
   output_tokens: 0,
   cache_creation_input_tokens: 0,
   cache_read_input_tokens: 0,
+  ephemeral_1h_input_tokens: 0,
 };
 
 /** `message.usage` as sent, or `undefined` for any line that carries none. */
@@ -71,6 +74,17 @@ export function foldRequestGroup(lines: readonly unknown[]): FoldedUsage {
       if (value === undefined) continue;
       folded[field] = value;
       taken.add(field);
+    }
+
+    if (!taken.has('ephemeral_1h_input_tokens')) {
+      const oneHour = num(
+        obj(usage['cache_creation'], undefined)?.['ephemeral_1h_input_tokens'],
+        undefined,
+      );
+      if (oneHour !== undefined) {
+        folded.ephemeral_1h_input_tokens = oneHour;
+        taken.add('ephemeral_1h_input_tokens');
+      }
     }
 
     // Last writer wins: the final line of the group holds the whole turn's

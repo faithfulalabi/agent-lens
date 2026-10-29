@@ -398,6 +398,7 @@ function insertEvents(
       tokens_out: event.tokens_out,
       cache_read: event.tokens_cache_read,
       cache_write: event.tokens_cache_write,
+      cache_write_1h: event.tokens_cache_write_1h,
     });
     insert.run(
       event.id,

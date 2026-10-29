@@ -37,18 +37,21 @@ const GOLDEN = [
     output_tokens: 100,
     cache_creation_input_tokens: 1234,
     cache_read_input_tokens: 17702,
+    cache_creation: { ephemeral_5m_input_tokens: 234, ephemeral_1h_input_tokens: 1000 },
   }),
   assistantLine({
     input_tokens: 4,
     output_tokens: 400,
     cache_creation_input_tokens: 1234,
     cache_read_input_tokens: 17702,
+    cache_creation: { ephemeral_5m_input_tokens: 234, ephemeral_1h_input_tokens: 1000 },
   }),
   assistantLine({
     input_tokens: 4,
     output_tokens: 900,
     cache_creation_input_tokens: 1234,
     cache_read_input_tokens: 17702,
+    cache_creation: { ephemeral_5m_input_tokens: 234, ephemeral_1h_input_tokens: 1000 },
   }),
 ];
 
@@ -76,6 +79,7 @@ describe('foldRequestGroup takes input once and output from the last line', () =
       output_tokens: 900,
       cache_creation_input_tokens: 1234,
       cache_read_input_tokens: 17702,
+      ephemeral_1h_input_tokens: 1000,
     });
   });
 
@@ -106,6 +110,7 @@ describe('foldRequestGroup takes input once and output from the last line', () =
       output_tokens: 100,
       cache_creation_input_tokens: 1234,
       cache_read_input_tokens: 17702,
+      ephemeral_1h_input_tokens: 1000,
     });
   });
 
@@ -158,6 +163,7 @@ describe('the fold is total: zeros, never a throw, never a coercion', () => {
       output_tokens: 0,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
+      ephemeral_1h_input_tokens: 0,
     });
   });
 
@@ -180,6 +186,7 @@ describe('the fold is total: zeros, never a throw, never a coercion', () => {
       output_tokens: 0,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 60,
+      ephemeral_1h_input_tokens: 0,
     });
     expect(Number.isFinite(folded.output_tokens)).toBe(true);
   });
@@ -297,12 +304,14 @@ describe('groupByRequestId drops nothing and merges nothing it should not', () =
         output_tokens: 900,
         cache_creation_input_tokens: 1234,
         cache_read_input_tokens: 17702,
+        ephemeral_1h_input_tokens: 1000,
       },
       {
         input_tokens: 8,
         output_tokens: 50,
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
+        ephemeral_1h_input_tokens: 0,
       },
     ]);
   });

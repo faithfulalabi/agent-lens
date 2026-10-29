@@ -165,6 +165,8 @@ export interface ProjectedEvent extends ProjectedInput, ProjectedWireInput {
   tokens_out: number | undefined;
   tokens_cache_read: number | undefined;
   tokens_cache_write: number | undefined;
+  /** In-memory only, priced at insert: the 1-hour part of `tokens_cache_write`, not a column. */
+  tokens_cache_write_1h: number | undefined;
   raw_type: string;
   raw_subtype: string | undefined;
   attrs: string;
@@ -536,6 +538,7 @@ export function runPipeline(lines: readonly ParsedLine[], ctx: PipelineContext):
         tokens_out: tokens?.output_tokens,
         tokens_cache_read: tokens?.cache_read_input_tokens,
         tokens_cache_write: tokens?.cache_creation_input_tokens,
+        tokens_cache_write_1h: tokens?.ephemeral_1h_input_tokens,
         raw_type: rawTypeOf(line),
         raw_subtype: rawSubtypeOf(line),
         attrs,

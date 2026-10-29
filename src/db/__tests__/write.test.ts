@@ -238,9 +238,11 @@ describe('projectSession is one unit of work', () => {
     for (const event of expected.events) {
       const stored = eventRow(db, event.id);
       for (const [column, value] of Object.entries(event)) {
-        // `output_storage`, `spill_path` and `text` are this task's to resolve;
-        // every other column must survive the trip byte for byte.
-        if (['output_storage', 'spill_path', 'text'].includes(column)) continue;
+        // `output_storage`, `spill_path` and `text` are this task's to resolve, and
+        // `tokens_cache_write_1h` is priced rather than stored; every other column
+        // must survive the trip byte for byte.
+        if (['output_storage', 'spill_path', 'text', 'tokens_cache_write_1h'].includes(column))
+          continue;
         expect(stored[column] ?? undefined, `${event.id}.${column}`).toStrictEqual(value);
       }
     }
