@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/faithfulalabi/agent-lens/compare/v0.15.0...v0.15.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **projector:** name tool_reference children and make file notes searchable ([#150](https://github.com/faithfulalabi/agent-lens/issues/150)) ([8770f10](https://github.com/faithfulalabi/agent-lens/commit/8770f102c18c2f834eb1848957a842b7e2ba912f))
+
 ## [0.15.0](https://github.com/faithfulalabi/agent-lens/compare/v0.14.0...v0.15.0) (2026-10-28)
 
 
