@@ -289,7 +289,7 @@ CREATE TABLE events (
                                             -- attributionAgent, effort, permissionMode,
                                             -- compactMetadata, toolDenialKind, renderedRole,
                                             -- permissionSource, permissionReasonType,
-                                            -- unknown_fields[]
+                                            -- filename, unknown_fields[]
 );
 CREATE UNIQUE INDEX idx_events_session_seq ON events(session_id, seq);
 CREATE INDEX        idx_events_turn        ON events(turn_id, seq);

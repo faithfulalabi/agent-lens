@@ -33,6 +33,8 @@ export interface AttachmentRecord {
   readonly text: string;
   /** `renderedRole` as sent — whose voice the harness rendered {@link text} in. */
   readonly role: string | undefined;
+  /** The file the note is about, on the types that name one. */
+  readonly filename: string | undefined;
 }
 
 const NO_ELEMENTS: readonly unknown[] = Object.freeze([]);
@@ -55,7 +57,8 @@ function placeholder(subtype: string): string {
 export function attachmentRecord(line: ParsedLine): AttachmentRecord | undefined {
   if (line.kind !== 'attachment') return undefined;
 
-  const subtype = str(obj(line.raw.attachment, undefined)?.type, '');
+  const payload = obj(line.raw.attachment, undefined);
+  const subtype = str(payload?.type, '');
   const first = arr(line.raw.rendered, NO_ELEMENTS)[0];
   const rendered = str(obj(first, undefined)?.content, undefined);
 
@@ -63,5 +66,6 @@ export function attachmentRecord(line: ParsedLine): AttachmentRecord | undefined
     subtype,
     text: rendered ?? placeholder(subtype),
     role: str(line.raw.renderedRole, undefined),
+    filename: str(payload?.filename, undefined),
   };
 }

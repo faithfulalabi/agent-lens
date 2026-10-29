@@ -242,13 +242,17 @@ export function classifyContent(content: unknown): readonly Block[] {
 }
 
 /**
- * A tool result's text, then its image placeholders. Never trimmed, and text always leads:
- * the spill-marker predicates test index 0 and `text_bytes` sizes this exact string.
+ * A tool result's text, then its image placeholders, then its tool references. Never trimmed,
+ * and text always leads: the spill-marker predicates test index 0 and `text_bytes` sizes this
+ * exact string.
  */
 export function resultText(children: readonly Block[]): string {
   const texts = children.flatMap((child) => (child.kind === 'text' ? [child.text] : []));
   const images = children.flatMap((child) => (child.kind === 'image' ? [child.placeholder] : []));
-  return [...texts, ...images].join('\n');
+  const refs = children.flatMap((child) =>
+    child.kind === 'tool_reference' ? [`[tool_reference ${child.name}]`] : [],
+  );
+  return [...texts, ...images, ...refs].join('\n');
 }
 
 /**

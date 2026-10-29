@@ -694,6 +694,14 @@ describe('an api_error line says what failed and how it was retried', () => {
   });
 });
 
+describe('a tool result carrying a tool reference names it', () => {
+  it('appends the reference after the result text', () => {
+    expect(callAt(project('nested-unknown-block.jsonl'), 'toolu_known').text).toBe(
+      'a\n[tool_reference Read]',
+    );
+  });
+});
+
 describe('a tool result carrying an image reads as the image, never as nothing', () => {
   const PLACEHOLDER = '[image image/png, 0.1 KB]';
 

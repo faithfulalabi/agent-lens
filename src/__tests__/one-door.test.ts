@@ -612,7 +612,7 @@ const SUPPRESSIONS: readonly Suppression[] = [
   },
   {
     key: 'db/__tests__/write.test.ts#attachment#3',
-    line: "attachment: { type: 'total_tokens_reminder' },",
+    line: 'attachment: note,',
     why: 'the payload the builder EMITS. The only reader of it is `src/transcript/attachments.ts`, behind the door.',
   },
   {
