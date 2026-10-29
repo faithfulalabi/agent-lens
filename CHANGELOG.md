@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/faithfulalabi/agent-lens/compare/v0.15.1...v0.15.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **pricing:** price one-hour cache writes at the one-hour rate ([#153](https://github.com/faithfulalabi/agent-lens/issues/153)) ([468dc91](https://github.com/faithfulalabi/agent-lens/commit/468dc9141c148860fed6372e593a6fc55639d13c))
+
 ## [0.15.1](https://github.com/faithfulalabi/agent-lens/compare/v0.15.0...v0.15.1) (2026-10-29)
 
 
