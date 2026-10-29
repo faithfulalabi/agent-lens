@@ -8,4 +8,4 @@
  * the version without rehashing. Two branches can still claim the same number for
  * different projectors; that test's pin only makes the collision show in the conflict.
  */
-export const PROJECTOR_VERSION = 21;
+export const PROJECTOR_VERSION = 22;

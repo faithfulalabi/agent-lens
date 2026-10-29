@@ -58,7 +58,7 @@ export interface ModelPrice {
   output: number;
   /** Input tokens served from the prompt cache. */
   cache_read: number;
-  /** Input tokens written to the prompt cache. */
+  /** Input tokens written to the prompt cache with the 5-minute TTL. */
   cache_write: number;
 }
 
@@ -68,6 +68,8 @@ export interface TokenUsage {
   tokens_out?: number;
   cache_read?: number;
   cache_write?: number;
+  /** The part of `cache_write` written with the 1-hour TTL. */
+  cache_write_1h?: number;
 }
 
 /**
@@ -75,10 +77,10 @@ export interface TokenUsage {
  * prefix — see {@link normalizeModelKey}).
  *
  * Source: Anthropic's public pricing table, supplied by the founder 2026-09-22.
- * Every row is quoted, not derived. `cache_write` is the 5-minute write rate:
- * the corpus's `cache_write` counter does not distinguish TTLs, so the 1-hour
- * rate (1.6x the 5-minute one) has no column. `cache_read` is "cache hits and
- * refreshes". Retired models are kept so old sessions still price.
+ * Every row is quoted, not derived. `cache_write` is the 5-minute write rate.
+ * The 1-hour write rate is 2x `input` for every family on the published page, so
+ * {@link estimateCost} derives it rather than quoting a column. `cache_read` is
+ * "cache hits and refreshes". Retired models are kept so old sessions still price.
  *
  * DELIBERATELY ABSENT (Task 0.8b ruling, 2026-09-22):
  * - `opus` — unpriced. No published rate exists under that string, and
@@ -114,7 +116,7 @@ export const PRICING_TABLE: Readonly<Record<string, ModelPrice>> = Object.freeze
 });
 
 /** Human half of the version stamp — hand-bumped when rates are re-checked. */
-export const PRICING_TABLE_DATE = '2026-09-22';
+export const PRICING_TABLE_DATE = '2026-10-28';
 
 /**
  * `{date}+{first 8 hex of sha256(canonical table)}`. Derived rather than
@@ -162,10 +164,12 @@ export function estimateCost(model: string | undefined, usage: TokenUsage): numb
   const key = normalizeModelKey(model);
   if (key === undefined) return null;
   const price = PRICING_TABLE[key]!;
+  const oneHour = usage.cache_write_1h ?? 0;
   const millionths =
     (usage.tokens_in ?? 0) * price.input +
     (usage.tokens_out ?? 0) * price.output +
     (usage.cache_read ?? 0) * price.cache_read +
-    (usage.cache_write ?? 0) * price.cache_write;
+    ((usage.cache_write ?? 0) - oneHour) * price.cache_write +
+    oneHour * 2 * price.input;
   return millionths / 1_000_000;
 }

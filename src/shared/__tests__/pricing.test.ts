@@ -72,17 +72,14 @@ describe('estimateCost — unknown model is null, never zero', () => {
   });
 
   it('prices cache reads and writes separately from fresh input', () => {
-    const rate = PRICING_TABLE['claude-opus-4-8']!;
     const cost = estimateCost('claude-opus-4-8', {
       tokens_in: 1000,
       tokens_out: 2000,
       cache_read: 4000,
       cache_write: 8000,
+      cache_write_1h: 2000,
     });
-    const expected =
-      (1000 * rate.input + 2000 * rate.output + 4000 * rate.cache_read + 8000 * rate.cache_write) /
-      1_000_000;
-    expect(cost).toBeCloseTo(expected, 10);
+    expect(cost).toBeCloseTo(0.1145, 10);
   });
 
   it('prices a dated build id at the family rate', () => {
