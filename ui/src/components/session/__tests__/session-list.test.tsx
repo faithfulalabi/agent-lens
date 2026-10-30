@@ -186,30 +186,13 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
   });
 
   it('offers every sortable column as a real button, and no others', () => {
-    /*
-     * ★ CUT FROM FOUR TO TWO BY TASK 5.1, which is an AC and not a weakening:
-     * the founder's reading of the four-control strip is that it looks like a
-     * tab bar, and AC3 reduces it to project + time. The list is no longer
-     * hard-coded either — it iterates the constants the component itself reads,
-     * so the next change to `SORT_COLUMNS` adjusts this test instead of reding
-     * it for a reason a reader has to go and look up.
-     */
     const markup = markupOf(rows.slice(0, 1));
-    expect(SORT_COLUMNS.length, 'project and time, per AC3').toBe(2);
     for (const column of SORT_COLUMNS) expect(markup).toContain(COLUMN_LABELS[column]);
     expect(markup.match(/<button/g) ?? []).toHaveLength(SORT_COLUMNS.length);
 
-    // Other metric headings explain their columns without implying sorting.
-    for (const label of [
-      'Status',
-      'Model',
-      'Turns',
-      'Subagents',
-      'Errors',
-      'Elapsed',
-      'Tokens',
-      'Est. cost',
-    ]) {
+    expect(markup).toContain('>Model</button>');
+    expect(markup).toContain('>Errors</button>');
+    for (const label of ['Status', 'Turns', 'Subagents', 'Elapsed', 'Tokens', 'Est. cost']) {
       expect(markup).toContain(`>${label}</span>`);
     }
   });

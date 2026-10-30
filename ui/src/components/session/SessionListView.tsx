@@ -14,7 +14,6 @@ import {
 import type { SessionListRow } from '@/lib/api';
 import {
   COLUMN_LABELS,
-  SORT_COLUMNS,
   formatRowCount,
   rowLabel,
   unpricedNotice,
@@ -31,17 +30,6 @@ import { SESSION_STATUS_VISUALS } from './session-visuals';
  * and are withheld until the sidecar sweep finishes. Cost keeps the shared
  * formatCost / costUnknownLabel distinction between zero and unpriced values.
  */
-
-const METRIC_HEADERS = [
-  'Status',
-  'Model',
-  'Turns',
-  'Subagents',
-  'Errors',
-  'Elapsed',
-  'Tokens',
-  'Est. cost',
-] as const;
 
 const MAIN_SESSION_SCOPE = 'Errors, tokens, and estimated cost cover the main session.';
 
@@ -89,6 +77,46 @@ export function SessionListView({
   const unpriced = unpricedNotice(rows, pageTruncated);
   const { dismissed, dismiss } = useNoticeDismissal('cost-unknown');
 
+  const sortHeader = (column: SortColumn, right = false) => {
+    const label = column === 'project_path' ? 'Session / Project' : COLUMN_LABELS[column];
+    const tip = COLUMN_TIPS[label];
+    return (
+      <button
+        type="button"
+        aria-pressed={column === sort}
+        aria-describedby={tip === undefined ? undefined : tipId(label)}
+        title={tip === undefined ? `Sort by ${COLUMN_LABELS[column].toLowerCase()}` : undefined}
+        onClick={() => {
+          onSortChange(column);
+        }}
+        className={cn(
+          'group relative transition-colors',
+          right ? 'text-right' : 'text-left',
+          column === sort ? 'text-foreground' : 'text-muted',
+        )}
+      >
+        <ColumnTip label={label} right={right} />
+        {label}
+        {column === sort ? <SortChevron direction={direction} /> : null}
+      </button>
+    );
+  };
+
+  const metricHeader = (label: string) => {
+    const right = label !== 'Status';
+    const tip = COLUMN_TIPS[label];
+    return (
+      <span
+        tabIndex={tip === undefined ? undefined : 0}
+        aria-describedby={tip === undefined ? undefined : tipId(label)}
+        className={cn('group relative', right && 'text-right')}
+      >
+        <ColumnTip label={label} right={right} />
+        {label}
+      </span>
+    );
+  };
+
   return (
     <div data-slot="session-list" className="overflow-hidden rounded-md border border-border">
       {unpriced === null || dismissed ? null : (
@@ -123,47 +151,16 @@ export function SessionListView({
           data-slot="session-list-header"
           className="session-list-grid border-b border-border bg-surface px-4 py-3 text-2xs text-muted"
         >
-          {SORT_COLUMNS.map((column) => {
-            const label = column === 'project_path' ? 'Session / Project' : COLUMN_LABELS[column];
-            const tip = COLUMN_TIPS[label];
-            return (
-              <button
-                key={column}
-                type="button"
-                aria-pressed={column === sort}
-                aria-describedby={tip === undefined ? undefined : tipId(label)}
-                title={
-                  tip === undefined ? `Sort by ${COLUMN_LABELS[column].toLowerCase()}` : undefined
-                }
-                onClick={() => {
-                  onSortChange(column);
-                }}
-                className={cn(
-                  'group relative text-left transition-colors',
-                  column === sort ? 'text-foreground' : 'text-muted',
-                )}
-              >
-                <ColumnTip label={label} />
-                {label}
-                {column === sort ? <SortChevron direction={direction} /> : null}
-              </button>
-            );
-          })}
-          {METRIC_HEADERS.map((label) => {
-            const right = label !== 'Status' && label !== 'Model';
-            const tip = COLUMN_TIPS[label];
-            return (
-              <span
-                key={label}
-                tabIndex={tip === undefined ? undefined : 0}
-                aria-describedby={tip === undefined ? undefined : tipId(label)}
-                className={cn('group relative', right && 'text-right')}
-              >
-                <ColumnTip label={label} right={right} />
-                {label}
-              </span>
-            );
-          })}
+          {sortHeader('project_path')}
+          {sortHeader('last_activity_at')}
+          {metricHeader('Status')}
+          {sortHeader('model')}
+          {metricHeader('Turns')}
+          {metricHeader('Subagents')}
+          {sortHeader('error_count', true)}
+          {metricHeader('Elapsed')}
+          {metricHeader('Tokens')}
+          {metricHeader('Est. cost')}
         </div>
         {rows.map((row, index) => (
           <SessionRow key={row.id} row={row} now={now} isCursor={index === cursor} />
