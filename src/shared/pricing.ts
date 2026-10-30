@@ -60,6 +60,8 @@ export interface ModelPrice {
   cache_read: number;
   /** Input tokens written to the prompt cache with the 5-minute TTL. */
   cache_write: number;
+  /** The card for a request whose prompt, cached tokens included, exceeds 100,000 tokens. */
+  over_100k?: ModelPrice;
 }
 
 /** Token counts for one span. Absent fields count as zero. */
@@ -107,16 +109,24 @@ export const PRICING_TABLE: Readonly<Record<string, ModelPrice>> = Object.freeze
   'claude-opus-4-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   'claude-opus-4-1': { input: 15, output: 75, cache_read: 1.5, cache_write: 18.75 },
   'claude-opus-4': { input: 15, output: 75, cache_read: 1.5, cache_write: 18.75 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cache_read: 0.1, cache_write: 2.5 },
   'claude-sonnet-5': { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
   'claude-sonnet-4-6': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
   'claude-sonnet-4-5': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
   'claude-sonnet-4': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+  'claude-haiku-5-5': {
+    input: 0.1,
+    output: 0.5,
+    cache_read: 0.01,
+    cache_write: 0.125,
+    over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 },
+  },
   'claude-haiku-4-5': { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
   'claude-3-5-haiku': { input: 0.8, output: 4, cache_read: 0.08, cache_write: 1 },
 });
 
 /** Human half of the version stamp — hand-bumped when rates are re-checked. */
-export const PRICING_TABLE_DATE = '2026-10-28';
+export const PRICING_TABLE_DATE = '2026-10-29';
 
 /**
  * `{date}+{first 8 hex of sha256(canonical table)}`. Derived rather than
@@ -163,7 +173,9 @@ export function estimateCost(model: string | undefined, usage: TokenUsage): numb
   if (model === undefined || model === '') return null;
   const key = normalizeModelKey(model);
   if (key === undefined) return null;
-  const price = PRICING_TABLE[key]!;
+  const row = PRICING_TABLE[key]!;
+  const prompt = (usage.tokens_in ?? 0) + (usage.cache_read ?? 0) + (usage.cache_write ?? 0);
+  const price = row.over_100k && prompt > 100_000 ? row.over_100k : row;
   const oneHour = usage.cache_write_1h ?? 0;
   const millionths =
     (usage.tokens_in ?? 0) * price.input +

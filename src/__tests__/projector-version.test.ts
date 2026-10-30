@@ -25,7 +25,7 @@ const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const HASHED_TREES = ['transcript', 'project'] as const;
 
 /** One string, not an object: git drops an identical wrapped version line out of the conflict. */
-const PROJECTOR_PIN = '22:ab334f5c941a44f212fc26b62cd216870cc357652965dd146df35e6850649317';
+const PROJECTOR_PIN = '23:f2dc8eced1b8c7e1bd6830d2e239dd131b75c19f588d40619e7e84151d59135e';
 const PROJECTOR_SOURCE_SHA = PROJECTOR_PIN.slice(PROJECTOR_PIN.indexOf(':') + 1);
 
 interface HashedFile {

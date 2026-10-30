@@ -82,6 +82,20 @@ describe('estimateCost — unknown model is null, never zero', () => {
     expect(cost).toBeCloseTo(0.1145, 10);
   });
 
+  it('prices claude-haiku-5-5 at its higher card only once the prompt, cache included, exceeds 100,000 tokens', () => {
+    const atThreshold = {
+      tokens_in: 40_000,
+      cache_read: 40_000,
+      cache_write: 20_000,
+      tokens_out: 1_000,
+    };
+    expect(estimateCost('claude-haiku-5-5', atThreshold)).toBeCloseTo(0.0074, 10);
+    expect(estimateCost('claude-haiku-5-5', { ...atThreshold, tokens_in: 40_001 })).toBeCloseTo(
+      0.0370005,
+      10,
+    );
+  });
+
   it('prices a dated build id at the family rate', () => {
     const dated = estimateCost('claude-sonnet-4-5-20250929', { tokens_in: 1_000_000 });
     const family = estimateCost('claude-sonnet-4-5', { tokens_in: 1_000_000 });
@@ -105,12 +119,23 @@ describe('estimateCost — unknown model is null, never zero', () => {
   });
 });
 
-describe('PRICING_TABLE — quoted rows from the 2026-09-22 public table', () => {
+describe('PRICING_TABLE — quoted rows from the public pricing page', () => {
   it.each([
     ['claude-fable-5-1', { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5 }],
     ['claude-opus-5-5', { input: 4, output: 20, cache_read: 0.2, cache_write: 5 }],
     // Was 3/15/0.3/3.75 until 2026-09-22; the public table says 2/10.
     ['claude-sonnet-5', { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 }],
+    ['claude-sonnet-5-5', { input: 2, output: 10, cache_read: 0.1, cache_write: 2.5 }],
+    [
+      'claude-haiku-5-5',
+      {
+        input: 0.1,
+        output: 0.5,
+        cache_read: 0.01,
+        cache_write: 0.125,
+        over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 },
+      },
+    ],
   ])('%s', (key, rates) => {
     expect(PRICING_TABLE[key]).toEqual(rates);
   });
