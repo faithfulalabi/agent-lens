@@ -32,6 +32,36 @@ import { SESSION_STATUS_VISUALS } from './session-visuals';
  * formatCost / costUnknownLabel distinction between zero and unpriced values.
  */
 
+const METRIC_HEADERS = [
+  'Status',
+  'Model',
+  'Turns',
+  'Subagents',
+  'Errors',
+  'Elapsed',
+  'Tokens',
+  'Est. cost',
+] as const;
+
+const MAIN_SESSION_SCOPE = 'Errors, tokens, and estimated cost cover the main session.';
+
+const COLUMN_TIPS: Partial<Record<string, string>> = {
+  'Last active':
+    'Last active is the most recent event, in your local time. The day filters use this date.',
+  Elapsed:
+    'Elapsed runs from the first to the last event (or now for live sessions), including idle time.',
+  Turns: 'Turns counts your prompts.',
+  Errors: MAIN_SESSION_SCOPE,
+  Tokens: `${MAIN_SESSION_SCOPE} Tokens are input + output; cache counts are separate and not shown here.`,
+  'Est. cost': `${MAIN_SESSION_SCOPE} A dash means no measured cost or an unavailable estimate; unavailable estimates include an explanation.`,
+  Subagents:
+    'Subagents shows the number of agents and their additional input + output tokens. These tokens are separate from the main session totals.',
+  Model:
+    'Model shows the main session’s most-used model first; +N counts other models, including sub-agents’. Hover for full ids.',
+};
+
+const tipId = (label: string) => `tip-${label.replace(/\W/g, '')}`;
+
 export interface SessionListViewProps {
   rows: readonly SessionListRow[];
   sort: SortColumn;
@@ -81,35 +111,9 @@ export function SessionListView({
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
-        <details className="text-xs text-muted">
-          <summary className="cursor-pointer text-foreground">What do these numbers mean?</summary>
-          <div className="mt-2 max-w-2xl space-y-1 leading-relaxed">
-            <p>
-              Last active is the most recent event, in your local time. The day filters use this
-              date.
-            </p>
-            <p>
-              Elapsed runs from the first to the last event (or now for live sessions), including
-              idle time.
-            </p>
-            <p>
-              Turns counts your prompts. Errors, tokens, and estimated cost cover the main session.
-              Tokens are input + output; cache counts are separate and not shown here.
-            </p>
-            <p>
-              Subagents shows the number of agents and their additional input + output tokens. These
-              tokens are separate from the main session totals. A dash means no measured cost or an
-              unavailable estimate; unavailable estimates include an explanation.
-            </p>
-            <p>
-              Model shows the main session’s most-used model first; +N counts other models,
-              including sub-agents’. Hover for full ids.
-            </p>
-          </div>
-        </details>
-        <span data-slot="session-list-count" className="shrink-0 text-2xs text-muted">
-          {formatRowCount(rows.length, pageTruncated)}
+      <div className="flex justify-end border-b border-border px-4 py-3">
+        <span data-slot="session-list-count" className="text-2xs text-muted">
+          {`${formatRowCount(rows.length, pageTruncated)} shown`}
         </span>
       </div>
 
@@ -119,38 +123,70 @@ export function SessionListView({
           data-slot="session-list-header"
           className="session-list-grid border-b border-border bg-surface px-4 py-3 text-2xs text-muted"
         >
-          {SORT_COLUMNS.map((column) => (
-            <button
-              key={column}
-              type="button"
-              aria-pressed={column === sort}
-              title={`Sort by ${COLUMN_LABELS[column].toLowerCase()}`}
-              onClick={() => {
-                onSortChange(column);
-              }}
-              className={cn(
-                'text-left transition-colors',
-                column === sort ? 'text-foreground' : 'text-muted',
-              )}
-            >
-              {column === 'project_path' ? 'Session / Project' : COLUMN_LABELS[column]}
-              {column === sort ? <SortChevron direction={direction} /> : null}
-            </button>
-          ))}
-          <span>Status</span>
-          <span>Model</span>
-          <span className="text-right">Turns</span>
-          <span className="text-right">Subagents</span>
-          <span className="text-right">Errors</span>
-          <span className="text-right">Elapsed</span>
-          <span className="text-right">Tokens</span>
-          <span className="text-right">Est. cost</span>
+          {SORT_COLUMNS.map((column) => {
+            const label = column === 'project_path' ? 'Session / Project' : COLUMN_LABELS[column];
+            const tip = COLUMN_TIPS[label];
+            return (
+              <button
+                key={column}
+                type="button"
+                aria-pressed={column === sort}
+                aria-describedby={tip === undefined ? undefined : tipId(label)}
+                title={
+                  tip === undefined ? `Sort by ${COLUMN_LABELS[column].toLowerCase()}` : undefined
+                }
+                onClick={() => {
+                  onSortChange(column);
+                }}
+                className={cn(
+                  'group relative text-left transition-colors',
+                  column === sort ? 'text-foreground' : 'text-muted',
+                )}
+              >
+                <ColumnTip label={label} />
+                {label}
+                {column === sort ? <SortChevron direction={direction} /> : null}
+              </button>
+            );
+          })}
+          {METRIC_HEADERS.map((label) => {
+            const right = label !== 'Status' && label !== 'Model';
+            const tip = COLUMN_TIPS[label];
+            return (
+              <span
+                key={label}
+                tabIndex={tip === undefined ? undefined : 0}
+                aria-describedby={tip === undefined ? undefined : tipId(label)}
+                className={cn('group relative', right && 'text-right')}
+              >
+                <ColumnTip label={label} right={right} />
+                {label}
+              </span>
+            );
+          })}
         </div>
         {rows.map((row, index) => (
           <SessionRow key={row.id} row={row} now={now} isCursor={index === cursor} />
         ))}
       </div>
     </div>
+  );
+}
+
+function ColumnTip({ label, right = false }: { label: string; right?: boolean }) {
+  const tip = COLUMN_TIPS[label];
+  if (tip === undefined) return null;
+  return (
+    <span
+      id={tipId(label)}
+      aria-hidden="true"
+      className={cn(
+        'pointer-events-none absolute top-full z-10 mt-1 hidden w-64 rounded-lg bg-surface-raised p-2 text-left text-2xs leading-relaxed text-foreground shadow-float group-hover:block group-focus-visible:block',
+        right ? 'right-0' : 'left-0',
+      )}
+    >
+      {tip}
+    </span>
   );
 }
 

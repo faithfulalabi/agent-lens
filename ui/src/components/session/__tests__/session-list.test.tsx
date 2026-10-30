@@ -214,6 +214,34 @@ describe('SessionListView renders a large page correctly (Test 5)', () => {
     }
   });
 
+  it('puts every explanation on its column header, shown on hover and keyboard focus, with no panel', () => {
+    const markup = markupOf(rows.slice(0, 1));
+    expect(markup).not.toContain('What do these numbers mean?');
+    expect(markup).not.toContain('<details');
+
+    for (const sentence of [
+      'Last active is the most recent event, in your local time. The day filters use this date.',
+      'Elapsed runs from the first to the last event (or now for live sessions), including idle time.',
+      'Turns counts your prompts.',
+      'Errors, tokens, and estimated cost cover the main session.',
+      'Tokens are input + output; cache counts are separate and not shown here.',
+      'Subagents shows the number of agents and their additional input + output tokens.',
+      'These tokens are separate from the main session totals.',
+      'A dash means no measured cost or an unavailable estimate; unavailable estimates include an explanation.',
+      'Model shows the main session\u2019s most-used model first; +N counts other models, including sub-agents\u2019. Hover for full ids.',
+    ]) {
+      expect(markup).toContain(sentence);
+    }
+
+    expect(markup.match(/aria-describedby="tip-/g) ?? []).toHaveLength(8);
+    const tips = markup.match(/<span id="tip-[^"]*"[^>]*>/g) ?? [];
+    expect(tips).toHaveLength(8);
+    for (const tip of tips) {
+      expect(tip).toContain('group-hover:block');
+      expect(tip).toContain('group-focus-visible:block');
+    }
+  });
+
   it('renders a sort chevron on the sorted column only', () => {
     const svgs = markupOf(rows.slice(0, 2)).match(/<svg/g) ?? [];
     expect(svgs).toHaveLength(1);
@@ -550,7 +578,7 @@ describe('a populated list states its own size', () => {
         now={Date.parse('2026-07-30T12:00:00.000Z')}
       />,
     );
-    expect(markup).toContain('3 sessions');
+    expect(markup).toContain('3 sessions shown');
     expect(markup).not.toContain('10 sessions');
   });
 
