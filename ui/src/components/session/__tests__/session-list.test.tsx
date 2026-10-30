@@ -10,7 +10,9 @@ import {
   rowLabel,
   type EmptyStateShown,
   type SortColumn,
+  type TimeSpan,
 } from '../../../lib/session-list';
+import { EVENT_DAY } from '../../../lib/format';
 import { hrefFor } from '../../../lib/route-match';
 import { createRouter } from '../../../lib/router';
 import { fakeHistoryPort } from '../../../lib/__tests__/helpers';
@@ -675,15 +677,21 @@ function escapeHtml(value: string): string {
 /* ------------------------------------------------------- the other two ---- */
 
 describe('VolumeHistogram', () => {
+  const day = (d: number) => new Date(2026, 9, d).getTime();
   const buckets = [
-    { start: 0, end: 10, count: 0 },
-    { start: 10, end: 20, count: 5 },
-    { start: 20, end: 30, count: 10 },
+    { start: day(26), end: day(27), count: 0 },
+    { start: day(27), end: day(28), count: 5 },
+    { start: day(28), end: day(29), count: 10 },
   ];
+  const render = (selection?: TimeSpan) =>
+    renderToStaticMarkup(
+      <VolumeHistogram buckets={buckets} selection={selection} onSelect={() => {}} />,
+    );
 
-  it('draws one element per bucket with its height inline, never as a class', () => {
-    const markup = renderToStaticMarkup(<VolumeHistogram buckets={buckets} />);
-    expect(markup.match(/data-slot="volume-bucket"/g) ?? []).toHaveLength(3);
+  it('draws one dated button per day with its height inline, never as a class', () => {
+    const markup = render();
+    expect(markup.match(/<button[^>]*data-slot="volume-bucket"/g) ?? []).toHaveLength(3);
+    expect(markup).toContain(`aria-label="${EVENT_DAY.format(day(27))}: 5 sessions"`);
     expect(markup).toContain('height:100%');
     expect(
       markup,
@@ -692,12 +700,25 @@ describe('VolumeHistogram', () => {
     ).not.toMatch(/class="[^"]*h-\[/);
   });
 
+  it('labels the x-axis with dates', () => {
+    expect(render()).toContain(`>${EVENT_DAY.format(day(26))}</span>`);
+  });
+
+  it('presses exactly the selected days and offers Clear', () => {
+    const markup = render({ start: day(27), end: day(29) });
+    expect(markup.match(/aria-pressed="true"/g) ?? []).toHaveLength(2);
+    expect(markup).toContain('>Clear</button>');
+    expect(render()).not.toContain('>Clear</button>');
+  });
+
   it('gives an all-zero range a baseline rather than nothing at all', () => {
     const flat = [
       { start: 0, end: 10, count: 0 },
       { start: 10, end: 20, count: 0 },
     ];
-    const markup = renderToStaticMarkup(<VolumeHistogram buckets={flat} />);
+    const markup = renderToStaticMarkup(
+      <VolumeHistogram buckets={flat} selection={undefined} onSelect={() => {}} />,
+    );
     expect(markup.match(/data-slot="volume-bucket"/g) ?? []).toHaveLength(2);
     expect(markup).not.toContain('height:0%');
   });

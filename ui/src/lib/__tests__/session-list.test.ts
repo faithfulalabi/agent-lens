@@ -348,6 +348,19 @@ describe('selectRows narrows and sorts totally (Test 2)', () => {
     expect(data.sessions.map((s) => s.id)).toEqual(before);
   });
 
+  it('narrows to a day span, composed with the project', () => {
+    const span = {
+      start: Date.parse('2026-07-29T09:30:00.000Z'),
+      end: Date.parse('2026-07-29T10:30:00.000Z'),
+    };
+    const pick = (project?: string) =>
+      selectRows(data, { project, span, sort: 'last_activity_at', direction: 'desc' }).map(
+        (s) => s.id,
+      );
+    expect(pick()).toEqual(['a', 'b']);
+    expect(pick('/p/one')).toEqual(['b']);
+  });
+
   it('reads the server-narrowed pool when one was fetched', () => {
     const server = [makeSessionRow({ id: 'z', project_path: '/p/deep' })];
     const narrowed = selectRows(dataOf({ sessions: rows, projectSessions: server }), {
@@ -439,38 +452,41 @@ describe('projectsIn feeds the narrowing control', () => {
 });
 
 describe('volumeBuckets (Test 7)', () => {
-  it('returns a constant number of buckets whatever the input', () => {
+  it.each([
+    ['3d', 4],
+    ['7d', 8],
+    ['30d', 31],
+  ] as const)('draws one bucket per local calendar day for %s', (range, days) => {
     for (const sessions of [[], ladder(1), ladder(40)]) {
-      expect(volumeBuckets(sessions, { range: '7d', now: NOW, bucketCount: 24 })).toHaveLength(24);
+      const buckets = volumeBuckets(sessions, { range, now: NOW });
+      expect(buckets).toHaveLength(days);
+      for (const bucket of buckets) expect(new Date(bucket.start).getHours()).toBe(0);
     }
   });
 
   it('yields all-zero bars for no sessions rather than an empty pane', () => {
-    const buckets = volumeBuckets([], { range: '3d', now: NOW, bucketCount: 12 });
+    const buckets = volumeBuckets([], { range: '3d', now: NOW });
     expect(buckets.every((b) => b.count === 0)).toBe(true);
   });
 
   it('counts every in-range session exactly once, boundaries included', () => {
-    const buckets = volumeBuckets(ladder(48), { range: '3d', now: NOW, bucketCount: 12 });
+    const buckets = volumeBuckets(ladder(48), { range: '3d', now: NOW });
     const total = buckets.reduce((sum, b) => sum + b.count, 0);
     expect(total, '48 hourly sessions all sit inside a 3-day window').toBe(48);
   });
 
-  it('places a session sitting exactly on an internal boundary in one bucket only', () => {
-    // 12 buckets across 3 days = 6h each; 6h before `now` is the boundary
-    // between the last two buckets.
-    const onBoundary = makeSessionRow({
-      last_activity_at: new Date(NOW - 6 * 3_600_000).toISOString(),
-    });
-    const buckets = volumeBuckets([onBoundary], { range: '3d', now: NOW, bucketCount: 12 });
-    expect(buckets.reduce((sum, b) => sum + b.count, 0)).toBe(1);
+  it('places a session sitting exactly on local midnight in one bucket only', () => {
+    const midnight = new Date(NOW).setHours(0, 0, 0, 0);
+    const onBoundary = makeSessionRow({ last_activity_at: new Date(midnight).toISOString() });
+    const buckets = volumeBuckets([onBoundary], { range: '3d', now: NOW });
+    expect(buckets.filter((b) => b.count > 0).map((b) => b.start)).toEqual([midnight]);
   });
 
   it('excludes sessions outside the window', () => {
     const old = makeSessionRow({
       last_activity_at: new Date(NOW - 40 * 86_400_000).toISOString(),
     });
-    const buckets = volumeBuckets([old, ...ladder(3)], { range: '3d', now: NOW, bucketCount: 12 });
+    const buckets = volumeBuckets([old, ...ladder(3)], { range: '3d', now: NOW });
     expect(buckets.reduce((sum, b) => sum + b.count, 0)).toBe(3);
   });
 
@@ -478,13 +494,13 @@ describe('volumeBuckets (Test 7)', () => {
     const spread = ladder(3, (i) => ({
       last_activity_at: new Date(NOW - i * 30 * 86_400_000).toISOString(),
     }));
-    const buckets = volumeBuckets(spread, { range: 'all', now: NOW, bucketCount: 3 });
+    const buckets = volumeBuckets(spread, { range: 'all', now: NOW });
     expect(buckets.reduce((sum, b) => sum + b.count, 0)).toBe(3);
-    expect(buckets.filter((b) => b.count > 0).length).toBeGreaterThan(1);
+    expect(buckets.filter((b) => b.count > 0).length).toBe(3);
   });
 
   it('gives every bucket a start before its end, contiguously', () => {
-    const buckets = volumeBuckets(ladder(5), { range: '7d', now: NOW, bucketCount: 8 });
+    const buckets = volumeBuckets(ladder(5), { range: '7d', now: NOW });
     for (const [i, bucket] of buckets.entries()) {
       expect(bucket.end).toBeGreaterThan(bucket.start);
       if (i > 0) expect(bucket.start).toBe(buckets[i - 1]?.end);

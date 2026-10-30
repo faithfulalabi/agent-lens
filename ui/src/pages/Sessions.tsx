@@ -17,6 +17,7 @@ import {
   type SortColumn,
   type SortDirection,
   type TimeRange,
+  type TimeSpan,
 } from '@/lib/session-list';
 import { EmptyState } from '@/components/session/EmptyState';
 import { RangeControl } from '@/components/session/RangeControl';
@@ -57,8 +58,6 @@ import { VolumeHistogram } from '@/components/session/VolumeHistogram';
  * price of two states that can disagree with each other.
  */
 
-const BUCKET_COUNT = 40;
-
 export interface SessionsProps {
   router?: Router;
   api?: ApiClient;
@@ -69,6 +68,7 @@ export interface SessionsProps {
 export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps = {}) {
   const [range, setRange] = useState<TimeRange>('3d');
   const [project, setProject] = useState<string | undefined>(undefined);
+  const [span, setSpan] = useState<TimeSpan | undefined>(undefined);
   const [sort, setSort] = useState<SortColumn>('last_activity_at');
   const [direction, setDirection] = useState<SortDirection>('desc');
   const [cursor, setCursor] = useState(-1);
@@ -131,8 +131,8 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
     });
   }, [bus, listKey]);
   const rows = useMemo(
-    () => (data === null ? [] : selectRows(data, { project, sort, direction })),
-    [data, project, sort, direction],
+    () => (data === null ? [] : selectRows(data, { project, span, sort, direction })),
+    [data, project, span, sort, direction],
   );
 
   useEffect(() => {
@@ -164,7 +164,7 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
    * Changing the range is this screen's primary gesture, and it changes the
    * load key — so an early return on the pending state would unmount the very
    * control that was just clicked, losing its focus and flashing the whole page
-   * blank each time. `volumeBuckets` draws a flat baseline from no sessions
+   * blank each time. `volumeBuckets` draws zero-count days from no sessions
    * precisely so there is something honest to hold the space meanwhile.
    */
   return (
@@ -177,11 +177,16 @@ export function Sessions({ router = defaultRouter(), api, bus }: SessionsProps =
         </p>
       </div>
       <VolumeHistogram
-        buckets={volumeBuckets(data?.sessions ?? [], { range, now, bucketCount: BUCKET_COUNT })}
+        buckets={volumeBuckets(data?.sessions ?? [], { range, now })}
+        selection={span}
+        onSelect={setSpan}
       />
       <RangeControl
         range={range}
-        onRangeChange={setRange}
+        onRangeChange={(next) => {
+          setRange(next);
+          setSpan(undefined);
+        }}
         projects={data === null ? [] : projectsIn(data.sessions)}
         project={project}
         onProjectChange={setProject}
