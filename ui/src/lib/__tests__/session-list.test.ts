@@ -292,16 +292,22 @@ describe('selectRows narrows and sorts totally (Test 2)', () => {
       id: 'b',
       project_path: '/p/one',
       last_activity_at: '2026-07-29T10:00:00.000Z',
+      error_count: 1,
     }),
     makeSessionRow({
       id: 'a',
       project_path: '/p/two',
       last_activity_at: '2026-07-29T10:00:00.000Z',
+      error_count: 3,
+      models: ['claude-opus-5-5'],
     }),
     makeSessionRow({
       id: 'c',
       project_path: '/p/one',
       last_activity_at: '2026-07-29T09:00:00.000Z',
+      error_count: 1,
+      models: [],
+      sub_models: [],
     }),
   ];
   const data = dataOf({ sessions: rows });
@@ -324,14 +330,16 @@ describe('selectRows narrows and sorts totally (Test 2)', () => {
     ['last_activity_at', 'asc', ['c', 'a', 'b']],
     ['project_path', 'asc', ['b', 'c', 'a']],
     ['project_path', 'desc', ['a', 'b', 'c']],
+    ['error_count', 'desc', ['a', 'b', 'c']],
+    ['error_count', 'asc', ['b', 'c', 'a']],
+    ['model', 'asc', ['c', 'a', 'b']],
+    ['model', 'desc', ['b', 'a', 'c']],
   ] as const)('sorts by %s %s with an id tiebreaker', (sort, direction, expected) => {
     expect(selectRows(data, { sort, direction }).map((s) => s.id)).toEqual(expected);
   });
 
-  it('offers exactly the two columns the strip draws', () => {
-    // The strip iterates this constant, so a column added here without a label
-    // renders an empty button rather than failing to compile.
-    expect([...SORT_COLUMNS]).toEqual(['project_path', 'last_activity_at']);
+  it('offers project, last active, model and errors as sort columns', () => {
+    expect([...SORT_COLUMNS]).toEqual(['project_path', 'last_activity_at', 'model', 'error_count']);
   });
 
   it('never mutates the array it was handed', () => {

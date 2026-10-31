@@ -21,7 +21,7 @@
 
 import type { ApiClient, SessionListRow, SessionsQuery, TurnRow } from './api.js';
 import type { Router } from './router.js';
-import { costUnknownLabel } from './format.js';
+import { costUnknownLabel, modelCell } from './format.js';
 
 /* ----------------------------------------------------------- row counts --- */
 
@@ -276,14 +276,13 @@ function needsProjectProof(
 /* -------------------------------------------------------------- select ---- */
 
 /**
- * The columns the header strip can sort by — project and time, and nothing else.
+ * The columns the header can sort by, each a button in its own grid slot.
  *
- * Cut from four at the phase-5 gate: four controls read as a tab bar whose only
- * feedback is a chevron. The time column is `last_activity_at`, the same instant
- * the range narrows on, so the strip and the range can never disagree about
- * which moment the screen is ordered by.
+ * The time column is `last_activity_at`, the same instant the range narrows on,
+ * so the header and the range can never disagree about which moment the screen
+ * is ordered by.
  */
-export const SORT_COLUMNS = ['project_path', 'last_activity_at'] as const;
+export const SORT_COLUMNS = ['project_path', 'last_activity_at', 'model', 'error_count'] as const;
 
 export type SortColumn = (typeof SORT_COLUMNS)[number];
 export type SortDirection = 'asc' | 'desc';
@@ -298,6 +297,8 @@ export type SortDirection = 'asc' | 'desc';
 export const COLUMN_LABELS: Record<SortColumn, string> = {
   project_path: 'Project',
   last_activity_at: 'Last active',
+  model: 'Model',
+  error_count: 'Errors',
 };
 
 export interface SelectOptions {
@@ -328,9 +329,14 @@ export function selectRows(data: SessionListData, options: SelectOptions): Sessi
       : pool.filter((row) => row.project_path === options.project);
 
   const sign = options.direction === 'asc' ? 1 : -1;
+  // Model sorts on the text its cell shows; `row.model` can name a different model.
+  const key = (row: SessionListRow) =>
+    options.sort === 'model' ? modelCell(row.models, row.sub_models).text : row[options.sort];
   return [...narrowed].sort((a, b) => {
-    // Both sortable columns are ISO or path strings, so one comparison serves.
-    const ordered = a[options.sort].localeCompare(b[options.sort]);
+    const x = key(a);
+    const y = key(b);
+    const ordered =
+      typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
     return ordered !== 0 ? sign * ordered : a.id.localeCompare(b.id);
   });
 }

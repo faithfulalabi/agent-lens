@@ -48,7 +48,7 @@ describe('the session list shows a Model column', () => {
       makeSessionRow({ id: 'none', model: null, models: [], sub_models: [] }),
     ]);
 
-    expect(markup).toContain('>Model</span>');
+    expect(markup).toContain('>Model</button>');
     expect(modelCells(markup)).toEqual([
       { count: 1, text: 'Sonnet 5', title: 'claude-sonnet-5' },
       { count: 1, text: 'Opus 5.5 +1', title: 'claude-opus-5-5, claude-fable-5-1' },
