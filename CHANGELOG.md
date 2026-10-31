@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.3](https://github.com/faithfulalabi/agent-lens/compare/v0.15.2...v0.15.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **pricing:** price claude-sonnet-5-5 and claude-haiku-5-5 ([#155](https://github.com/faithfulalabi/agent-lens/issues/155)) ([69fd06d](https://github.com/faithfulalabi/agent-lens/commit/69fd06d892b829b03470ff63a37429906620762f))
+
 ## [0.15.2](https://github.com/faithfulalabi/agent-lens/compare/v0.15.1...v0.15.2) (2026-10-29)
 
 
