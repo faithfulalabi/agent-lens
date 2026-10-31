@@ -301,14 +301,22 @@ export const COLUMN_LABELS: Record<SortColumn, string> = {
   error_count: 'Errors',
 };
 
+export interface TimeSpan {
+  /** Epoch millis, inclusive. */
+  start: number;
+  /** Epoch millis, exclusive. */
+  end: number;
+}
+
 export interface SelectOptions {
   project?: string;
+  span?: TimeSpan;
   sort: SortColumn;
   direction: SortDirection;
 }
 
 /**
- * The rows to draw: narrowed to the chosen project, then sorted.
+ * The rows to draw: narrowed to the chosen project and day span, then sorted.
  *
  * The comparison ALWAYS ends on the id. The server's `ORDER BY started_at DESC`
  * carries no tiebreaker on purpose — one indexed pass is the point — so two
@@ -327,12 +335,20 @@ export function selectRows(data: SessionListData, options: SelectOptions): Sessi
     options.project === undefined || options.project === ''
       ? pool
       : pool.filter((row) => row.project_path === options.project);
+  const { span } = options;
+  const spanned =
+    span === undefined
+      ? narrowed
+      : narrowed.filter((row) => {
+          const at = Date.parse(row.last_activity_at);
+          return span.start <= at && at < span.end;
+        });
 
   const sign = options.direction === 'asc' ? 1 : -1;
   // Model sorts on the text its cell shows; `row.model` can name a different model.
   const key = (row: SessionListRow) =>
     options.sort === 'model' ? modelCell(row.models, row.sub_models).text : row[options.sort];
-  return [...narrowed].sort((a, b) => {
+  return [...spanned].sort((a, b) => {
     const x = key(a);
     const y = key(b);
     const ordered =
@@ -379,55 +395,42 @@ export function foldsUnderAgent(turn: Pick<TurnRow, 'kind' | 'parent_event_id'>)
 
 /* ------------------------------------------------------------ histogram --- */
 
-export interface VolumeBucket {
-  /** Epoch millis, inclusive. */
-  start: number;
-  /** Epoch millis, exclusive — except on the final bucket, which is closed. */
-  end: number;
+export interface VolumeBucket extends TimeSpan {
   count: number;
 }
 
 export interface BucketOptions {
   range: TimeRange;
   now: number | Date;
-  bucketCount: number;
 }
 
 /**
- * Session ACTIVITY, counted into a constant number of contiguous buckets.
+ * Session ACTIVITY per local calendar day, from the window's first day to today.
  *
  * Counted on `last_activity_at`, the same instant the range narrows on, so a bar
- * can never sit outside the window its own row was selected by.
+ * can never sit outside the window its own row was selected by. No sessions
+ * still yields zero-count days, which is a shape rather than a hole.
  *
- * Constant rather than range-dependent so the component draws the same number of
- * bars whatever the range, and never an empty pane: no sessions yields
- * all-zero bars, which is a shape rather than a hole.
- *
- * Buckets are half-open (`start <= t < end`) so a session landing exactly on an
- * internal boundary is counted once, never twice and never zero times. The last
- * bucket closes at its end so `now` itself still lands somewhere. For `all` the
- * window runs from the oldest activity to `now`, because there is no other lower
- * bound to draw against.
+ * Days step by calendar date, not by adding 24 hours, because a DST
+ * day is 23 or 25 hours long.
  */
 export function volumeBuckets(
   sessions: readonly SessionListRow[],
-  { range, now, bucketCount }: BucketOptions,
+  { range, now }: BucketOptions,
 ): VolumeBucket[] {
   const end = typeof now === 'number' ? now : now.getTime();
-  const start = windowStart(sessions, range, end);
-  const width = Math.max(1, (end - start) / bucketCount);
+  const first = new Date(windowStart(sessions, range, end));
+  const midnight = (day: number) =>
+    new Date(first.getFullYear(), first.getMonth(), first.getDate() + day).getTime();
 
-  const buckets: VolumeBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
-    start: start + i * width,
-    end: i === bucketCount - 1 ? end : start + (i + 1) * width,
-    count: 0,
-  }));
+  const buckets: VolumeBucket[] = [];
+  for (let day = 0; midnight(day) <= end; day += 1) {
+    buckets.push({ start: midnight(day), end: midnight(day + 1), count: 0 });
+  }
 
   for (const session of sessions) {
     const at = Date.parse(session.last_activity_at);
-    if (!Number.isFinite(at) || at < start || at > end) continue;
-    const index = Math.min(bucketCount - 1, Math.floor((at - start) / width));
-    const bucket = buckets[index];
+    const bucket = buckets.find((b) => b.start <= at && at < b.end);
     if (bucket !== undefined) bucket.count += 1;
   }
   return buckets;
@@ -436,10 +439,7 @@ export function volumeBuckets(
 function windowStart(sessions: readonly SessionListRow[], range: TimeRange, end: number): number {
   if (range !== 'all') return end - RANGE_DAYS[range] * DAY_MS;
   const starts = sessions.map((s) => Date.parse(s.last_activity_at)).filter(Number.isFinite);
-  const oldest = starts.length === 0 ? end - DAY_MS : Math.min(...starts);
-  // A single session, or several in the same millisecond, would give a
-  // zero-width window and every bucket the same bounds.
-  return oldest < end ? oldest : end - DAY_MS;
+  return Math.min(end, ...starts);
 }
 
 /* ---------------------------------------------------------- empty state --- */

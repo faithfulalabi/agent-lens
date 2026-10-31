@@ -62,7 +62,7 @@ const WALL_CLOCK = new Intl.DateTimeFormat('en-US', {
 });
 
 /** The qualifier a row gets when its day is not the session's first day. */
-const EVENT_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+export const EVENT_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 
 /**
  * Calendar identity in the reader's zone, year included so two July 30ths a year
