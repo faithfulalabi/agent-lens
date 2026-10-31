@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.16.0](https://github.com/faithfulalabi/agent-lens/compare/v0.15.3...v0.16.0) (2026-10-31)
+
+
+### Features
+
+* **session-list:** explain each column in a header tooltip ([#156](https://github.com/faithfulalabi/agent-lens/issues/156)) ([85133c4](https://github.com/faithfulalabi/agent-lens/commit/85133c4c1caf1328464522490e7323ee0da96fe8))
+* **session-list:** make the activity chart readable and selectable ([#158](https://github.com/faithfulalabi/agent-lens/issues/158)) ([9a8c532](https://github.com/faithfulalabi/agent-lens/commit/9a8c532adfba80a995496bc8f5701f99d9908cfc))
+* **session-list:** sort by errors and by model ([#157](https://github.com/faithfulalabi/agent-lens/issues/157)) ([9ea372b](https://github.com/faithfulalabi/agent-lens/commit/9ea372b30b4520a6be561888d4237403e640e579))
+
 ## [0.15.3](https://github.com/faithfulalabi/agent-lens/compare/v0.15.2...v0.15.3) (2026-10-30)
 
 
