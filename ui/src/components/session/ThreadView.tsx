@@ -13,6 +13,17 @@ import { RowChips } from './SpanRow';
 import { SPAN_VISUALS } from './span-visuals';
 import { MessageContent } from './MessageContent';
 
+const OUTLINE_KEY = 'agent-lens:thread-outline';
+const WASH = 'animate-[row-arrive_1.5s_ease-in]';
+
+function storedOutlineOpen(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(OUTLINE_KEY) !== 'collapsed';
+  } catch {
+    return true;
+  }
+}
+
 export interface ThreadViewProps {
   rows: readonly ThreadRow[];
   startedAt: string;
@@ -28,31 +39,64 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
   );
   const scroller = useRef<HTMLDivElement>(null);
   const [activePrompt, setActivePrompt] = useState<string | null>(null);
+  const [outlineOpen, setOutlineOpen] = useState(storedOutlineOpen);
+  const hasOutline = prompts.length > 1;
 
   function jump(id: string) {
     const target = document.getElementById(`thread-${id}`);
     target?.scrollIntoView({ block: 'start' });
     target?.focus({ preventScroll: true });
+    target?.classList.remove(WASH);
+    void target?.offsetWidth; // reflow, so re-adding the class restarts the animation
+    target?.classList.add(WASH);
     setActivePrompt(id);
+  }
+
+  function toggleOutline() {
+    const next = !outlineOpen;
+    setOutlineOpen(next);
+    try {
+      globalThis.localStorage?.setItem(OUTLINE_KEY, next ? 'expanded' : 'collapsed');
+    } catch {
+      // Storage blocked: the choice lasts until reload.
+    }
   }
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-5 pb-16 pt-8 sm:px-8">
+      <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-smooth">
+        <div
+          className={cn(
+            'mx-auto max-w-3xl px-5 pb-16 pt-8 sm:px-8',
+            hasOutline && !outlineOpen && 'lg:max-w-4xl',
+          )}
+        >
           <div className="mb-7 flex items-center justify-between gap-4 text-xs text-muted">
             <span>
               Conversation <span className="px-2 text-faint">/</span> {prompts.length} prompts
             </span>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 hover:text-foreground"
-              onClick={() => {
-                if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-              }}
-            >
-              <ArrowDown size={13} aria-hidden="true" /> Latest
-            </button>
+            <span className="flex items-center gap-4">
+              {hasOutline ? (
+                <button
+                  type="button"
+                  aria-expanded={outlineOpen}
+                  aria-controls="thread-outline"
+                  className="hidden items-center gap-1.5 hover:text-foreground lg:flex"
+                  onClick={toggleOutline}
+                >
+                  <List size={13} aria-hidden="true" /> {outlineOpen ? 'Hide' : 'Show'} outline
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="flex items-center gap-1.5 hover:text-foreground"
+                onClick={() => {
+                  if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+                }}
+              >
+                <ArrowDown size={13} aria-hidden="true" /> Latest
+              </button>
+            </span>
           </div>
           {rows.length === 0 ? (
             <p className="py-12 text-center text-muted">No messages recorded yet.</p>
@@ -66,7 +110,7 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
                   tabIndex={-1}
                   data-thread-kind="message"
                   data-event-id={section.id}
-                  className="scroll-mt-6"
+                  className="scroll-mt-6 rounded-md"
                 >
                   <MessageRow row={section.row} startedAt={startedAt} api={api} />
                 </li>
@@ -79,8 +123,9 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
           </ol>
         </div>
       </div>
-      {prompts.length > 1 ? (
+      {hasOutline && outlineOpen ? (
         <nav
+          id="thread-outline"
           aria-label="Conversation outline"
           className="hidden w-60 shrink-0 overflow-y-auto border-l border-border px-4 py-8 lg:block"
         >
