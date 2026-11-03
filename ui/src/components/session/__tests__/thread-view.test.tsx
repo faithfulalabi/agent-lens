@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { EventRow } from '../../../lib/api';
@@ -388,5 +388,48 @@ describe('an event that returned images draws them in the thread', () => {
     expect(markup).toContain('2 prompts');
     const outline = markup.slice(markup.indexOf('Conversation outline'));
     expect(outline).not.toContain('[image image/png');
+  });
+});
+
+describe('the "In this session" outline', () => {
+  const twoPrompts = [
+    { kind: 'prompt', text: 'first' },
+    { kind: 'prompt', text: 'second' },
+  ] satisfies Partial<EventRow>[];
+
+  function storing(value: string | null) {
+    vi.stubGlobal('localStorage', { getItem: () => value, setItem() {} });
+  }
+
+  beforeEach(() => storing(null));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('starts expanded, with a toggle that controls it', () => {
+    const markup = threadMarkup(twoPrompts);
+
+    expect(markup).toMatch(/<button[^>]*aria-expanded="true"[^>]*aria-controls="thread-outline"/);
+    expect(markup).toMatch(/<nav[^>]*id="thread-outline"/);
+    expect(markup).not.toContain('lg:max-w-4xl');
+  });
+
+  it('stays collapsed on load when that was the stored choice, and the thread widens', () => {
+    storing('collapsed');
+    const markup = threadMarkup(twoPrompts);
+
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('Conversation outline');
+    expect(markup).toContain('lg:max-w-4xl');
+  });
+
+  it('offers no toggle when there is no outline to show', () => {
+    expect(threadMarkup([{ kind: 'prompt', text: 'only' }])).not.toContain('aria-expanded');
+  });
+
+  it('scrolls smoothly through CSS, so reduced motion makes the jump instant', () => {
+    expect(
+      threadMarkup(twoPrompts),
+      'globals.css forces scroll-behavior: auto under prefers-reduced-motion; a JS ' +
+        "behavior: 'smooth' would bypass it.",
+    ).toContain('scroll-smooth');
   });
 });
