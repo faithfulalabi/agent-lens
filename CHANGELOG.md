@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/faithfulalabi/agent-lens/compare/v0.16.0...v0.17.0) (2026-11-03)
+
+
+### Features
+
+* **thread:** collapse the outline and smooth the jump to a prompt ([#162](https://github.com/faithfulalabi/agent-lens/issues/162)) ([e186e9a](https://github.com/faithfulalabi/agent-lens/commit/e186e9acc30caff77264c7ee9fdff7469ac8337c))
+
 ## [0.16.0](https://github.com/faithfulalabi/agent-lens/compare/v0.15.3...v0.16.0) (2026-10-31)
 
 
