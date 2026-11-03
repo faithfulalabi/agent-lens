@@ -9,10 +9,12 @@ import {
   SESSION_VIEW_MODES,
   THREAD_PREVIEW_CHARS,
   buildThread,
+  errorClipboardText,
   groupThread,
+  isFailedCall,
   type ThreadRow,
 } from '../thread';
-import { makeDetail, makeEventRow, makeTurnRow, stubApiClient } from './fixtures';
+import { makeDetail, makeEventContent, makeEventRow, makeTurnRow, stubApiClient } from './fixtures';
 
 /*
  * Task 5.4's model half — the second pure reader over the one `EventRow[]`.
@@ -360,5 +362,89 @@ describe('an unknown row carries the role its text was rendered in', () => {
 describe('the two surfaces are one closed list', () => {
   it('names both, in the order their controls render', () => {
     expect(SESSION_VIEW_MODES).toEqual(['thread', 'tree']);
+  });
+});
+
+describe('isFailedCall', () => {
+  it.each([
+    ['error', true],
+    ['denied', true],
+    ['ok', false],
+    ['running', false],
+    ['unknown', false],
+  ])('a %s tool call is failed: %s', (status, failed) => {
+    const [row] = rowsFor([{ kind: 'tool_call', status }]);
+    expect(row && isFailedCall(row)).toBe(failed);
+  });
+
+  it('never counts a session-error message row', () => {
+    const [row] = rowsFor([{ kind: 'error', status: 'error', text: 'boom' }]);
+    expect(row && isFailedCall(row)).toBe(false);
+  });
+});
+
+describe('errorClipboardText', () => {
+  const failedRows = (events: Partial<EventRow>[]) =>
+    rowsFor(events.map((event) => ({ kind: 'tool_call', status: 'error', ...event }))).filter(
+      isFailedCall,
+    );
+
+  it('copies a long inline error whole without fetching', async () => {
+    const output = `${'x'.repeat(600)} ENOENT: no such file`;
+    const rows = failedRows([{ name: 'Bash', input: '{"cmd":"cat a"}', text: output }]);
+
+    await expect(errorClipboardText(rows, stubApiClient())).resolves.toBe(
+      `Bash (error)\n{"cmd":"cat a"}\n${output}`,
+    );
+  });
+
+  it('fetches a spilled output and copies the full body', async () => {
+    const rows = failedRows([{ id: 'ev-0', text: null, output_storage: 'spill' }]);
+    const api = stubApiClient({
+      getEventContent: (id, field) =>
+        Promise.resolve(
+          makeEventContent({ id, field, storage: 'spill', content: 'the spilled error' }),
+        ),
+    });
+
+    const text = await errorClipboardText(rows, api);
+
+    expect(text).toContain('the spilled error');
+    expect(text).not.toContain('written to a file');
+  });
+
+  it('replaces a line_ref head with the fetched full body', async () => {
+    const rows = failedRows([{ id: 'ev-0', text: 'the head', output_storage: 'line_ref' }]);
+    const api = stubApiClient({
+      getEventContent: (id, field) =>
+        Promise.resolve(
+          makeEventContent({ id, field, storage: 'line_ref', content: 'the head and the tail' }),
+        ),
+    });
+
+    const text = await errorClipboardText(rows, api);
+
+    expect(text).toContain('the head and the tail');
+    expect(text).not.toContain('Showing the stored head');
+  });
+
+  it('keeps the head-preview note with the head when the fetch fails', async () => {
+    const rows = failedRows([{ id: 'ev-0', text: 'the head', output_storage: 'line_ref' }]);
+    const api = stubApiClient({ getEventContent: () => Promise.reject(new Error('offline')) });
+
+    const text = await errorClipboardText(rows, api);
+
+    expect(text).toContain('Showing the stored head of a larger body.\nthe head');
+  });
+
+  it('joins several errors in order with a blank line between them', async () => {
+    const rows = failedRows([
+      { name: 'Read', input: null, text: 'first' },
+      { name: 'Bash', status: 'denied', input: null, text: 'second' },
+    ]);
+
+    await expect(errorClipboardText(rows)).resolves.toBe(
+      'Read (error)\nfirst\n\nBash (denied)\nsecond',
+    );
   });
 });

@@ -1,9 +1,29 @@
-import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUpRight, Bot, ChevronRight, List, Terminal, User } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import {
+  ArrowDown,
+  ArrowUpRight,
+  Bot,
+  Check,
+  ChevronRight,
+  CircleX,
+  Copy,
+  List,
+  Terminal,
+  User,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatEventTime } from '@/lib/format';
 import { eventChips } from '@/lib/turn-tree';
-import { activitySummary, groupThread, type ThreadRow, type ThreadMessageRow } from '@/lib/thread';
+import {
+  activitySummary,
+  errorClipboardText,
+  groupThread,
+  isFailedCall,
+  type ThreadRow,
+  type ThreadMessageRow,
+  type ThreadToolRow,
+} from '@/lib/thread';
 import type { ApiClient, ContentField, EventContentBody, EventRow } from '@/lib/api';
 import { contentStateOf } from '@/lib/event-content';
 import { hrefFor } from '@/lib/route-match';
@@ -28,10 +48,12 @@ export interface ThreadViewProps {
   rows: readonly ThreadRow[];
   startedAt: string;
   api?: ApiClient;
+  /** The header's error count, so a page cut short can say how many it is missing. */
+  errorCount?: number;
 }
 
 /** A lossless transcript with a quiet default and explicit disclosure of activity. */
-export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
+export function ThreadView({ rows, startedAt, api, errorCount }: ThreadViewProps) {
   const sections = useMemo(() => groupThread(rows), [rows]);
   // A pasted image is its own prompt row, but the outline lists the message once.
   const prompts = rows.filter(
@@ -41,8 +63,22 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
   const [activePrompt, setActivePrompt] = useState<string | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(storedOutlineOpen);
   const hasOutline = prompts.length > 1;
+  const failed = rows.filter(isFailedCall);
+  const totalErrors = Math.max(errorCount ?? 0, failed.length);
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  const savedTop = useRef(0);
+
+  function toggleErrors() {
+    const el = scroller.current;
+    const next = !errorsOnly;
+    if (next && el) savedTop.current = el.scrollTop;
+    flushSync(() => setErrorsOnly(next));
+    // The scroller is scroll-smooth; restoring a position must not animate.
+    el?.scrollTo({ top: next ? 0 : savedTop.current, behavior: 'instant' });
+  }
 
   function jump(id: string) {
+    flushSync(() => setErrorsOnly(false));
     const target = document.getElementById(`thread-${id}`);
     target?.scrollIntoView({ block: 'start' });
     target?.focus({ preventScroll: true });
@@ -71,11 +107,28 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
             hasOutline && !outlineOpen && 'lg:max-w-4xl',
           )}
         >
-          <div className="mb-7 flex items-center justify-between gap-4 text-xs text-muted">
+          <div className="sticky top-0 z-10 mb-7 flex items-center justify-between gap-4 bg-background py-2 text-xs text-muted">
             <span>
               Conversation <span className="px-2 text-faint">/</span> {prompts.length} prompts
             </span>
             <span className="flex items-center gap-4">
+              {failed.length > 0 ? (
+                <button
+                  type="button"
+                  aria-pressed={errorsOnly}
+                  className={cn(
+                    'flex items-center gap-1.5 hover:text-foreground',
+                    errorsOnly && 'text-error',
+                  )}
+                  onClick={toggleErrors}
+                >
+                  <CircleX size={13} aria-hidden="true" />
+                  {failed.length < totalErrors
+                    ? `${failed.length} of ${totalErrors}`
+                    : totalErrors}{' '}
+                  {totalErrors === 1 ? 'error' : 'errors'}
+                </button>
+              ) : null}
               {hasOutline ? (
                 <button
                   type="button"
@@ -101,7 +154,12 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
           {rows.length === 0 ? (
             <p className="py-12 text-center text-muted">No messages recorded yet.</p>
           ) : null}
-          <ol data-slot="thread-view" className="space-y-5 text-base text-foreground">
+          {errorsOnly ? <ErrorList rows={failed} startedAt={startedAt} api={api} /> : null}
+          <ol
+            data-slot="thread-view"
+            hidden={errorsOnly}
+            className="space-y-5 text-base text-foreground"
+          >
             {sections.map((section) =>
               section.kind === 'message' ? (
                 <li
@@ -110,7 +168,7 @@ export function ThreadView({ rows, startedAt, api }: ThreadViewProps) {
                   tabIndex={-1}
                   data-thread-kind="message"
                   data-event-id={section.id}
-                  className="scroll-mt-6 rounded-md"
+                  className="scroll-mt-12 rounded-md"
                 >
                   <MessageRow row={section.row} startedAt={startedAt} api={api} />
                 </li>
@@ -190,9 +248,7 @@ function ActivityGroup({
           <span className="block text-xs font-medium">Activity</span>
           <span className="mt-1 block text-2xs text-muted">{activitySummary(rows)}</span>
         </span>
-        {rows.some((row) => row.kind === 'tool' && row.status === 'error') ? (
-          <span className="shrink-0 text-error">Errors</span>
-        ) : null}
+        {rows.some(isFailedCall) ? <span className="shrink-0 text-error">Errors</span> : null}
         <span className="text-2xs text-faint">View activity</span>
       </summary>
       <ol className="border-t border-border px-4">
@@ -296,12 +352,15 @@ export function ActivityRow({
   startedAt,
   api,
   open,
+  expanded,
 }: {
   row: ThreadRow;
   startedAt: string;
   api?: ApiClient;
   /** Whether the enclosing Activity group is open; images are fetched only while it is. */
   open: boolean;
+  /** Open the tool call and load its full bodies without a click. */
+  expanded?: boolean;
 }) {
   if (row.kind === 'message')
     return <MessageRow row={row} startedAt={startedAt} api={api} open={open} />;
@@ -368,7 +427,7 @@ export function ActivityRow({
   const status = SPAN_VISUALS.status[row.status];
   return (
     <div>
-      <details data-slot="thread-tool-detail" className="text-sm">
+      <details data-slot="thread-tool-detail" open={expanded} className="text-sm">
         <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-muted hover:text-foreground">
           <ChevronRight size={13} className="disclosure-chevron shrink-0" aria-hidden="true" />
           <span
@@ -392,9 +451,9 @@ export function ActivityRow({
           ) : null}
         </summary>
         <Payload slot="thread-input" title="Input" body={row.input} />
-        <FullPayload event={row.event} field="input" api={api} />
+        <FullPayload event={row.event} field="input" api={api} expanded={expanded} />
         <Payload slot="thread-output" title="Output" body={row.output} />
-        <FullPayload event={row.event} field="text" api={api} />
+        <FullPayload event={row.event} field="text" api={api} expanded={expanded} />
       </details>
       {open ? <ThreadImages event={row.event} api={api} /> : null}
       {row.event.child_session_id ? (
@@ -428,22 +487,41 @@ function Payload({ slot, title, body }: { slot: string; title: string; body: str
 }
 
 /** Full bodies reuse the content resolver, including explicit missing/error states. */
-function FullPayload({
+export function FullPayload({
   event,
   field,
   api,
+  expanded,
+  initialFetched = null,
 }: {
   event: EventRow;
   field: ContentField;
   api?: ApiClient;
+  expanded?: boolean;
+  initialFetched?: EventContentBody | null;
 }) {
-  const [fetched, setFetched] = useState<EventContentBody | null>(null);
+  const [fetched, setFetched] = useState(initialFetched);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const content = contentStateOf(event, field, fetched);
-  const original = field === 'input' ? event.input : event.text;
-  const hasLongBody = (original?.length ?? 0) > 480;
-  if (!content.canRefetch && !hasLongBody && content.note === null) return null;
+  const showBody = fetched !== null || (content.body?.length ?? 0) > 480;
+
+  function load() {
+    if (!api) return;
+    setPending(true);
+    setError(false);
+    void api
+      .getEventContent(event.id, field)
+      .then(setFetched)
+      .catch(() => setError(true))
+      .finally(() => setPending(false));
+  }
+
+  useEffect(() => {
+    if (expanded && content.canRefetch) load();
+  }, [expanded]);
+
+  if (!content.canRefetch && !showBody && content.note === null) return null;
   if (content.kind === 'empty') return null;
   return (
     <div className="mt-2 text-xs text-muted">
@@ -453,15 +531,7 @@ function FullPayload({
           type="button"
           disabled={pending}
           className="mt-2 text-accent disabled:opacity-50"
-          onClick={() => {
-            setPending(true);
-            setError(false);
-            void api
-              .getEventContent(event.id, field)
-              .then(setFetched)
-              .catch(() => setError(true))
-              .finally(() => setPending(false));
-          }}
+          onClick={load}
         >
           {pending
             ? 'Loading…'
@@ -475,8 +545,8 @@ function FullPayload({
           Could not load content. Try again.
         </p>
       ) : null}
-      {(hasLongBody || fetched !== null) && content.body !== null ? (
-        <details className="mt-2">
+      {showBody && content.body !== null ? (
+        <details open={expanded} className="mt-2">
           <summary className="cursor-pointer text-accent">
             {content.truncated ? 'Stored preview' : 'Full content'}
           </summary>
@@ -486,5 +556,63 @@ function FullPayload({
         </details>
       ) : null}
     </div>
+  );
+}
+
+/** Must not carry `data-thread-kind`/`data-event-id`: the render gate counts one per event. */
+export function ErrorList({
+  rows,
+  startedAt,
+  api,
+}: {
+  rows: readonly ThreadToolRow[];
+  startedAt: string;
+  api?: ApiClient;
+}) {
+  return (
+    <div className="space-y-3">
+      <CopyButton label="Copy all errors" getText={() => errorClipboardText(rows, api)} />
+      <ol data-slot="thread-errors" className="space-y-3">
+        {rows.map((row) => (
+          <li key={row.event.id} className="rounded-md border border-border px-4 py-3">
+            <ActivityRow row={row} startedAt={startedAt} api={api} open expanded />
+            <div className="mt-3">
+              <CopyButton label="Copy error" getText={() => errorClipboardText([row], api)} />
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function CopyButton({ label, getText }: { label: string; getText: () => Promise<string> }) {
+  const [result, setResult] = useState<'copied' | 'failed' | null>(null);
+  const failed = result === 'failed';
+  function copy() {
+    void getText()
+      .then((text) => navigator.clipboard.writeText(text))
+      .then(
+        () => setResult('copied'),
+        () => setResult('failed'),
+      )
+      .finally(() => setTimeout(() => setResult(null), 1500));
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className={cn(
+        'flex items-center gap-1.5 text-xs text-muted hover:text-foreground',
+        failed && 'text-error',
+      )}
+    >
+      {result === 'copied' ? (
+        <Check size={13} aria-hidden="true" />
+      ) : (
+        <Copy size={13} aria-hidden="true" />
+      )}
+      {result === 'copied' ? 'Copied' : failed ? 'Copy failed' : label}
+    </button>
   );
 }
