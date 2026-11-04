@@ -9,7 +9,7 @@ import {
   makeSessionRow,
   stubApiClient,
 } from '../../../lib/__tests__/fixtures';
-import { ActivityRow, ErrorList, FullPayload, ThreadView } from '../ThreadView';
+import { ActivityRow, FilteredList, FullPayload, ThreadView } from '../ThreadView';
 import { SessionHeader } from '../SessionHeader';
 
 /*
@@ -535,11 +535,128 @@ describe('the errors filter', () => {
   });
 
   it('offers no toggle when no call failed', () => {
-    expect(viewMarkup([{ kind: 'tool_call', status: 'ok' }], 0)).not.toContain('aria-pressed');
+    expect(viewMarkup([{ kind: 'tool_call', status: 'ok' }], 0)).not.toMatch(/\d+ errors?</);
   });
 
   it('flags an activity group holding only a denied call', () => {
     expect(viewMarkup([{ kind: 'tool_call', status: 'denied' }])).toContain('>Errors<');
+  });
+});
+
+describe('the speaker and tool filters', () => {
+  const markup = threadMarkup([
+    { kind: 'tool_call', name: 'Read' },
+    { kind: 'tool_call', name: 'Bash' },
+    { kind: 'tool_call', name: 'Bash' },
+  ]);
+
+  function group(label: string): string {
+    return (
+      markup.match(new RegExp(`role="group" aria-label="${label}"[\\s\\S]*?</div>`))?.[0] ?? ''
+    );
+  }
+
+  it('offers You and Claude as unpressed speaker choices', () => {
+    expect(group('Speaker').match(/<button[^>]*aria-pressed="false"[^>]*>[^<]*</g)).toEqual([
+      expect.stringMatching(/>You<$/),
+      expect.stringMatching(/>Claude<$/),
+    ]);
+  });
+
+  it('offers each distinct tool once, sorted, unpressed', () => {
+    expect(group('Tools').match(/<button[^>]*aria-pressed="false"[^>]*>[^<]*</g)).toEqual([
+      expect.stringMatching(/>Bash<$/),
+      expect.stringMatching(/>Read<$/),
+    ]);
+  });
+
+  it('leaves the thread showing until a filter is chosen', () => {
+    expect(markup).not.toMatch(/<ol[^>]*data-slot="thread-view"[^>]*hidden/);
+    expect(occurrences(markup, /<ol\b/g)).toBe(2);
+  });
+
+  it('offers no tool group when no tool was called', () => {
+    expect(threadMarkup([{ kind: 'prompt', text: 'hi' }])).not.toContain('aria-label="Tools"');
+  });
+
+  it('offers no filter groups for an empty thread', () => {
+    expect(threadMarkup([])).not.toContain('role="group"');
+  });
+});
+
+describe('the filtered list', () => {
+  const rows = buildThread(
+    [
+      { kind: 'prompt', text: 'run it' },
+      { kind: 'tool_call', name: 'Bash', status: 'ok' },
+      { kind: 'tool_call', name: 'Bash', status: 'error' },
+    ].map((e, i) => makeEventRow({ id: `ev-${i}`, seq: i, ...e })),
+  );
+  const markup = renderToStaticMarkup(
+    <FilteredList rows={rows} startedAt={SESSION_START} api={stubApiClient()} />,
+  );
+
+  it('shows a matching prompt as its card', () => {
+    expect(markup).toContain('>You<');
+    expect(markup).toContain('run it');
+  });
+
+  it('opens only the failed call, and offers copy for errors only', () => {
+    expect(occurrences(markup, /<details data-slot="thread-tool-detail"[^>]*open=""/g)).toBe(1);
+    expect(occurrences(markup, /data-slot="thread-tool-detail"/g)).toBe(2);
+    expect(occurrences(markup, />Copy error</g)).toBe(1);
+    expect(occurrences(markup, />Copy all errors</g)).toBe(1);
+  });
+
+  it('repeats none of the attributes the render gate counts per event', () => {
+    expect(markup).toContain('data-slot="thread-filtered"');
+    expect(markup).not.toContain('data-thread-kind');
+    expect(markup).not.toContain('data-event-id');
+  });
+
+  it('offers no copy-all when nothing shown failed', () => {
+    const shown = renderToStaticMarkup(
+      <FilteredList rows={rows.slice(0, 2)} startedAt={SESSION_START} />,
+    );
+    expect(shown).not.toContain('Copy all errors');
+  });
+
+  it('says so when nothing matches', () => {
+    expect(renderToStaticMarkup(<FilteredList rows={[]} startedAt={SESSION_START} />)).toContain(
+      'Nothing matches these filters.',
+    );
+  });
+
+  it("loads a failed call's image at once but a successful call's only when opened", () => {
+    const shot = { kind: 'tool_call', name: 'Read', image_count: 1 } as const;
+    const listed = (status: string) =>
+      renderToStaticMarkup(
+        <FilteredList
+          rows={buildThread([makeEventRow({ ...shot, status })])}
+          startedAt={SESSION_START}
+        />,
+      );
+
+    expect(listed('ok')).not.toMatch(/<details data-slot="thread-tool-detail"[^>]*open/);
+    expect(listed('ok')).not.toContain('event-images');
+    expect(occurrences(listed('error'), /data-slot="event-image"/g)).toBe(1);
+  });
+});
+
+describe('the speaker label', () => {
+  const cards =
+    threadMarkup([
+      { kind: 'text', text: '<task-notification>', raw_type: 'user' },
+      { kind: 'text', text: 'done' },
+    ]).match(/<article[\s\S]*?<\/article>/g) ?? [];
+
+  it('calls harness-injected text on a user line "Injected", not "Claude"', () => {
+    expect(cards[0]).toContain('>Injected<');
+    expect(cards[0]).not.toContain('>Claude<');
+  });
+
+  it('still calls an assistant reply "Claude"', () => {
+    expect(cards[1]).toContain('>Claude<');
   });
 });
 
@@ -554,7 +671,7 @@ describe('the errors list', () => {
     ].map((e, i) => makeEventRow({ id: `ev-${i}`, seq: i, kind: 'tool_call', ...e })),
   ).filter(isFailedCall);
   const markup = renderToStaticMarkup(
-    <ErrorList rows={rows} startedAt={SESSION_START} api={stubApiClient()} />,
+    <FilteredList rows={rows} startedAt={SESSION_START} api={stubApiClient()} />,
   );
 
   it('opens every failed call so its error reads without a click', () => {
@@ -573,7 +690,7 @@ describe('the errors list', () => {
   });
 
   it('repeats none of the attributes the render gate counts per event', () => {
-    expect(markup).toContain('data-slot="thread-errors"');
+    expect(markup).toContain('data-slot="thread-filtered"');
     expect(markup).not.toContain('data-thread-kind');
     expect(markup).not.toContain('data-event-id');
   });

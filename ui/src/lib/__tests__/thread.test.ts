@@ -12,6 +12,8 @@ import {
   errorClipboardText,
   groupThread,
   isFailedCall,
+  matchesFilter,
+  type ThreadFilter,
   type ThreadRow,
 } from '../thread';
 import { makeDetail, makeEventContent, makeEventRow, makeTurnRow, stubApiClient } from './fixtures';
@@ -380,6 +382,40 @@ describe('isFailedCall', () => {
   it('never counts a session-error message row', () => {
     const [row] = rowsFor([{ kind: 'error', status: 'error', text: 'boom' }]);
     expect(row && isFailedCall(row)).toBe(false);
+  });
+});
+
+describe('matchesFilter', () => {
+  const rows = rowsFor([
+    { kind: 'prompt', text: 'hi' },
+    { kind: 'text', text: 'reply' },
+    { kind: 'text', text: '<task-notification>', raw_type: 'user' },
+    { kind: 'tool_call', name: 'Bash', status: 'ok' },
+    { kind: 'tool_call', name: 'Bash', status: 'error' },
+    { kind: 'tool_call', name: 'Edit', status: 'error' },
+    { kind: 'tool_call', name: 'Read', status: 'denied' },
+    { kind: 'thinking', text: null },
+  ]);
+  const none: ThreadFilter = { errors: false, speakers: [], tools: [] };
+
+  it.each<[string, Partial<ThreadFilter>, number[]]>([
+    ['no filter keeps every row', {}, [0, 1, 2, 3, 4, 5, 6, 7]],
+    ['Bash keeps only Bash calls', { tools: ['Bash'] }, [3, 4]],
+    ['Bash and Edit keep calls to either', { tools: ['Bash', 'Edit'] }, [3, 4, 5]],
+    ['You keeps only prompts', { speakers: ['You'] }, [0]],
+    ['Claude keeps assistant replies, not injected user lines', { speakers: ['Claude'] }, [1]],
+    ['errors with Bash keeps the Bash error', { errors: true, tools: ['Bash'] }, [4]],
+    [
+      'You with Bash keeps prompts and Bash calls',
+      { speakers: ['You'], tools: ['Bash'] },
+      [0, 3, 4],
+    ],
+    ['errors alone keeps every failed call', { errors: true }, [4, 5, 6]],
+  ])('%s', (_, filter, kept) => {
+    const ids = rows
+      .filter((row) => matchesFilter(row, { ...none, ...filter }))
+      .map((r) => r.event.id);
+    expect(ids).toEqual(kept.map((i) => `ev-${i}`));
   });
 });
 
