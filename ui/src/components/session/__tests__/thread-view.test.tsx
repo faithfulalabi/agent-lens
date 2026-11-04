@@ -2,9 +2,14 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { EventRow } from '../../../lib/api';
-import { REASONING_NOT_RECORDED, buildThread } from '../../../lib/thread';
-import { makeEventRow, makeSessionRow } from '../../../lib/__tests__/fixtures';
-import { ActivityRow, ThreadView } from '../ThreadView';
+import { REASONING_NOT_RECORDED, buildThread, isFailedCall } from '../../../lib/thread';
+import {
+  makeEventContent,
+  makeEventRow,
+  makeSessionRow,
+  stubApiClient,
+} from '../../../lib/__tests__/fixtures';
+import { ActivityRow, ErrorList, FullPayload, ThreadView } from '../ThreadView';
 import { SessionHeader } from '../SessionHeader';
 
 /*
@@ -431,5 +436,105 @@ describe('the "In this session" outline', () => {
       'globals.css forces scroll-behavior: auto under prefers-reduced-motion; a JS ' +
         "behavior: 'smooth' would bypass it.",
     ).toContain('scroll-smooth');
+  });
+});
+
+describe('the errors filter', () => {
+  const mixed = [
+    { kind: 'tool_call', status: 'error' },
+    { kind: 'tool_call', status: 'error' },
+    { kind: 'tool_call', status: 'denied' },
+    { kind: 'tool_call', status: 'ok' },
+  ] satisfies Partial<EventRow>[];
+
+  function toggle(markup: string): string | undefined {
+    return markup.match(/<button[^>]*aria-pressed="false"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  }
+
+  function viewMarkup(events: Partial<EventRow>[], errorCount?: number): string {
+    const rows = buildThread(events.map((e, i) => makeEventRow({ id: `ev-${i}`, seq: i, ...e })));
+    return renderToStaticMarkup(
+      <ThreadView rows={rows} startedAt={SESSION_START} errorCount={errorCount} />,
+    );
+  }
+
+  it.each([
+    [3, '3 errors'],
+    [5, '3 of 5 errors'],
+    [undefined, '3 errors'],
+    [2, '3 errors'],
+  ])('labels the unpressed toggle for a header count of %s as "%s"', (count, label) => {
+    expect(toggle(viewMarkup(mixed, count))).toContain(label);
+  });
+
+  it('says "1 error" for a single failed call', () => {
+    expect(toggle(viewMarkup([{ kind: 'tool_call', status: 'error' }], 1))).toContain('1 error<');
+  });
+
+  it('offers no toggle when no call failed', () => {
+    expect(viewMarkup([{ kind: 'tool_call', status: 'ok' }], 0)).not.toContain('aria-pressed');
+  });
+
+  it('flags an activity group holding only a denied call', () => {
+    expect(viewMarkup([{ kind: 'tool_call', status: 'denied' }])).toContain('>Errors<');
+  });
+});
+
+describe('the errors list', () => {
+  const longError = `${'x'.repeat(600)} the tail of the error`;
+  const rows = buildThread(
+    [
+      { status: 'error', text: longError },
+      { status: 'denied', text: 'denied by the user' },
+      { status: 'error', text: null, output_storage: 'spill' },
+      { status: 'ok', text: 'fine' },
+    ].map((e, i) => makeEventRow({ id: `ev-${i}`, seq: i, kind: 'tool_call', ...e })),
+  ).filter(isFailedCall);
+  const markup = renderToStaticMarkup(
+    <ErrorList rows={rows} startedAt={SESSION_START} api={stubApiClient()} />,
+  );
+
+  it('opens every failed call so its error reads without a click', () => {
+    expect(occurrences(markup, /<li\b/g)).toBe(3);
+    expect(occurrences(markup, /<details data-slot="thread-tool-detail"[^>]*open=""/g)).toBe(3);
+  });
+
+  it('shows a long inline error whole in an open full-content block', () => {
+    expect(markup).toMatch(/<details[^>]*open=""[^>]*><summary[^>]*>Full content<\/summary>/);
+    expect(markup).toContain('the tail of the error');
+  });
+
+  it('tells a spilled error where its body is and offers to load it', () => {
+    expect(markup).toContain('The body was written to a file beside the transcript.');
+    expect(markup).toContain('Load full output');
+  });
+
+  it('repeats none of the attributes the render gate counts per event', () => {
+    expect(markup).toContain('data-slot="thread-errors"');
+    expect(markup).not.toContain('data-thread-kind');
+    expect(markup).not.toContain('data-event-id');
+  });
+
+  it('offers a copy action per error and one for all of them', () => {
+    expect(occurrences(markup, />Copy error</g)).toBe(3);
+    expect(occurrences(markup, />Copy all errors</g)).toBe(1);
+  });
+});
+
+describe('FullPayload', () => {
+  it.each([
+    ['long', `${'y'.repeat(600)} spilled tail`],
+    ['short', 'spilled tail'],
+  ])('keeps a %s fetched spill body on screen', (_, body) => {
+    const event = makeEventRow({ id: 'ev-0', text: null, output_storage: 'spill' });
+    const markup = renderToStaticMarkup(
+      <FullPayload
+        event={event}
+        field="text"
+        initialFetched={makeEventContent({ id: 'ev-0', storage: 'spill', content: body })}
+      />,
+    );
+
+    expect(markup).toContain('spilled tail');
   });
 });

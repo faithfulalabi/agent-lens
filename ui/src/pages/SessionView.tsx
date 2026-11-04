@@ -520,6 +520,7 @@ export function SessionView({ sessionId, api, bus, revealSeq }: SessionViewProps
             rows={thread}
             startedAt={data.session.started_at}
             api={client}
+            errorCount={data.session.error_count}
           />
         ) : (
           <>

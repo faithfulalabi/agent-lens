@@ -36,7 +36,8 @@
  * recorded" over prose that WAS recorded — a lie the reader cannot detect.
  */
 
-import type { EventRow } from './api.js';
+import type { ApiClient, ContentField, EventRow } from './api.js';
+import { contentStateOf } from './event-content.js';
 import { PREVIEW_CHARS, previewOf } from './format.js';
 import { eventKindOf, eventStatusOf, type EventKind, type EventStatus } from './turn-tree.js';
 
@@ -249,4 +250,34 @@ export function activitySummary(rows: readonly ThreadRow[]): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+export function isFailedCall(row: ThreadRow): row is ThreadToolRow {
+  return row.kind === 'tool' && (row.status === 'error' || row.status === 'denied');
+}
+
+/** Keeps the resolver's note beside a partial body, so a copy never hides that it is short. */
+export async function errorClipboardText(
+  rows: readonly ThreadToolRow[],
+  api?: ApiClient,
+): Promise<string> {
+  const texts = await Promise.all(
+    rows.map(async (row) => {
+      const [input, output] = await Promise.all([
+        fullBody(row.event, 'input', api),
+        fullBody(row.event, 'text', api),
+      ]);
+      return [`${row.name} (${row.status})`, input, output].filter(Boolean).join('\n');
+    }),
+  );
+  return texts.join('\n\n');
+}
+
+async function fullBody(event: EventRow, field: ContentField, api?: ApiClient): Promise<string> {
+  const fetched =
+    api && contentStateOf(event, field, null).canRefetch
+      ? await api.getEventContent(event.id, field).catch(() => null)
+      : null;
+  const content = contentStateOf(event, field, fetched);
+  return content.kind === 'empty' ? '' : [content.note, content.body].filter(Boolean).join('\n');
 }
