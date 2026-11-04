@@ -35,6 +35,8 @@ import { MessageContent } from './MessageContent';
 
 const OUTLINE_KEY = 'agent-lens:thread-outline';
 const WASH = 'animate-[row-arrive_1.5s_ease-in]';
+// Attachment subtypes whose text is code, so it must not be read as markdown.
+const VERBATIM_RECORDS = new Set(['edited_text_file', 'file']);
 
 function storedOutlineOpen(): boolean {
   try {
@@ -335,11 +337,7 @@ function MessageRow({
         <p className="text-sm text-muted">No message text recorded.</p>
       ) : (
         <div data-slot="thread-message" className="text-base leading-relaxed">
-          {prompt ? (
-            <p className="whitespace-pre-wrap break-words">{row.text}</p>
-          ) : (
-            <MessageContent text={row.text} />
-          )}
+          <MessageContent text={row.text} />
         </div>
       )}
       {open ? <ThreadImages event={row.event} api={api} /> : null}
@@ -385,12 +383,13 @@ export function ActivityRow({
           <RowTime ts={row.event.ts} startedAt={startedAt} />
         </div>
         {row.text === null ? null : (
-          <p
-            data-slot="thread-record-text"
-            className="mt-1 whitespace-pre-wrap break-words text-xs text-muted"
-          >
-            {row.text}
-          </p>
+          <div data-slot="thread-record-text" className="mt-1 break-words text-xs text-muted">
+            {VERBATIM_RECORDS.has(row.event.raw_subtype ?? '') ? (
+              <p className="whitespace-pre-wrap">{row.text}</p>
+            ) : (
+              <MessageContent text={row.text} />
+            )}
+          </div>
         )}
         <details data-slot="thread-raw" className="mt-2 text-xs text-muted">
           <summary className="cursor-pointer">Raw record</summary>
@@ -408,12 +407,9 @@ export function ActivityRow({
           <span className="flex-1">Reasoning</span>
           <RowTime ts={row.event.ts} startedAt={startedAt} />
         </summary>
-        <p
-          data-slot="thread-thinking"
-          className="mt-3 whitespace-pre-wrap break-words text-sm text-foreground"
-        >
-          {row.event.text}
-        </p>
+        <div data-slot="thread-thinking" className="mt-3 text-sm text-foreground">
+          <MessageContent text={row.event.text ?? ''} />
+        </div>
         <FullPayload event={row.event} field="text" api={api} />
       </details>
     ) : (

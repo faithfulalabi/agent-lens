@@ -332,6 +332,69 @@ describe('a record rendered in a role names it', () => {
   });
 });
 
+describe('thread prose renders markdown, never live HTML', () => {
+  const HOSTILE =
+    '**bold**\n\n<system-reminder>\nthe queued rendering\n</system-reminder>\n\n' +
+    '<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n' +
+    '<details><table><tr><td>x</td></tr></table></details>\n\n![t](https://example.com/t.png)';
+
+  it.each<[string, Partial<EventRow>]>([
+    ['a prompt', { kind: 'prompt' }],
+    ['a record', { kind: 'unknown', raw_type: 'attachment', raw_subtype: 'queued_command' }],
+    ['recorded reasoning', { kind: 'thinking' }],
+  ])('renders %s as markdown with raw HTML escaped and its line breaks kept', (_, event) => {
+    const markup = threadMarkup([{ ...event, text: HOSTILE }]);
+
+    expect(markup).toContain('<strong>bold</strong>');
+    expect(markup).toContain(
+      'whitespace-pre-wrap">&lt;system-reminder&gt;\nthe queued rendering\n&lt;/system-reminder&gt;',
+    );
+    expect(markup).toContain('&lt;script&gt;');
+    expect(markup).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(markup).toContain('&lt;table&gt;');
+    expect(markup).toContain('[Image: t]');
+    for (const live of ['<script', '<img', '<table']) expect(markup).not.toContain(live);
+  });
+
+  it('renders the markdown inside a harness wrapper and keeps the tags as text', () => {
+    const markup = threadMarkup([
+      {
+        kind: 'unknown',
+        raw_type: 'attachment',
+        raw_subtype: 'queued_command',
+        text: '<system-reminder>\n**bold**\n- item\n<script>alert(1)</script>\n</system-reminder>',
+      },
+    ]);
+
+    expect(markup).toContain('<strong>bold</strong>');
+    expect(markup).toContain('<li>item');
+    expect(markup).toContain('&lt;system-reminder&gt;');
+    expect(markup).toContain('&lt;/system-reminder&gt;');
+    expect(markup).toContain('&lt;script&gt;');
+    expect(markup).not.toContain('<script');
+  });
+
+  it.each<[string, Partial<EventRow>]>([
+    ['a tool call', { kind: 'tool_call', input: 'def __init__(self):', text: '# out' }],
+    [
+      'an edited-file record',
+      {
+        kind: 'unknown',
+        raw_type: 'attachment',
+        raw_subtype: 'edited_text_file',
+        text: 'Note: a.py changed:\n\n12\tdef __init__(self):\n13\t# out',
+      },
+    ],
+  ])('keeps the code in %s verbatim', (_, event) => {
+    const markup = threadMarkup([event]);
+
+    expect(markup).toContain('__init__');
+    expect(markup).toContain('# out');
+    expect(markup).not.toContain('<strong>');
+    expect(markup).not.toContain('<h1>');
+  });
+});
+
 describe('an event that returned images draws them in the thread', () => {
   const shot = {
     kind: 'tool_call',
