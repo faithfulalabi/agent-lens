@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/faithfulalabi/agent-lens/compare/v0.17.0...v0.18.0) (2026-11-04)
+
+
+### Features
+
+* **thread:** show only the errors in a thread, and copy them ([#164](https://github.com/faithfulalabi/agent-lens/issues/164)) ([ff09800](https://github.com/faithfulalabi/agent-lens/commit/ff09800286046a0283f59c822d4d6110167eb5b0))
+
 ## [0.17.0](https://github.com/faithfulalabi/agent-lens/compare/v0.16.0...v0.17.0) (2026-11-03)
 
 
