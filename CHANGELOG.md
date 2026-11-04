@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/faithfulalabi/agent-lens/compare/v0.18.0...v0.19.0) (2026-11-04)
+
+
+### Features
+
+* **thread:** render markdown in prompts, records and reasoning ([#165](https://github.com/faithfulalabi/agent-lens/issues/165)) ([345b603](https://github.com/faithfulalabi/agent-lens/commit/345b60356cf279ed507ca9b69c6e448cc8ce17d2))
+
 ## [0.18.0](https://github.com/faithfulalabi/agent-lens/compare/v0.17.0...v0.18.0) (2026-11-04)
 
 
