@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/faithfulalabi/agent-lens/compare/v0.19.0...v0.20.0) (2026-11-05)
+
+
+### Features
+
+* **thread:** filter the thread by tool and by speaker ([#168](https://github.com/faithfulalabi/agent-lens/issues/168)) ([0fc8497](https://github.com/faithfulalabi/agent-lens/commit/0fc849758f54c28153b4b12fd44f38e68cf074a6))
+
 ## [0.19.0](https://github.com/faithfulalabi/agent-lens/compare/v0.18.0...v0.19.0) (2026-11-04)
 
 
