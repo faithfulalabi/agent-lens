@@ -20,9 +20,12 @@ import {
   errorClipboardText,
   groupThread,
   isFailedCall,
+  matchesFilter,
+  speakerOf,
+  type Speaker,
+  type ThreadFilter,
   type ThreadRow,
   type ThreadMessageRow,
-  type ThreadToolRow,
 } from '@/lib/thread';
 import type { ApiClient, ContentField, EventContentBody, EventRow } from '@/lib/api';
 import { contentStateOf } from '@/lib/event-content';
@@ -37,6 +40,12 @@ const OUTLINE_KEY = 'agent-lens:thread-outline';
 const WASH = 'animate-[row-arrive_1.5s_ease-in]';
 // Attachment subtypes whose text is code, so it must not be read as markdown.
 const VERBATIM_RECORDS = new Set(['edited_text_file', 'file']);
+const NO_FILTER: ThreadFilter = { errors: false, speakers: [], tools: [] };
+const SPEAKERS: readonly Speaker[] = ['You', 'Claude'];
+
+const filtering = (f: ThreadFilter) => f.errors || f.speakers.length > 0 || f.tools.length > 0;
+const toggled = <T,>(list: readonly T[], key: T) =>
+  list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
 
 function storedOutlineOpen(): boolean {
   try {
@@ -67,20 +76,23 @@ export function ThreadView({ rows, startedAt, api, errorCount }: ThreadViewProps
   const hasOutline = prompts.length > 1;
   const failed = rows.filter(isFailedCall);
   const totalErrors = Math.max(errorCount ?? 0, failed.length);
-  const [errorsOnly, setErrorsOnly] = useState(false);
+  const tools = [...new Set(rows.flatMap((row) => (row.kind === 'tool' ? [row.name] : [])))].sort();
+  const [filter, setFilter] = useState(NO_FILTER);
+  const active = filtering(filter);
   const savedTop = useRef(0);
 
-  function toggleErrors() {
+  function applyFilter(next: ThreadFilter) {
     const el = scroller.current;
-    const next = !errorsOnly;
-    if (next && el) savedTop.current = el.scrollTop;
-    flushSync(() => setErrorsOnly(next));
+    const nextActive = filtering(next);
+    if (nextActive && !active && el) savedTop.current = el.scrollTop;
+    flushSync(() => setFilter(next));
     // The scroller is scroll-smooth; restoring a position must not animate.
-    el?.scrollTo({ top: next ? 0 : savedTop.current, behavior: 'instant' });
+    if (nextActive !== active)
+      el?.scrollTo({ top: nextActive ? 0 : savedTop.current, behavior: 'instant' });
   }
 
   function jump(id: string) {
-    flushSync(() => setErrorsOnly(false));
+    flushSync(() => setFilter(NO_FILTER));
     const target = document.getElementById(`thread-${id}`);
     target?.scrollIntoView({ block: 'start' });
     target?.focus({ preventScroll: true });
@@ -109,57 +121,86 @@ export function ThreadView({ rows, startedAt, api, errorCount }: ThreadViewProps
             hasOutline && !outlineOpen && 'lg:max-w-4xl',
           )}
         >
-          <div className="sticky top-0 z-10 mb-7 flex items-center justify-between gap-4 bg-background py-2 text-xs text-muted">
-            <span>
-              Conversation <span className="px-2 text-faint">/</span> {prompts.length} prompts
-            </span>
-            <span className="flex items-center gap-4">
-              {failed.length > 0 ? (
+          <div className="sticky top-0 z-10 mb-7 bg-background py-2 text-xs text-muted">
+            <div className="flex items-center justify-between gap-4">
+              <span>
+                Conversation <span className="px-2 text-faint">/</span> {prompts.length} prompts
+              </span>
+              <span className="flex items-center gap-4">
+                {failed.length > 0 ? (
+                  <button
+                    type="button"
+                    aria-pressed={filter.errors}
+                    className={cn(
+                      'flex items-center gap-1.5 hover:text-foreground',
+                      filter.errors && 'text-error',
+                    )}
+                    onClick={() => applyFilter({ ...filter, errors: !filter.errors })}
+                  >
+                    <CircleX size={13} aria-hidden="true" />
+                    {failed.length < totalErrors
+                      ? `${failed.length} of ${totalErrors}`
+                      : totalErrors}{' '}
+                    {totalErrors === 1 ? 'error' : 'errors'}
+                  </button>
+                ) : null}
+                {hasOutline ? (
+                  <button
+                    type="button"
+                    aria-expanded={outlineOpen}
+                    aria-controls="thread-outline"
+                    className="hidden items-center gap-1.5 hover:text-foreground lg:flex"
+                    onClick={toggleOutline}
+                  >
+                    <List size={13} aria-hidden="true" /> {outlineOpen ? 'Hide' : 'Show'} outline
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  aria-pressed={errorsOnly}
-                  className={cn(
-                    'flex items-center gap-1.5 hover:text-foreground',
-                    errorsOnly && 'text-error',
-                  )}
-                  onClick={toggleErrors}
+                  className="flex items-center gap-1.5 hover:text-foreground"
+                  onClick={() => {
+                    if (scroller.current)
+                      scroller.current.scrollTop = scroller.current.scrollHeight;
+                  }}
                 >
-                  <CircleX size={13} aria-hidden="true" />
-                  {failed.length < totalErrors
-                    ? `${failed.length} of ${totalErrors}`
-                    : totalErrors}{' '}
-                  {totalErrors === 1 ? 'error' : 'errors'}
+                  <ArrowDown size={13} aria-hidden="true" /> Latest
                 </button>
-              ) : null}
-              {hasOutline ? (
-                <button
-                  type="button"
-                  aria-expanded={outlineOpen}
-                  aria-controls="thread-outline"
-                  className="hidden items-center gap-1.5 hover:text-foreground lg:flex"
-                  onClick={toggleOutline}
-                >
-                  <List size={13} aria-hidden="true" /> {outlineOpen ? 'Hide' : 'Show'} outline
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="flex items-center gap-1.5 hover:text-foreground"
-                onClick={() => {
-                  if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-                }}
-              >
-                <ArrowDown size={13} aria-hidden="true" /> Latest
-              </button>
-            </span>
+              </span>
+            </div>
+            {rows.length > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <FilterChips
+                  label="Speaker"
+                  options={SPEAKERS}
+                  chosen={filter.speakers}
+                  onToggle={(s) =>
+                    applyFilter({ ...filter, speakers: toggled(filter.speakers, s) })
+                  }
+                />
+                {tools.length > 0 ? (
+                  <FilterChips
+                    label="Tools"
+                    options={tools}
+                    chosen={filter.tools}
+                    onToggle={(t) => applyFilter({ ...filter, tools: toggled(filter.tools, t) })}
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
           {rows.length === 0 ? (
             <p className="py-12 text-center text-muted">No messages recorded yet.</p>
           ) : null}
-          {errorsOnly ? <ErrorList rows={failed} startedAt={startedAt} api={api} /> : null}
+          {active ? (
+            <FilteredList
+              rows={rows.filter((row) => matchesFilter(row, filter))}
+              startedAt={startedAt}
+              api={api}
+            />
+          ) : null}
           <ol
             data-slot="thread-view"
-            hidden={errorsOnly}
+            hidden={active}
             className="space-y-5 text-base text-foreground"
           >
             {sections.map((section) =>
@@ -170,7 +211,7 @@ export function ThreadView({ rows, startedAt, api, errorCount }: ThreadViewProps
                   tabIndex={-1}
                   data-thread-kind="message"
                   data-event-id={section.id}
-                  className="scroll-mt-12 rounded-md"
+                  className="scroll-mt-24 rounded-md"
                 >
                   <MessageRow row={section.row} startedAt={startedAt} api={api} />
                 </li>
@@ -288,16 +329,13 @@ function MessageRow({
   api?: ApiClient;
   open?: boolean;
 }) {
-  const prompt = row.eventKind === 'prompt';
+  const speaker = speakerOf(row);
+  const prompt = speaker === 'You';
+  const reply = speaker === 'Claude';
   const isError = row.eventKind === 'error';
-  const reply = row.eventKind === 'text';
-  const label = prompt
-    ? 'You'
-    : row.eventKind === 'text'
-      ? 'Claude'
-      : row.eventKind === 'error'
-        ? 'Session error'
-        : 'Context compacted';
+  const label =
+    speaker ??
+    (row.eventKind === 'text' ? 'Injected' : isError ? 'Session error' : 'Context compacted');
   const Icon = prompt ? User : Bot;
   return (
     <article
@@ -355,11 +393,12 @@ export function ActivityRow({
   row: ThreadRow;
   startedAt: string;
   api?: ApiClient;
-  /** Whether the enclosing Activity group is open; images are fetched only while it is. */
-  open: boolean;
+  /** Images load while the enclosing group is open; outside a group, while the row is. */
+  open?: boolean;
   /** Open the tool call and load its full bodies without a click. */
   expanded?: boolean;
 }) {
+  const [detailOpen, setDetailOpen] = useState(expanded ?? false);
   if (row.kind === 'message')
     return <MessageRow row={row} startedAt={startedAt} api={api} open={open} />;
   if (row.kind === 'unknown')
@@ -423,7 +462,12 @@ export function ActivityRow({
   const status = SPAN_VISUALS.status[row.status];
   return (
     <div>
-      <details data-slot="thread-tool-detail" open={expanded} className="text-sm">
+      <details
+        data-slot="thread-tool-detail"
+        open={expanded}
+        onToggle={(event) => setDetailOpen(event.currentTarget.open)}
+        className="text-sm"
+      >
         <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-muted hover:text-foreground">
           <ChevronRight size={13} className="disclosure-chevron shrink-0" aria-hidden="true" />
           <span
@@ -451,7 +495,7 @@ export function ActivityRow({
         <Payload slot="thread-output" title="Output" body={row.output} />
         <FullPayload event={row.event} field="text" api={api} expanded={expanded} />
       </details>
-      {open ? <ThreadImages event={row.event} api={api} /> : null}
+      {(open ?? detailOpen) ? <ThreadImages event={row.event} api={api} /> : null}
       {row.event.child_session_id ? (
         <a
           href={hrefFor({ name: 'session', sessionId: row.event.child_session_id })}
@@ -556,28 +600,75 @@ export function FullPayload({
 }
 
 /** Must not carry `data-thread-kind`/`data-event-id`: the render gate counts one per event. */
-export function ErrorList({
+export function FilteredList({
   rows,
   startedAt,
   api,
 }: {
-  rows: readonly ThreadToolRow[];
+  rows: readonly ThreadRow[];
   startedAt: string;
   api?: ApiClient;
 }) {
+  if (rows.length === 0)
+    return <p className="py-12 text-center text-muted">Nothing matches these filters.</p>;
+  const failed = rows.filter(isFailedCall);
   return (
     <div className="space-y-3">
-      <CopyButton label="Copy all errors" getText={() => errorClipboardText(rows, api)} />
-      <ol data-slot="thread-errors" className="space-y-3">
+      {failed.length > 0 ? (
+        <CopyButton label="Copy all errors" getText={() => errorClipboardText(failed, api)} />
+      ) : null}
+      <ol data-slot="thread-filtered" className="space-y-3">
         {rows.map((row) => (
-          <li key={row.event.id} className="rounded-md border border-border px-4 py-3">
-            <ActivityRow row={row} startedAt={startedAt} api={api} open expanded />
-            <div className="mt-3">
-              <CopyButton label="Copy error" getText={() => errorClipboardText([row], api)} />
-            </div>
+          <li
+            key={row.event.id}
+            className={
+              row.kind === 'message' ? undefined : 'rounded-md border border-border px-4 py-3'
+            }
+          >
+            <ActivityRow row={row} startedAt={startedAt} api={api} expanded={isFailedCall(row)} />
+            {isFailedCall(row) ? (
+              <div className="mt-3">
+                <CopyButton label="Copy error" getText={() => errorClipboardText([row], api)} />
+              </div>
+            ) : null}
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function FilterChips<T extends string>({
+  label,
+  options,
+  chosen,
+  onToggle,
+}: {
+  label: string;
+  options: readonly T[];
+  chosen: readonly T[];
+  onToggle: (option: T) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex flex-wrap items-center gap-0.5 rounded-md bg-surface p-0.5"
+    >
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={chosen.includes(option)}
+          onClick={() => onToggle(option)}
+          className={cn(
+            'rounded-md px-2 py-1 transition-colors',
+            chosen.includes(option) ? 'bg-surface-raised text-foreground' : 'text-muted',
+          )}
+        >
+          {option}
+        </button>
+      ))}
     </div>
   );
 }

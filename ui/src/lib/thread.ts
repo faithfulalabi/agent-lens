@@ -256,6 +256,32 @@ export function isFailedCall(row: ThreadRow): row is ThreadToolRow {
   return row.kind === 'tool' && (row.status === 'error' || row.status === 'denied');
 }
 
+export type Speaker = 'You' | 'Claude';
+
+/** Text on a `user` line is harness-injected, so it is nobody's speech. */
+export function speakerOf(row: ThreadRow): Speaker | null {
+  if (row.kind !== 'message') return null;
+  if (row.eventKind === 'prompt') return 'You';
+  return row.eventKind === 'text' && row.event.raw_type !== 'user' ? 'Claude' : null;
+}
+
+export interface ThreadFilter {
+  readonly errors: boolean;
+  readonly speakers: readonly Speaker[];
+  readonly tools: readonly string[];
+}
+
+/** Speaker and tool choices widen what is shown; the errors toggle narrows it. */
+export function matchesFilter(row: ThreadRow, filter: ThreadFilter): boolean {
+  if (filter.errors && !isFailedCall(row)) return false;
+  if (filter.speakers.length === 0 && filter.tools.length === 0) return true;
+  const speaker = speakerOf(row);
+  return (
+    (speaker !== null && filter.speakers.includes(speaker)) ||
+    (row.kind === 'tool' && filter.tools.includes(row.name))
+  );
+}
+
 /** Keeps the resolver's note beside a partial body, so a copy never hides that it is short. */
 export async function errorClipboardText(
   rows: readonly ThreadToolRow[],

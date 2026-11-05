@@ -80,8 +80,9 @@ describe('progressive disclosure', () => {
       makeEventRow({ id: 'a', seq: 4, kind: 'text', text: 'All done' }),
     ]);
     const markup = renderToStaticMarkup(<ThreadView rows={rows} startedAt={startedAt} />);
-    expect(markup).toContain('>You<');
-    expect(markup).toContain('>Claude<');
+    const cards = markup.match(/<article[\s\S]*?<\/article>/g) ?? [];
+    expect(cards[0]).toContain('>You<');
+    expect(cards.at(-1)).toContain('>Claude<');
     expect(markup).toContain('>Errors<');
     expect(markup).toContain('data-slot="thread-activity"');
     expect(markup).toContain('data-slot="thread-tool-detail"');
